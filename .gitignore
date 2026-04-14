@@ -5,4 +5,5 @@ build/
 tests/catch2/
 fastchess
 fastchess-*
+openings/
 results/

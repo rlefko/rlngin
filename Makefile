@@ -26,7 +26,11 @@ FASTCHESS_URL := https://github.com/Disservin/fastchess/releases/latest/download
 CATCH2_VERSION := 3.8.0
 CATCH2_URL := https://raw.githubusercontent.com/catchorg/Catch2/v$(CATCH2_VERSION)/extras
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess selfplay
+OPENINGS_URL := https://github.com/official-stockfish/books/raw/master/UHO_Lichess_4852_v1.epd.zip
+OPENINGS_DIR := openings
+OPENINGS_FILE := $(OPENINGS_DIR)/UHO_Lichess_4852_v1.epd
+
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay
 
 build: $(TARGET)
 
@@ -81,6 +85,16 @@ fetch-fastchess:
 	@chmod +x ./fastchess
 	@rm -rf /tmp/fastchess.tar /tmp/$(FASTCHESS_ASSET)
 	@echo "fastchess downloaded to ./fastchess"
+
+fetch-openings: $(OPENINGS_FILE)
+
+$(OPENINGS_FILE):
+	@mkdir -p $(OPENINGS_DIR)
+	@echo "Downloading opening book..."
+	@curl -sL "$(OPENINGS_URL)" -o $(OPENINGS_DIR)/openings.zip
+	@unzip -o -q $(OPENINGS_DIR)/openings.zip -d $(OPENINGS_DIR)
+	@rm -f $(OPENINGS_DIR)/openings.zip
+	@echo "Opening book saved to $(OPENINGS_FILE)"
 
 selfplay: build
 	./scripts/selfplay.sh
