@@ -1,5 +1,11 @@
 # rlngin
 
+<!-- BENCHMARK:START -->
+## Latest Benchmark
+
+_No benchmark data yet. Results will appear here after the next merge to main._
+<!-- BENCHMARK:END -->
+
 A chess engine, made with love.
 
 ## Building
