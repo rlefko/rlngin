@@ -5,7 +5,7 @@
 #include <string>
 
 class Board {
-public:
+  public:
     Piece squares[64];
     Color sideToMove = White;
     bool castleWK = true;
@@ -18,8 +18,8 @@ public:
 
     Board();
     void setStartPos();
-    void setFen(const std::string& fen);
-    void makeMove(const Move& m);
+    void setFen(const std::string &fen);
+    void makeMove(const Move &m);
     Piece pieceAt(int sq) const;
 };
 

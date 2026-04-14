@@ -2,3 +2,8 @@ build/
 *.o
 *.d
 .DS_Store
+tests/catch2/
+fastchess
+fastchess-*
+openings/
+results/

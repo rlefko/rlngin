@@ -4,7 +4,7 @@
 #include "board.h"
 #include <vector>
 
-bool isSquareAttacked(const Board& board, int sq, Color byColor);
-std::vector<Move> generateLegalMoves(const Board& board);
+bool isSquareAttacked(const Board &board, int sq, Color byColor);
+std::vector<Move> generateLegalMoves(const Board &board);
 
 #endif

@@ -13,7 +13,7 @@ void Board::setStartPos() {
     setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
 }
 
-void Board::setFen(const std::string& fen) {
+void Board::setFen(const std::string &fen) {
     for (int i = 0; i < 64; i++) {
         squares[i] = {None, White};
     }
@@ -22,11 +22,15 @@ void Board::setFen(const std::string& fen) {
     std::string board, side, castling, ep, halfmove, fullmove;
     ss >> board >> side >> castling >> ep;
 
-    if (ss >> halfmove) halfmoveClock = std::stoi(halfmove);
-    else halfmoveClock = 0;
+    if (ss >> halfmove)
+        halfmoveClock = std::stoi(halfmove);
+    else
+        halfmoveClock = 0;
 
-    if (ss >> fullmove) fullmoveNumber = std::stoi(fullmove);
-    else fullmoveNumber = 1;
+    if (ss >> fullmove)
+        fullmoveNumber = std::stoi(fullmove);
+    else
+        fullmoveNumber = 1;
 
     int rank = 7, file = 0;
     for (char c : board) {
@@ -41,13 +45,26 @@ void Board::setFen(const std::string& fen) {
             char lower = (c >= 'A' && c <= 'Z') ? (c + 32) : c;
             PieceType type = None;
             switch (lower) {
-                case 'p': type = Pawn; break;
-                case 'n': type = Knight; break;
-                case 'b': type = Bishop; break;
-                case 'r': type = Rook; break;
-                case 'q': type = Queen; break;
-                case 'k': type = King; break;
-                default: break;
+            case 'p':
+                type = Pawn;
+                break;
+            case 'n':
+                type = Knight;
+                break;
+            case 'b':
+                type = Bishop;
+                break;
+            case 'r':
+                type = Rook;
+                break;
+            case 'q':
+                type = Queen;
+                break;
+            case 'k':
+                type = King;
+                break;
+            default:
+                break;
             }
             squares[sq] = {type, color};
             file++;
@@ -59,11 +76,20 @@ void Board::setFen(const std::string& fen) {
     castleWK = castleWQ = castleBK = castleBQ = false;
     for (char c : castling) {
         switch (c) {
-            case 'K': castleWK = true; break;
-            case 'Q': castleWQ = true; break;
-            case 'k': castleBK = true; break;
-            case 'q': castleBQ = true; break;
-            default: break;
+        case 'K':
+            castleWK = true;
+            break;
+        case 'Q':
+            castleWQ = true;
+            break;
+        case 'k':
+            castleBK = true;
+            break;
+        case 'q':
+            castleBQ = true;
+            break;
+        default:
+            break;
         }
     }
 
@@ -74,7 +100,7 @@ void Board::setFen(const std::string& fen) {
     }
 }
 
-void Board::makeMove(const Move& m) {
+void Board::makeMove(const Move &m) {
     Piece moving = squares[m.from];
     Piece captured = squares[m.to];
 
@@ -109,8 +135,13 @@ void Board::makeMove(const Move& m) {
 
     // Update castling rights
     if (moving.type == King) {
-        if (moving.color == White) { castleWK = false; castleWQ = false; }
-        else { castleBK = false; castleBQ = false; }
+        if (moving.color == White) {
+            castleWK = false;
+            castleWQ = false;
+        } else {
+            castleBK = false;
+            castleBQ = false;
+        }
     }
     if (moving.type == Rook) {
         if (m.from == 0) castleWQ = false;
