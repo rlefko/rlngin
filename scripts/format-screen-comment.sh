@@ -26,6 +26,7 @@ POINTS=$(parse 's/.*Points: \([0-9.]*\).*/\1/p')
 SCORE_PCT=$(parse 's/.*(\([0-9.]*\) %).*/\1/p')
 ELO=$(echo "$RESULTS" | grep "^Elo:" | sed 's/Elo: \([^ ,]*\).*/\1/')
 ELO_ERR=$(echo "$RESULTS" | grep "^Elo:" | sed 's/.*Elo: [^,]*+\/- \([^,]*\),.*/\1/')
+LOS=$(echo "$RESULTS" | grep "^LOS:" | sed 's/LOS: \([^ ]*\).*/\1/')
 DRAW_RATIO=$(parse 's/.*DrawRatio: \([0-9.]*\).*/\1/p')
 PTNML=$(parse 's/.*Ptnml(0-2): \(\[[0-9, ]*\]\).*/\1/p')
 
@@ -39,6 +40,7 @@ SCORE_DISPLAY="$POINTS / $GAMES ($SCORE_PCT%)"
 ELO_ENCODED=$(urlencode "$ELO_DISPLAY")
 WLD_ENCODED=$(urlencode "$WLD_DISPLAY")
 SCORE_ENCODED=$(urlencode "$SCORE_DISPLAY")
+LOS_ENCODED=$(urlencode "$LOS%")
 
 # Pick Elo badge color
 if echo "$ELO" | grep -q "nan"; then
@@ -51,20 +53,22 @@ else
     ELO_COLOR="gray"
 fi
 
+# Pick LOS badge color
+if echo "$LOS" | grep -q "nan"; then
+    LOS_COLOR="gray"
+elif [ "$(echo "$LOS > 95" | bc -l 2>/dev/null)" = "1" ]; then
+    LOS_COLOR="brightgreen"
+elif [ "$(echo "$LOS < 5" | bc -l 2>/dev/null)" = "1" ]; then
+    LOS_COLOR="red"
+else
+    LOS_COLOR="yellow"
+fi
+
 cat <<MARKDOWN
 ## :chess_pawn: Self-Play Screen
 
-![Elo](https://img.shields.io/badge/Elo-${ELO_ENCODED}-${ELO_COLOR}) ![Score](https://img.shields.io/badge/Score-${SCORE_ENCODED}-blue) ![W/D/L](https://img.shields.io/badge/W%2FD%2FL-${WLD_ENCODED}-lightgray) ![Draw%](https://img.shields.io/badge/Draw%25-${DRAW_RATIO}%25-lightgray)
+![Elo](https://img.shields.io/badge/Elo-${ELO_ENCODED}-${ELO_COLOR}) ![LOS](https://img.shields.io/badge/LOS-${LOS_ENCODED}-${LOS_COLOR}) ![W/D/L](https://img.shields.io/badge/W%2FD%2FL-${WLD_ENCODED}-lightgray) ![Score](https://img.shields.io/badge/Score-${SCORE_ENCODED}-blue) ![Draws](https://img.shields.io/badge/Draws-${DRAW_RATIO}%25-lightgray)
 
-| | |
-|:--|:--|
-| **Games** | $GAMES_LABEL |
-| **Time Control** | $TC |
-| **Elo** | $ELO_DISPLAY |
-| **Score** | $POINTS / $GAMES ($SCORE_PCT%) |
-| **Record (W/D/L)** | $WINS / $DRAWS / $LOSSES |
-| **Draw Ratio** | $DRAW_RATIO% |
-| **Pentanomial** | $PTNML |
-
-<sub>Opening book: UHO_Lichess_4852_v1.epd</sub>
+Ptnml(0-2): \`$PTNML\`
+$GAMES_LABEL | tc=$TC | UHO_Lichess_4852_v1.epd
 MARKDOWN
