@@ -6,7 +6,7 @@
 #include <string>
 #include <vector>
 
-static void handlePosition(Board& board, std::istringstream& ss) {
+static void handlePosition(Board &board, std::istringstream &ss) {
     std::string token;
     ss >> token;
 
@@ -29,7 +29,7 @@ static void handlePosition(Board& board, std::istringstream& ss) {
     }
 }
 
-static void handleGo(const Board& board) {
+static void handleGo(const Board &board) {
     std::vector<Move> moves = generateLegalMoves(board);
     if (moves.empty()) {
         std::cout << "bestmove 0000" << std::endl;
