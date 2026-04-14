@@ -17,11 +17,11 @@ LIB_OBJS := $(filter-out $(BUILDDIR)/main.o,$(OBJS))
 
 UNAME := $(shell uname)
 ifeq ($(UNAME),Darwin)
-FASTCHESS_ASSET := fastchess-mac-arm64.tar
+FASTCHESS_ASSET := fastchess-mac-arm64
 else
-FASTCHESS_ASSET := fastchess-linux-x86-64.tar
+FASTCHESS_ASSET := fastchess-linux-x86-64
 endif
-FASTCHESS_URL := https://github.com/Disservin/fastchess/releases/latest/download/$(FASTCHESS_ASSET)
+FASTCHESS_URL := https://github.com/Disservin/fastchess/releases/latest/download/$(FASTCHESS_ASSET).tar
 
 .PHONY: build clean run test format format-check fetch-fastchess selfplay
 
@@ -65,9 +65,10 @@ format-check:
 fetch-fastchess:
 	@echo "Downloading fastchess..."
 	@curl -sL "$(FASTCHESS_URL)" -o /tmp/fastchess.tar
-	@tar xf /tmp/fastchess.tar -C .
-	@chmod +x fastchess
-	@rm /tmp/fastchess.tar
+	@tar xf /tmp/fastchess.tar -C /tmp
+	@cp /tmp/$(FASTCHESS_ASSET)/fastchess ./fastchess
+	@chmod +x ./fastchess
+	@rm -rf /tmp/fastchess.tar /tmp/$(FASTCHESS_ASSET)
 	@echo "fastchess downloaded to ./fastchess"
 
 selfplay: build
