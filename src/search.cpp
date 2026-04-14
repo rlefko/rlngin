@@ -9,6 +9,33 @@
 
 static TranspositionTable tt(16);
 
+static int scoreMove(const Move &m, const Board &board, const Move &ttMove) {
+    // TT move gets highest priority
+    if (m.from == ttMove.from && m.to == ttMove.to && m.promotion == ttMove.promotion) {
+        return 10000000;
+    }
+
+    // Promotions
+    if (m.promotion != None) {
+        return 950000 + PieceValue[m.promotion];
+    }
+
+    Piece captured = board.squares[m.to];
+
+    // En passant capture
+    if (captured.type == None && board.squares[m.from].type == Pawn &&
+        m.to == board.enPassantSquare && board.enPassantSquare != -1) {
+        return 1000000 + PieceValue[Pawn] * 100 - PieceValue[Pawn];
+    }
+
+    // Captures scored by MVV-LVA
+    if (captured.type != None) {
+        return 1000000 + PieceValue[captured.type] * 100 - PieceValue[board.squares[m.from].type];
+    }
+
+    return 0;
+}
+
 static void checkTime(SearchState &state) {
     auto now = std::chrono::steady_clock::now();
     auto elapsed =
@@ -50,6 +77,12 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     std::vector<Move> moves = inCheck ? generateLegalMoves(board) : generateLegalCaptures(board);
 
     if (inCheck && moves.empty()) return -(MATE_SCORE - ply);
+
+    // MVV-LVA ordering for captures
+    Move noTTMove = {0, 0, None};
+    std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
+        return scoreMove(a, board, noTTMove) > scoreMove(b, board, noTTMove);
+    });
 
     for (const Move &m : moves) {
         UndoInfo undo = board.makeMove(m);
@@ -102,16 +135,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     if (depth == 0) return quiescence(board, alpha, beta, ply, state);
 
-    // TT move ordering: move the TT move to the front
-    if (ttMove.from != ttMove.to) {
-        for (size_t i = 0; i < moves.size(); i++) {
-            if (moves[i].from == ttMove.from && moves[i].to == ttMove.to &&
-                moves[i].promotion == ttMove.promotion) {
-                std::swap(moves[0], moves[i]);
-                break;
-            }
-        }
-    }
+    // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
+    std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
+        return scoreMove(a, board, ttMove) > scoreMove(b, board, ttMove);
+    });
 
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
