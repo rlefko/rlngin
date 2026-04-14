@@ -17,20 +17,13 @@ bool isSquareAttacked(const Board &board, int sq, Color byColor) {
     return false;
 }
 
-static int findKing(const Board &board, Color color) {
-    for (int i = 0; i < 64; i++) {
-        if (board.squares[i].type == King && board.squares[i].color == color) return i;
-    }
-    return -1;
-}
-
 static bool isLegalMove(const Board &board, const Move &m) {
     Board copy = board;
     copy.makeMove(m);
     Color us = board.sideToMove;
-    int kingSq = findKing(copy, us);
-    if (kingSq == -1) return false;
-    return !isSquareAttacked(copy, kingSq, (us == White) ? Black : White);
+    Bitboard kingBB = copy.byPiece[King] & copy.byColor[us];
+    if (!kingBB) return false;
+    return !isSquareAttacked(copy, lsb(kingBB), (us == White) ? Black : White);
 }
 
 static void addPawnMoves(const Board &board, std::vector<Move> &moves) {
@@ -39,10 +32,9 @@ static void addPawnMoves(const Board &board, std::vector<Move> &moves) {
     int startRank = (us == White) ? 1 : 6;
     int promoRank = (us == White) ? 7 : 0;
 
-    for (int sq = 0; sq < 64; sq++) {
-        Piece p = board.squares[sq];
-        if (p.type != Pawn || p.color != us) continue;
-
+    Bitboard pawns = board.byPiece[Pawn] & board.byColor[us];
+    while (pawns) {
+        int sq = popLsb(pawns);
         int rank = squareRank(sq);
         int file = squareFile(sq);
 
@@ -89,64 +81,61 @@ static void addPawnMoves(const Board &board, std::vector<Move> &moves) {
 
 static void addKnightMoves(const Board &board, std::vector<Move> &moves) {
     Color us = board.sideToMove;
-    Bitboard friendly = boardColorOccupancy(board, us);
+    Bitboard friendly = board.byColor[us];
+    Bitboard knights = board.byPiece[Knight] & friendly;
 
-    for (int sq = 0; sq < 64; sq++) {
-        if (board.squares[sq].type != Knight || board.squares[sq].color != us) continue;
+    while (knights) {
+        int sq = popLsb(knights);
         Bitboard attacks = KnightAttacks[sq] & ~friendly;
-        for (Bitboard b = attacks; b;) {
-            int to = popLsb(b);
-            moves.push_back({sq, to, None});
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
         }
     }
 }
 
 static void addSlidingMoves(const Board &board, std::vector<Move> &moves) {
     Color us = board.sideToMove;
-    Bitboard occ = boardOccupancy(board);
-    Bitboard friendly = boardColorOccupancy(board, us);
+    Bitboard occ = board.occupied;
+    Bitboard friendly = board.byColor[us];
 
-    for (int sq = 0; sq < 64; sq++) {
-        Piece p = board.squares[sq];
-        if (p.color != us) continue;
-
-        Bitboard attacks = 0;
-        if (p.type == Rook) {
-            attacks = rookAttacks(sq, occ);
-        } else if (p.type == Bishop) {
-            attacks = bishopAttacks(sq, occ);
-        } else if (p.type == Queen) {
-            attacks = queenAttacks(sq, occ);
-        } else {
-            continue;
+    Bitboard bishops = board.byPiece[Bishop] & friendly;
+    while (bishops) {
+        int sq = popLsb(bishops);
+        Bitboard attacks = bishopAttacks(sq, occ) & ~friendly;
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
         }
+    }
 
-        attacks &= ~friendly;
-        for (Bitboard b = attacks; b;) {
-            int to = popLsb(b);
-            moves.push_back({sq, to, None});
+    Bitboard rooks = board.byPiece[Rook] & friendly;
+    while (rooks) {
+        int sq = popLsb(rooks);
+        Bitboard attacks = rookAttacks(sq, occ) & ~friendly;
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
+        }
+    }
+
+    Bitboard queens = board.byPiece[Queen] & friendly;
+    while (queens) {
+        int sq = popLsb(queens);
+        Bitboard attacks = queenAttacks(sq, occ) & ~friendly;
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
         }
     }
 }
 
 static void addKingMoves(const Board &board, std::vector<Move> &moves) {
     Color us = board.sideToMove;
-    int kingSq = findKing(board, us);
-    if (kingSq == -1) return;
+    Bitboard kingBB = board.byPiece[King] & board.byColor[us];
+    if (!kingBB) return;
+    int kingSq = lsb(kingBB);
+    Bitboard friendly = board.byColor[us];
 
-    int rank = squareRank(kingSq);
-    int file = squareFile(kingSq);
-
-    for (int dr = -1; dr <= 1; dr++) {
-        for (int df = -1; df <= 1; df++) {
-            if (dr == 0 && df == 0) continue;
-            int r = rank + dr, f = file + df;
-            if (!inBounds(r, f)) continue;
-            int to = makeSquare(r, f);
-            if (board.squares[to].type == None || board.squares[to].color != us) {
-                moves.push_back({kingSq, to, None});
-            }
-        }
+    Bitboard attacks = KingAttacks[kingSq] & ~friendly;
+    while (attacks) {
+        moves.push_back({kingSq, popLsb(attacks), None});
     }
 
     // Castling
