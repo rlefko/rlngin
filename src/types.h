@@ -80,5 +80,6 @@ inline Move stringToMove(const std::string &s) {
 
 constexpr int MATE_SCORE = 30000;
 constexpr int INF_SCORE = MATE_SCORE + 1;
+constexpr int MAX_PLY = 128;
 
 #endif

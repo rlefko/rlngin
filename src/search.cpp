@@ -4,10 +4,49 @@
 #include "movegen.h"
 #include "tt.h"
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <limits>
 
 static TranspositionTable tt(16);
+
+static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
+                     const SearchState &state) {
+    // TT move gets highest priority
+    if (m.from == ttMove.from && m.to == ttMove.to && m.promotion == ttMove.promotion) {
+        return 10000000;
+    }
+
+    // Promotions
+    if (m.promotion != None) {
+        return 950000 + PieceValue[m.promotion];
+    }
+
+    Piece captured = board.squares[m.to];
+
+    // En passant capture
+    if (captured.type == None && board.squares[m.from].type == Pawn &&
+        m.to == board.enPassantSquare && board.enPassantSquare != -1) {
+        return 1000000 + PieceValue[Pawn] * 100 - PieceValue[Pawn];
+    }
+
+    // Captures scored by MVV-LVA
+    if (captured.type != None) {
+        return 1000000 + PieceValue[captured.type] * 100 - PieceValue[board.squares[m.from].type];
+    }
+
+    // Killer moves
+    if (ply >= 0) {
+        for (int k = 0; k < 2; k++) {
+            const Move &killer = state.killers[ply][k];
+            if (m.from == killer.from && m.to == killer.to && m.promotion == killer.promotion) {
+                return 900000 - k;
+            }
+        }
+    }
+
+    return 0;
+}
 
 static void checkTime(SearchState &state) {
     auto now = std::chrono::steady_clock::now();
@@ -28,6 +67,11 @@ static bool isInCheck(const Board &board) {
 
 static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
+    if (ply > state.seldepth) state.seldepth = ply;
+
+    if (ply >= MAX_PLY) return evaluate(board);
+
+    state.pvLength[ply] = ply;
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
@@ -46,6 +90,12 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
     if (inCheck && moves.empty()) return -(MATE_SCORE - ply);
 
+    // MVV-LVA ordering for captures
+    Move noTTMove = {0, 0, None};
+    std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
+        return scoreMove(a, board, noTTMove, -1, state) > scoreMove(b, board, noTTMove, -1, state);
+    });
+
     for (const Move &m : moves) {
         UndoInfo undo = board.makeMove(m);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
@@ -60,6 +110,10 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
     state.nodes++;
+    if (ply > state.seldepth) state.seldepth = ply;
+    state.pvLength[ply] = ply;
+
+    if (ply >= MAX_PLY - 1) return evaluate(board);
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
@@ -93,16 +147,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     if (depth == 0) return quiescence(board, alpha, beta, ply, state);
 
-    // TT move ordering: move the TT move to the front
-    if (ttMove.from != ttMove.to) {
-        for (size_t i = 0; i < moves.size(); i++) {
-            if (moves[i].from == ttMove.from && moves[i].to == ttMove.to &&
-                moves[i].promotion == ttMove.promotion) {
-                std::swap(moves[0], moves[i]);
-                break;
-            }
-        }
-    }
+    // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
+    std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
+        return scoreMove(a, board, ttMove, ply, state) > scoreMove(b, board, ttMove, ply, state);
+    });
 
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
@@ -116,8 +164,24 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             bestScore = score;
             bestMove = m;
         }
-        if (score > alpha) alpha = score;
-        if (alpha >= beta) break;
+        if (score > alpha) {
+            alpha = score;
+            state.pv[ply][ply] = m;
+            for (int i = ply + 1; i < state.pvLength[ply + 1]; i++) {
+                state.pv[ply][i] = state.pv[ply + 1][i];
+            }
+            state.pvLength[ply] = state.pvLength[ply + 1];
+        }
+        if (alpha >= beta) {
+            // Store killer move if it's a quiet move (not a capture or en passant)
+            if (board.squares[m.to].type == None &&
+                !(board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
+                  board.enPassantSquare != -1)) {
+                state.killers[ply][1] = state.killers[ply][0];
+                state.killers[ply][0] = m;
+            }
+            break;
+        }
     }
 
     // TT store
@@ -154,6 +218,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     state.stopped = false;
     state.nodes = 0;
     state.bestMove = {0, 0, None};
+    memset(state.killers, 0, sizeof(state.killers));
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = computeTimeAllocation(board, limits);
 
@@ -164,21 +229,31 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     if (rootMoves.empty()) return;
 
     for (int depth = 1; depth <= maxDepth; depth++) {
+        state.seldepth = 0;
         Move currentBest = rootMoves[0];
         int currentBestScore = -INF_SCORE;
         int alpha = -INF_SCORE;
         int beta = INF_SCORE;
 
+        state.pvLength[0] = 0;
+
         for (const Move &m : rootMoves) {
             UndoInfo undo = pos.makeMove(m);
-            int score = -negamax(pos, depth - 1, 0, -beta, -alpha, state);
+            int score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
             pos.unmakeMove(m, undo);
             if (state.stopped) break;
             if (score > currentBestScore) {
                 currentBestScore = score;
                 currentBest = m;
             }
-            if (score > alpha) alpha = score;
+            if (score > alpha) {
+                alpha = score;
+                state.pv[0][0] = m;
+                for (int i = 1; i < state.pvLength[1]; i++) {
+                    state.pv[0][i] = state.pv[1][i];
+                }
+                state.pvLength[0] = state.pvLength[1];
+            }
         }
 
         if (state.stopped) break;
@@ -194,8 +269,27 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             }
         }
 
-        std::cout << "info depth " << depth << " score cp " << currentBestScore << " nodes "
-                  << state.nodes << std::endl;
+        auto now = std::chrono::steady_clock::now();
+        int64_t timeMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime).count();
+        int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
+
+        std::cout << "info depth " << depth << " seldepth " << state.seldepth;
+
+        if (std::abs(currentBestScore) >= MATE_SCORE - 100) {
+            int matePly = MATE_SCORE - std::abs(currentBestScore);
+            int mateInMoves = (matePly + 1) / 2;
+            if (currentBestScore < 0) mateInMoves = -mateInMoves;
+            std::cout << " score mate " << mateInMoves;
+        } else {
+            std::cout << " score cp " << currentBestScore;
+        }
+
+        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs << " pv";
+        for (int i = 0; i < state.pvLength[0]; i++) {
+            std::cout << " " << moveToString(state.pv[0][i]);
+        }
+        std::cout << std::endl;
 
         if (std::abs(currentBestScore) >= MATE_SCORE - 100) break;
     }

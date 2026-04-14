@@ -1,7 +1,7 @@
 #include "eval.h"
 #include "bitboard.h"
 
-static const int PieceValue[] = {0, 100, 320, 330, 500, 900, 20000};
+const int PieceValue[] = {0, 100, 320, 330, 500, 900, 20000};
 
 // clang-format off
 
