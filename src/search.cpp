@@ -32,13 +32,21 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
 
-    int standPat = evaluate(board);
-    if (standPat >= beta) return beta;
-    if (standPat > alpha) alpha = standPat;
+    bool inCheck = isInCheck(board);
 
-    std::vector<Move> captures = generateLegalCaptures(board);
+    if (!inCheck) {
+        int standPat = evaluate(board);
+        if (standPat >= beta) return beta;
+        if (standPat > alpha) alpha = standPat;
+    }
 
-    for (const Move &m : captures) {
+    // When in check, search all legal moves (must escape check).
+    // Otherwise, search only captures.
+    std::vector<Move> moves = inCheck ? generateLegalMoves(board) : generateLegalCaptures(board);
+
+    if (inCheck && moves.empty()) return -(MATE_SCORE - ply);
+
+    for (const Move &m : moves) {
         UndoInfo undo = board.makeMove(m);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
