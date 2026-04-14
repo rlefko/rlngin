@@ -1,4 +1,5 @@
 #include "movegen.h"
+#include "bitboard.h"
 #include <cstdlib>
 
 static bool inBounds(int rank, int file) {
@@ -6,71 +7,47 @@ static bool inBounds(int rank, int file) {
 }
 
 bool isSquareAttacked(const Board &board, int sq, Color byColor) {
-    int rank = squareRank(sq);
-    int file = squareFile(sq);
+    Bitboard occ = boardOccupancy(board);
 
     // Knight attacks
-    const int knightDr[] = {-2, -2, -1, -1, 1, 1, 2, 2};
-    const int knightDf[] = {-1, 1, -2, 2, -2, 2, -1, 1};
-    for (int i = 0; i < 8; i++) {
-        int r = rank + knightDr[i], f = file + knightDf[i];
-        if (inBounds(r, f)) {
-            Piece p = board.squares[makeSquare(r, f)];
-            if (p.type == Knight && p.color == byColor) return true;
-        }
+    Bitboard knights = KnightAttacks[sq];
+    for (Bitboard b = knights; b;) {
+        int s = popLsb(b);
+        if (board.squares[s].type == Knight && board.squares[s].color == byColor) return true;
     }
 
     // King attacks
-    for (int dr = -1; dr <= 1; dr++) {
-        for (int df = -1; df <= 1; df++) {
-            if (dr == 0 && df == 0) continue;
-            int r = rank + dr, f = file + df;
-            if (inBounds(r, f)) {
-                Piece p = board.squares[makeSquare(r, f)];
-                if (p.type == King && p.color == byColor) return true;
-            }
-        }
+    Bitboard kings = KingAttacks[sq];
+    for (Bitboard b = kings; b;) {
+        int s = popLsb(b);
+        if (board.squares[s].type == King && board.squares[s].color == byColor) return true;
     }
 
-    // Pawn attacks
-    int pawnDir = (byColor == White) ? -1 : 1;
-    for (int df : {-1, 1}) {
-        int r = rank + pawnDir, f = file + df;
-        if (inBounds(r, f)) {
-            Piece p = board.squares[makeSquare(r, f)];
-            if (p.type == Pawn && p.color == byColor) return true;
-        }
+    // Pawn attacks: squares from which a byColor pawn attacks sq
+    // are given by the opposite color's pawn attack pattern from sq
+    Color them = (byColor == White) ? Black : White;
+    Bitboard pawns = PawnAttacks[them][sq];
+    for (Bitboard b = pawns; b;) {
+        int s = popLsb(b);
+        if (board.squares[s].type == Pawn && board.squares[s].color == byColor) return true;
     }
 
-    // Sliding pieces (rook/queen for straights, bishop/queen for diagonals)
-    const int straightDr[] = {-1, 1, 0, 0};
-    const int straightDf[] = {0, 0, -1, 1};
-    for (int d = 0; d < 4; d++) {
-        for (int dist = 1; dist < 8; dist++) {
-            int r = rank + straightDr[d] * dist;
-            int f = file + straightDf[d] * dist;
-            if (!inBounds(r, f)) break;
-            Piece p = board.squares[makeSquare(r, f)];
-            if (p.type != None) {
-                if (p.color == byColor && (p.type == Rook || p.type == Queen)) return true;
-                break;
-            }
-        }
+    // Rook/queen attacks (straight lines)
+    Bitboard rooks = rookAttacks(sq, occ);
+    for (Bitboard b = rooks; b;) {
+        int s = popLsb(b);
+        if (board.squares[s].color == byColor &&
+            (board.squares[s].type == Rook || board.squares[s].type == Queen))
+            return true;
     }
 
-    const int diagDr[] = {-1, -1, 1, 1};
-    const int diagDf[] = {-1, 1, -1, 1};
-    for (int d = 0; d < 4; d++) {
-        for (int dist = 1; dist < 8; dist++) {
-            int r = rank + diagDr[d] * dist;
-            int f = file + diagDf[d] * dist;
-            if (!inBounds(r, f)) break;
-            Piece p = board.squares[makeSquare(r, f)];
-            if (p.type != None) {
-                if (p.color == byColor && (p.type == Bishop || p.type == Queen)) return true;
-                break;
-            }
-        }
+    // Bishop/queen attacks (diagonals)
+    Bitboard bishops = bishopAttacks(sq, occ);
+    for (Bitboard b = bishops; b;) {
+        int s = popLsb(b);
+        if (board.squares[s].color == byColor &&
+            (board.squares[s].type == Bishop || board.squares[s].type == Queen))
+            return true;
     }
 
     return false;
