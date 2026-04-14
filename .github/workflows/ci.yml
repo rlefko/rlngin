@@ -79,13 +79,12 @@ jobs:
       - name: Run screen (50 pairs, 10+0.1)
         run: ./scripts/screen.sh 50 10+0.1 2
 
-      - name: Parse results
+      - name: Format results
         id: results
         run: |
-          SUMMARY=$(grep -A4 "Results of" results/screen.log || tail -10 results/screen.log)
           {
-            echo "summary<<EOF"
-            echo "$SUMMARY"
+            echo "comment<<EOF"
+            ./scripts/format-screen-comment.sh results/screen.log "100 games (50 pairs)" "10+0.1"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -93,14 +92,7 @@ jobs:
         uses: marocchino/sticky-pull-request-comment@v2
         with:
           header: screen-results
-          message: |
-            ## Self-Play Screen Results
-
-            ```
-            ${{ steps.results.outputs.summary }}
-            ```
-
-            <sub>100 games (50 pairs) | tc=10+0.1 | UHO_Lichess_4852_v1.epd</sub>
+          message: ${{ steps.results.outputs.comment }}
 
   screen-main:
     name: Main Benchmark
