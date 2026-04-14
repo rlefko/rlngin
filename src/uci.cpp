@@ -1,10 +1,9 @@
 #include "uci.h"
 #include "board.h"
-#include "movegen.h"
+#include "search.h"
 #include <iostream>
 #include <sstream>
 #include <string>
-#include <vector>
 
 static void handlePosition(Board &board, std::istringstream &ss) {
     std::string token;
@@ -30,11 +29,11 @@ static void handlePosition(Board &board, std::istringstream &ss) {
 }
 
 static void handleGo(const Board &board) {
-    std::vector<Move> moves = generateLegalMoves(board);
-    if (moves.empty()) {
+    Move best = findBestMove(board);
+    if (best.from == best.to) {
         std::cout << "bestmove 0000" << std::endl;
     } else {
-        std::cout << "bestmove " << moveToString(moves[0]) << std::endl;
+        std::cout << "bestmove " << moveToString(best) << std::endl;
     }
 }
 
