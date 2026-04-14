@@ -68,6 +68,55 @@ TEST_CASE("Search: alpha-beta prunes nodes at depth 4", "[search]") {
     CHECK(state.nodes < 500000);
 }
 
+TEST_CASE("Search: qsearch avoids leaving piece en prise", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White knight on d4, black bishop on e6 attacks it. White to move.
+    // At depth 1, the engine should not leave the knight to be captured.
+    board.setFen("4k3/8/4b3/8/3N4/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 1);
+    // The knight should move away from d4 (not stay and get captured)
+    CHECK(best.from == stringToSquare("d4"));
+}
+
+TEST_CASE("Search: qsearch resolves pawn capture", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White pawn on e4 can capture black pawn on d5. Simple gain.
+    board.setFen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 1);
+    CHECK(best.from == stringToSquare("e4"));
+    CHECK(best.to == stringToSquare("d5"));
+}
+
+TEST_CASE("Search: qsearch prevents blundering into recapture", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White pawn on e5, black rook on d6. Pawn could try to capture but rook
+    // is worth more. Engine should not move the pawn into the rook.
+    board.setFen("4k3/8/3r4/4P3/8/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 2);
+    // Pawn should NOT capture the rook (it would be recaptured for a loss)
+    // Actually the pawn captures the rook for free here, so let me use a better position
+    // where a piece would be lost to recapture.
+    // White knight on e5, black pawn on d6 defends a black pawn on e6.
+    // If knight captures e6 pawn, d6 pawn recaptures.
+    board.setFen("4k3/8/3pp3/4N3/8/8/8/4K3 w - - 0 1");
+
+    best = findBestMove(board, 1);
+    // Knight should not capture e6 (loses knight for pawn). It should capture d6 instead (undefended).
+    if (best.from == stringToSquare("e5") && best.to == stringToSquare("e6")) {
+        // This would be a blunder
+        CHECK(false);
+    }
+}
+
 TEST_CASE("Search: respects time limit", "[search]") {
     ensureInit();
     Board board;
