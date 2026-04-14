@@ -4,12 +4,14 @@
 #include "movegen.h"
 #include "tt.h"
 #include <algorithm>
+#include <cstring>
 #include <iostream>
 #include <limits>
 
 static TranspositionTable tt(16);
 
-static int scoreMove(const Move &m, const Board &board, const Move &ttMove) {
+static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
+                     const SearchState &state) {
     // TT move gets highest priority
     if (m.from == ttMove.from && m.to == ttMove.to && m.promotion == ttMove.promotion) {
         return 10000000;
@@ -31,6 +33,16 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove) {
     // Captures scored by MVV-LVA
     if (captured.type != None) {
         return 1000000 + PieceValue[captured.type] * 100 - PieceValue[board.squares[m.from].type];
+    }
+
+    // Killer moves
+    if (ply >= 0) {
+        for (int k = 0; k < 2; k++) {
+            const Move &killer = state.killers[ply][k];
+            if (m.from == killer.from && m.to == killer.to && m.promotion == killer.promotion) {
+                return 900000 - k;
+            }
+        }
     }
 
     return 0;
@@ -81,7 +93,7 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     // MVV-LVA ordering for captures
     Move noTTMove = {0, 0, None};
     std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
-        return scoreMove(a, board, noTTMove) > scoreMove(b, board, noTTMove);
+        return scoreMove(a, board, noTTMove, -1, state) > scoreMove(b, board, noTTMove, -1, state);
     });
 
     for (const Move &m : moves) {
@@ -137,7 +149,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
     std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
-        return scoreMove(a, board, ttMove) > scoreMove(b, board, ttMove);
+        return scoreMove(a, board, ttMove, ply, state) > scoreMove(b, board, ttMove, ply, state);
     });
 
     int bestScore = -INF_SCORE;
@@ -160,7 +172,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
             state.pvLength[ply] = state.pvLength[ply + 1];
         }
-        if (alpha >= beta) break;
+        if (alpha >= beta) {
+            // Store killer move if it's a quiet move (not a capture or en passant)
+            if (board.squares[m.to].type == None &&
+                !(board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
+                  board.enPassantSquare != -1)) {
+                state.killers[ply][1] = state.killers[ply][0];
+                state.killers[ply][0] = m;
+            }
+            break;
+        }
     }
 
     // TT store
@@ -197,6 +218,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     state.stopped = false;
     state.nodes = 0;
     state.bestMove = {0, 0, None};
+    memset(state.killers, 0, sizeof(state.killers));
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = computeTimeAllocation(board, limits);
 
