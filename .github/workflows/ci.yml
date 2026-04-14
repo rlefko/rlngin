@@ -59,12 +59,21 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Download engine artifact
+      - name: Download dev engine artifact
         uses: actions/download-artifact@v4
         with:
           name: rlngin
           path: build
       - run: chmod +x build/rlngin
+
+      - name: Build base engine from main
+        run: |
+          git fetch origin main
+          git worktree add /tmp/base origin/main
+          make -C /tmp/base build
+          cp /tmp/base/build/rlngin build/rlngin-base
+          chmod +x build/rlngin-base
+          git worktree remove /tmp/base
 
       - name: Download fastchess
         run: |
@@ -77,7 +86,7 @@ jobs:
         run: make fetch-openings
 
       - name: Run screen (50 pairs, 10+0.1)
-        run: ./scripts/screen.sh 50 10+0.1 2
+        run: ENGINE_DEV=./build/rlngin ENGINE_BASE=./build/rlngin-base ./scripts/screen.sh 50 10+0.1 2
 
       - name: Format results
         id: results
