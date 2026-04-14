@@ -30,17 +30,18 @@ LOS=$(echo "$RESULTS" | grep "^LOS:" | sed 's/LOS: \([^ ]*\).*/\1/')
 DRAW_RATIO=$(parse 's/.*DrawRatio: \([0-9.]*\).*/\1/p')
 PTNML=$(parse 's/.*Ptnml(0-2): \(\[[0-9, ]*\]\).*/\1/p')
 
+# Check for LLR (only present with SPRT)
+LLR=$(echo "$RESULTS" | sed -n 's/.*LLR: \([^ ]*\).*/\1/p')
+LLR="${LLR:-N/A}"
+
 # URL-encode for shields.io badges
-urlencode() { python3 -c "import urllib.parse; print(urllib.parse.quote('$1', safe=''))"; }
+enc() { python3 -c "import urllib.parse; print(urllib.parse.quote('$1', safe=''))"; }
 
-ELO_DISPLAY="$ELO +/- $ELO_ERR"
-WLD_DISPLAY="$WINS / $DRAWS / $LOSSES"
-SCORE_DISPLAY="$POINTS / $GAMES ($SCORE_PCT%)"
-
-ELO_ENCODED=$(urlencode "$ELO_DISPLAY")
-WLD_ENCODED=$(urlencode "$WLD_DISPLAY")
-SCORE_ENCODED=$(urlencode "$SCORE_DISPLAY")
-LOS_ENCODED=$(urlencode "$LOS%")
+ELO_MSG=$(enc "$ELO +/- $ELO_ERR")
+LOS_MSG=$(enc "$LOS%")
+LLR_MSG=$(enc "$LLR")
+WLD_MSG=$(enc "$WINS / $DRAWS / $LOSSES")
+SCORE_MSG=$(enc "$POINTS / $GAMES ($SCORE_PCT%)")
 
 # Pick Elo badge color
 if echo "$ELO" | grep -q "nan"; then
@@ -64,10 +65,19 @@ else
     LOS_COLOR="yellow"
 fi
 
+# Pick LLR badge color
+if [ "$LLR" = "N/A" ]; then
+    LLR_COLOR="gray"
+else
+    LLR_COLOR="blue"
+fi
+
+B="https://img.shields.io/static/v1"
+
 cat <<MARKDOWN
 ## :chess_pawn: Self-Play Screen
 
-![Elo](https://img.shields.io/badge/Elo-${ELO_ENCODED}-${ELO_COLOR}) ![LOS](https://img.shields.io/badge/LOS-${LOS_ENCODED}-${LOS_COLOR}) ![W/D/L](https://img.shields.io/badge/W%2FD%2FL-${WLD_ENCODED}-lightgray) ![Score](https://img.shields.io/badge/Score-${SCORE_ENCODED}-blue) ![Draws](https://img.shields.io/badge/Draws-${DRAW_RATIO}%25-lightgray)
+![Elo]($B?label=Elo&message=$ELO_MSG&color=$ELO_COLOR) ![LOS]($B?label=LOS&message=$LOS_MSG&color=$LOS_COLOR) ![LLR]($B?label=LLR&message=$LLR_MSG&color=$LLR_COLOR) ![W/D/L]($B?label=W/D/L&message=$WLD_MSG&color=lightgray) ![Score]($B?label=Score&message=$SCORE_MSG&color=blue) ![Draws]($B?label=Draws&message=${DRAW_RATIO}%25&color=lightgray)
 
 Ptnml(0-2): \`$PTNML\`
 $GAMES_LABEL | tc=$TC | UHO_Lichess_4852_v1.epd
