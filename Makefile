@@ -23,7 +23,10 @@ FASTCHESS_ASSET := fastchess-linux-x86-64
 endif
 FASTCHESS_URL := https://github.com/Disservin/fastchess/releases/latest/download/$(FASTCHESS_ASSET).tar
 
-.PHONY: build clean run test format format-check fetch-fastchess selfplay
+CATCH2_VERSION := 3.8.0
+CATCH2_URL := https://raw.githubusercontent.com/catchorg/Catch2/v$(CATCH2_VERSION)/extras
+
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess selfplay
 
 build: $(TARGET)
 
@@ -48,13 +51,21 @@ $(TEST_TARGET): $(TEST_OBJS) $(CATCH2_OBJ) $(LIB_OBJS)
 	@mkdir -p $(BUILDDIR)
 	$(CXX) $(CXXFLAGS) -o $@ $^
 
-$(BUILDDIR)/test_%.o: $(TESTDIR)/test_%.cpp
+$(BUILDDIR)/test_%.o: $(TESTDIR)/test_%.cpp $(CATCH2DIR)/catch_amalgamated.hpp
 	@mkdir -p $(BUILDDIR)
 	$(CXX) $(CXXFLAGS) -I$(CATCH2DIR) -I$(SRCDIR) -c -o $@ $<
 
 $(CATCH2_OBJ): $(CATCH2DIR)/catch_amalgamated.cpp
 	@mkdir -p $(BUILDDIR)
 	$(CXX) $(CXXFLAGS) -I$(CATCH2DIR) -c -o $@ $<
+
+$(CATCH2DIR)/catch_amalgamated.hpp $(CATCH2DIR)/catch_amalgamated.cpp:
+	@mkdir -p $(CATCH2DIR)
+	@echo "Downloading Catch2 v$(CATCH2_VERSION)..."
+	@curl -sL "$(CATCH2_URL)/catch_amalgamated.hpp" -o $(CATCH2DIR)/catch_amalgamated.hpp
+	@curl -sL "$(CATCH2_URL)/catch_amalgamated.cpp" -o $(CATCH2DIR)/catch_amalgamated.cpp
+
+fetch-catch2: $(CATCH2DIR)/catch_amalgamated.hpp $(CATCH2DIR)/catch_amalgamated.cpp
 
 format:
 	@find src tests -name '*.cpp' -o -name '*.h' | grep -v catch2 | xargs clang-format -i
