@@ -120,6 +120,16 @@ void Board::setFen(const std::string &fen) {
         enPassantSquare = -1;
     }
 
+    occupied = 0;
+    byColor[White] = 0;
+    byColor[Black] = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        if (squares[sq].type != None) {
+            occupied |= 1ULL << sq;
+            byColor[squares[sq].color] |= 1ULL << sq;
+        }
+    }
+
     computeKey();
 }
 
@@ -142,14 +152,20 @@ void Board::makeMove(const Move &m) {
         int capturedPawnSq = (moving.color == White) ? m.to - 8 : m.to + 8;
         key ^= zobrist::piece_keys[1 - moving.color][Pawn][capturedPawnSq];
         squares[capturedPawnSq] = {None, White};
+        occupied ^= 1ULL << capturedPawnSq;
+        byColor[1 - moving.color] ^= 1ULL << capturedPawnSq;
     } else if (captured.type != None) {
-        // Regular capture
+        // Regular capture: remove captured piece from opponent's bitboard
         key ^= zobrist::piece_keys[captured.color][captured.type][m.to];
+        occupied ^= 1ULL << m.to;
+        byColor[captured.color] ^= 1ULL << m.to;
     }
 
     // Move the piece
     squares[m.to] = moving;
     squares[m.from] = {None, White};
+    occupied ^= (1ULL << m.from) | (1ULL << m.to);
+    byColor[moving.color] ^= (1ULL << m.from) | (1ULL << m.to);
 
     // Promotion
     if (m.promotion != None) {
@@ -169,12 +185,16 @@ void Board::makeMove(const Move &m) {
             key ^= zobrist::piece_keys[moving.color][Rook][m.from + 1];
             squares[m.from + 1] = squares[m.from + 3];
             squares[m.from + 3] = {None, White};
+            occupied ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
+            byColor[moving.color] ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
         } else if (diff == -2) {
             // Queenside
             key ^= zobrist::piece_keys[moving.color][Rook][m.from - 4];
             key ^= zobrist::piece_keys[moving.color][Rook][m.from - 1];
             squares[m.from - 1] = squares[m.from - 4];
             squares[m.from - 4] = {None, White};
+            occupied ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
+            byColor[moving.color] ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
         }
     }
 

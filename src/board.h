@@ -17,6 +17,8 @@ class Board {
     int halfmoveClock = 0;
     int fullmoveNumber = 1;
     uint64_t key = 0;
+    uint64_t occupied = 0;
+    uint64_t byColor[2] = {0, 0};
 
     Board();
     void setStartPos();

@@ -79,19 +79,11 @@ inline Bitboard queenAttacks(int sq, Bitboard occ) {
 void initBitboards();
 
 inline Bitboard boardOccupancy(const Board &board) {
-    Bitboard occ = 0;
-    for (int sq = 0; sq < 64; sq++) {
-        if (board.squares[sq].type != None) occ |= squareBB(sq);
-    }
-    return occ;
+    return board.occupied;
 }
 
 inline Bitboard boardColorOccupancy(const Board &board, Color c) {
-    Bitboard occ = 0;
-    for (int sq = 0; sq < 64; sq++) {
-        if (board.squares[sq].type != None && board.squares[sq].color == c) occ |= squareBB(sq);
-    }
-    return occ;
+    return board.byColor[c];
 }
 
 #endif
