@@ -1,4 +1,5 @@
 #include "search.h"
+#include "bitboard.h"
 #include "eval.h"
 #include "movegen.h"
 #include "tt.h"
@@ -20,16 +21,12 @@ static void checkTime(SearchState &state) {
 static bool isInCheck(const Board &board) {
     Color side = board.sideToMove;
     Color opponent = (side == White) ? Black : White;
-    for (int sq = 0; sq < 64; sq++) {
-        if (board.squares[sq].type == King && board.squares[sq].color == side) {
-            return isSquareAttacked(board, sq, opponent);
-        }
-    }
-    return false;
+    Bitboard kingBB = board.byPiece[King] & board.byColor[side];
+    if (!kingBB) return false;
+    return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
-static int negamax(const Board &board, int depth, int ply, int alpha, int beta,
-                   SearchState &state) {
+static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
     state.nodes++;
 
     if (state.nodes % 1024 == 0) checkTime(state);
@@ -79,9 +76,9 @@ static int negamax(const Board &board, int depth, int ply, int alpha, int beta,
     Move bestMove = moves[0];
 
     for (const Move &m : moves) {
-        Board copy = board;
-        copy.makeMove(m);
-        int score = -negamax(copy, depth - 1, ply + 1, -beta, -alpha, state);
+        UndoInfo undo = board.makeMove(m);
+        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+        board.unmakeMove(m, undo);
         if (state.stopped) return 0;
         if (score > bestScore) {
             bestScore = score;
@@ -130,7 +127,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
     int maxDepth = (limits.depth > 0) ? limits.depth : 100;
 
-    std::vector<Move> rootMoves = generateLegalMoves(board);
+    Board pos = board;
+    std::vector<Move> rootMoves = generateLegalMoves(pos);
     if (rootMoves.empty()) return;
 
     for (int depth = 1; depth <= maxDepth; depth++) {
@@ -140,9 +138,9 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         int beta = INF_SCORE;
 
         for (const Move &m : rootMoves) {
-            Board copy = board;
-            copy.makeMove(m);
-            int score = -negamax(copy, depth - 1, 0, -beta, -alpha, state);
+            UndoInfo undo = pos.makeMove(m);
+            int score = -negamax(pos, depth - 1, 0, -beta, -alpha, state);
+            pos.unmakeMove(m, undo);
             if (state.stopped) break;
             if (score > currentBestScore) {
                 currentBestScore = score;

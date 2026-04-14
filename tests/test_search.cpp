@@ -1,8 +1,18 @@
+#include "bitboard.h"
 #include "board.h"
 #include "catch_amalgamated.hpp"
 #include "search.h"
 
+static void ensureInit() {
+    static bool done = false;
+    if (!done) {
+        initBitboards();
+        done = true;
+    }
+}
+
 TEST_CASE("Search: captures hanging queen", "[search]") {
+    ensureInit();
     Board board;
     // White knight on e4 can capture undefended black queen on d6
     board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
@@ -13,6 +23,7 @@ TEST_CASE("Search: captures hanging queen", "[search]") {
 }
 
 TEST_CASE("Search: prefers capturing queen over pawn", "[search]") {
+    ensureInit();
     Board board;
     // White bishop on d4 can capture black queen on f6 or black pawn on b2
     board.setFen("4k3/8/5q2/8/3B4/8/1p6/4K3 w - - 0 1");
@@ -23,6 +34,7 @@ TEST_CASE("Search: prefers capturing queen over pawn", "[search]") {
 }
 
 TEST_CASE("Search: finds mate in 1", "[search]") {
+    ensureInit();
     Board board;
     // Back-rank mate: Re1 can deliver Re8# since f7/g7/h7 pawns trap the king
     board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
@@ -33,6 +45,7 @@ TEST_CASE("Search: finds mate in 1", "[search]") {
 }
 
 TEST_CASE("Search: returns valid move at deeper depths", "[search]") {
+    ensureInit();
     Board board;
     board.setStartPos();
 
@@ -41,6 +54,7 @@ TEST_CASE("Search: returns valid move at deeper depths", "[search]") {
 }
 
 TEST_CASE("Search: alpha-beta prunes nodes at depth 4", "[search]") {
+    ensureInit();
     Board board;
     board.setStartPos();
 
@@ -55,6 +69,7 @@ TEST_CASE("Search: alpha-beta prunes nodes at depth 4", "[search]") {
 }
 
 TEST_CASE("Search: respects time limit", "[search]") {
+    ensureInit();
     Board board;
     board.setStartPos();
 
