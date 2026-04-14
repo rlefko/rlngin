@@ -30,6 +30,10 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
 
+    if (ply >= MAX_PLY) return evaluate(board);
+
+    state.pvLength[ply] = ply;
+
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
 
@@ -62,6 +66,9 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
+    state.pvLength[ply] = ply;
+
+    if (ply >= MAX_PLY - 1) return evaluate(board);
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
@@ -118,7 +125,14 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             bestScore = score;
             bestMove = m;
         }
-        if (score > alpha) alpha = score;
+        if (score > alpha) {
+            alpha = score;
+            state.pv[ply][ply] = m;
+            for (int i = ply + 1; i < state.pvLength[ply + 1]; i++) {
+                state.pv[ply][i] = state.pv[ply + 1][i];
+            }
+            state.pvLength[ply] = state.pvLength[ply + 1];
+        }
         if (alpha >= beta) break;
     }
 
@@ -172,16 +186,25 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         int alpha = -INF_SCORE;
         int beta = INF_SCORE;
 
+        state.pvLength[0] = 0;
+
         for (const Move &m : rootMoves) {
             UndoInfo undo = pos.makeMove(m);
-            int score = -negamax(pos, depth - 1, 0, -beta, -alpha, state);
+            int score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
             pos.unmakeMove(m, undo);
             if (state.stopped) break;
             if (score > currentBestScore) {
                 currentBestScore = score;
                 currentBest = m;
             }
-            if (score > alpha) alpha = score;
+            if (score > alpha) {
+                alpha = score;
+                state.pv[0][0] = m;
+                for (int i = 1; i < state.pvLength[1]; i++) {
+                    state.pv[0][i] = state.pv[1][i];
+                }
+                state.pvLength[0] = state.pvLength[1];
+            }
         }
 
         if (state.stopped) break;
