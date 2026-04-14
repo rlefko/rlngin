@@ -59,6 +59,8 @@ void uciLoop() {
             handlePosition(board, ss);
         } else if (command == "go") {
             handleGo(board);
+        } else if (command == "stop") {
+            // No-op: engine responds instantly, so stop is never needed
         } else if (command == "quit") {
             break;
         }
