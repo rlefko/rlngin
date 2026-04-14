@@ -102,17 +102,13 @@ TEST_CASE("Search: qsearch prevents blundering into recapture", "[search][qsearc
     board.setFen("4k3/8/3r4/4P3/8/8/8/4K3 w - - 0 1");
 
     Move best = findBestMove(board, 2);
-    // Pawn should NOT capture the rook (it would be recaptured for a loss)
-    // Actually the pawn captures the rook for free here, so let me use a better position
-    // where a piece would be lost to recapture.
-    // White knight on e5, black pawn on d6 defends a black pawn on e6.
-    // If knight captures e6 pawn, d6 pawn recaptures.
+    // Knight on e5, pawns on d6/e6. Nxe6 loses the knight to dxe6.
+    // Nxd6 is safe since e6 pawn does not defend d6.
     board.setFen("4k3/8/3pp3/4N3/8/8/8/4K3 w - - 0 1");
 
     best = findBestMove(board, 1);
-    // Knight should not capture e6 (loses knight for pawn). It should capture d6 instead (undefended).
+    // Knight should not capture e6 (loses knight for pawn)
     if (best.from == stringToSquare("e5") && best.to == stringToSquare("e6")) {
-        // This would be a blunder
         CHECK(false);
     }
 }
