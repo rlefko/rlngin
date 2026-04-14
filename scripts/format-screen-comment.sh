@@ -75,7 +75,7 @@ fi
 B="https://img.shields.io/static/v1"
 
 cat <<MARKDOWN
-## :chess_pawn: Self-Play Screen
+## :chess_pawn: Screen vs Main
 
 ![Elo]($B?label=Elo&message=$ELO_MSG&color=$ELO_COLOR) ![LOS]($B?label=LOS&message=$LOS_MSG&color=$LOS_COLOR) ![LLR]($B?label=LLR&message=$LLR_MSG&color=$LLR_COLOR) ![W/D/L]($B?label=W/D/L&message=$WLD_MSG&color=lightgray) ![Score]($B?label=Score&message=$SCORE_MSG&color=blue) ![Draws]($B?label=Draws&message=${DRAW_RATIO}%25&color=lightgray)
 
