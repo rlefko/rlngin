@@ -1,4 +1,5 @@
 #include "search.h"
+#include "bitboard.h"
 #include "eval.h"
 #include "movegen.h"
 #include "tt.h"
@@ -20,12 +21,9 @@ static void checkTime(SearchState &state) {
 static bool isInCheck(const Board &board) {
     Color side = board.sideToMove;
     Color opponent = (side == White) ? Black : White;
-    for (int sq = 0; sq < 64; sq++) {
-        if (board.squares[sq].type == King && board.squares[sq].color == side) {
-            return isSquareAttacked(board, sq, opponent);
-        }
-    }
-    return false;
+    Bitboard kingBB = board.byPiece[King] & board.byColor[side];
+    if (!kingBB) return false;
+    return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
 static int negamax(const Board &board, int depth, int ply, int alpha, int beta,

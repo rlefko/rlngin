@@ -6,49 +6,14 @@ static bool inBounds(int rank, int file) {
 }
 
 bool isSquareAttacked(const Board &board, int sq, Color byColor) {
-    Bitboard occ = boardOccupancy(board);
-
-    // Knight attacks
-    Bitboard knights = KnightAttacks[sq];
-    for (Bitboard b = knights; b;) {
-        int s = popLsb(b);
-        if (board.squares[s].type == Knight && board.squares[s].color == byColor) return true;
-    }
-
-    // King attacks
-    Bitboard kings = KingAttacks[sq];
-    for (Bitboard b = kings; b;) {
-        int s = popLsb(b);
-        if (board.squares[s].type == King && board.squares[s].color == byColor) return true;
-    }
-
-    // Pawn attacks: squares from which a byColor pawn attacks sq
-    // are given by the opposite color's pawn attack pattern from sq
-    Color them = (byColor == White) ? Black : White;
-    Bitboard pawns = PawnAttacks[them][sq];
-    for (Bitboard b = pawns; b;) {
-        int s = popLsb(b);
-        if (board.squares[s].type == Pawn && board.squares[s].color == byColor) return true;
-    }
-
-    // Rook/queen attacks (straight lines)
-    Bitboard rooks = rookAttacks(sq, occ);
-    for (Bitboard b = rooks; b;) {
-        int s = popLsb(b);
-        if (board.squares[s].color == byColor &&
-            (board.squares[s].type == Rook || board.squares[s].type == Queen))
-            return true;
-    }
-
-    // Bishop/queen attacks (diagonals)
-    Bitboard bishops = bishopAttacks(sq, occ);
-    for (Bitboard b = bishops; b;) {
-        int s = popLsb(b);
-        if (board.squares[s].color == byColor &&
-            (board.squares[s].type == Bishop || board.squares[s].type == Queen))
-            return true;
-    }
-
+    Bitboard them = board.byColor[byColor];
+    if (KnightAttacks[sq] & board.byPiece[Knight] & them) return true;
+    if (KingAttacks[sq] & board.byPiece[King] & them) return true;
+    Color us = (byColor == White) ? Black : White;
+    if (PawnAttacks[us][sq] & board.byPiece[Pawn] & them) return true;
+    Bitboard occ = board.occupied;
+    if (rookAttacks(sq, occ) & (board.byPiece[Rook] | board.byPiece[Queen]) & them) return true;
+    if (bishopAttacks(sq, occ) & (board.byPiece[Bishop] | board.byPiece[Queen]) & them) return true;
     return false;
 }
 
