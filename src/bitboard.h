@@ -49,6 +49,33 @@ extern Bitboard KnightAttacks[64];
 extern Bitboard KingAttacks[64];
 extern Bitboard PawnAttacks[2][64];
 
+// Magic bitboard structures
+struct Magic {
+    Bitboard mask;
+    Bitboard magic;
+    int shift;
+    Bitboard *attacks;
+};
+
+extern Magic RookMagics[64];
+extern Magic BishopMagics[64];
+extern Bitboard RookTable[102400];
+extern Bitboard BishopTable[5248];
+
+inline Bitboard rookAttacks(int sq, Bitboard occ) {
+    const Magic &m = RookMagics[sq];
+    return m.attacks[((occ & m.mask) * m.magic) >> m.shift];
+}
+
+inline Bitboard bishopAttacks(int sq, Bitboard occ) {
+    const Magic &m = BishopMagics[sq];
+    return m.attacks[((occ & m.mask) * m.magic) >> m.shift];
+}
+
+inline Bitboard queenAttacks(int sq, Bitboard occ) {
+    return rookAttacks(sq, occ) | bishopAttacks(sq, occ);
+}
+
 void initBitboards();
 
 inline Bitboard boardOccupancy(const Board &board) {

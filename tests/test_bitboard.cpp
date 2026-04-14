@@ -61,6 +61,68 @@ TEST_CASE("Pawn attacks", "[bitboard][pawn]") {
     CHECK(PawnAttacks[Black][h7] == squareBB(stringToSquare("g6")));
 }
 
+TEST_CASE("Rook attacks on empty board", "[bitboard][rook]") {
+    initBitboards();
+
+    // Rook on a1 with no blockers attacks all of rank 1 and file a (minus a1)
+    Bitboard occ = 0;
+    Bitboard attacks = rookAttacks(stringToSquare("a1"), occ);
+    Bitboard expected = (Rank1BB | FileABB) & ~squareBB(stringToSquare("a1"));
+    CHECK(attacks == expected);
+    CHECK(popcount(attacks) == 14);
+}
+
+TEST_CASE("Rook attacks with blockers", "[bitboard][rook]") {
+    initBitboards();
+
+    // Rook on e4, blockers on e7 and b4
+    int e4 = stringToSquare("e4");
+    Bitboard occ = squareBB(stringToSquare("e7")) | squareBB(stringToSquare("b4"));
+    Bitboard attacks = rookAttacks(e4, occ);
+
+    // Should reach e5, e6, e7 (blocked), e3, e2, e1, f4, g4, h4, d4, c4, b4 (blocked)
+    CHECK((attacks & squareBB(stringToSquare("e5"))) != 0);
+    CHECK((attacks & squareBB(stringToSquare("e7"))) != 0);
+    CHECK((attacks & squareBB(stringToSquare("e8"))) == 0);
+    CHECK((attacks & squareBB(stringToSquare("b4"))) != 0);
+    CHECK((attacks & squareBB(stringToSquare("a4"))) == 0);
+    CHECK((attacks & squareBB(stringToSquare("h4"))) != 0);
+}
+
+TEST_CASE("Bishop attacks on empty board", "[bitboard][bishop]") {
+    initBitboards();
+
+    // Bishop on d4 with no blockers
+    Bitboard occ = 0;
+    Bitboard attacks = bishopAttacks(stringToSquare("d4"), occ);
+    CHECK(popcount(attacks) == 13);
+}
+
+TEST_CASE("Bishop attacks with blockers", "[bitboard][bishop]") {
+    initBitboards();
+
+    // Bishop on d4, blocker on f6
+    int d4 = stringToSquare("d4");
+    Bitboard occ = squareBB(stringToSquare("f6"));
+    Bitboard attacks = bishopAttacks(d4, occ);
+
+    CHECK((attacks & squareBB(stringToSquare("e5"))) != 0);
+    CHECK((attacks & squareBB(stringToSquare("f6"))) != 0);
+    CHECK((attacks & squareBB(stringToSquare("g7"))) == 0);
+}
+
+TEST_CASE("Queen attacks combine rook and bishop", "[bitboard][queen]") {
+    initBitboards();
+
+    int d4 = stringToSquare("d4");
+    Bitboard occ = 0;
+    Bitboard qa = queenAttacks(d4, occ);
+    Bitboard ra = rookAttacks(d4, occ);
+    Bitboard ba = bishopAttacks(d4, occ);
+    CHECK(qa == (ra | ba));
+    CHECK(popcount(qa) == 27);
+}
+
 TEST_CASE("Board occupancy", "[bitboard]") {
     initBitboards();
 
