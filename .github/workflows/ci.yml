@@ -70,5 +70,5 @@ jobs:
             -engine cmd=./build/rlngin name=rlngin-b \
             -each tc=1+0.1 \
             -rounds 2 \
-            -pgnout selfplay.pgn \
+            -pgnout file=selfplay.pgn \
             -recover

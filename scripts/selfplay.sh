@@ -26,7 +26,7 @@ echo "Running $ROUNDS rounds of self-play..."
     -engine cmd="$ENGINE" name=rlngin-baseline \
     -each tc=10+0.1 \
     -rounds "$ROUNDS" \
-    -pgnout results/selfplay.pgn \
+    -pgnout file=results/selfplay.pgn \
     -recover \
     2>&1 | tee results/selfplay.log
 
