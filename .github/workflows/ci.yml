@@ -49,15 +49,22 @@ jobs:
       - name: Run tests
         run: make test
 
-  fastchess:
-    name: Fastchess Smoke Test
+  screen-pr:
+    name: PR Smoke Screen
+    if: github.event_name == 'pull_request'
     runs-on: ubuntu-latest
     needs: build
+    permissions:
+      pull-requests: write
     steps:
       - uses: actions/checkout@v4
 
-      - name: Build engine
-        run: make build
+      - name: Download engine artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rlngin
+          path: build
+      - run: chmod +x build/rlngin
 
       - name: Download fastchess
         run: |
@@ -66,12 +73,75 @@ jobs:
           cp fastchess-linux-x86-64/fastchess ./fastchess
           chmod +x ./fastchess
 
-      - name: Run self-play smoke test
+      - name: Download opening book
+        run: make fetch-openings
+
+      - name: Run screen (50 pairs, 10+0.1)
+        run: ./scripts/screen.sh 50 10+0.1 2
+
+      - name: Parse results
+        id: results
         run: |
-          ./fastchess \
-            -engine cmd=./build/rlngin name=rlngin-w \
-            -engine cmd=./build/rlngin name=rlngin-b \
-            -each tc=1+0.1 \
-            -rounds 2 \
-            -pgnout file=selfplay.pgn \
-            -recover
+          SUMMARY=$(grep -A4 "Results of" results/screen.log || tail -10 results/screen.log)
+          {
+            echo "summary<<EOF"
+            echo "$SUMMARY"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Comment on PR
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: screen-results
+          message: |
+            ## Self-Play Screen Results
+
+            ```
+            ${{ steps.results.outputs.summary }}
+            ```
+
+            <sub>100 games (50 pairs) | tc=10+0.1 | UHO_Lichess_4852_v1.epd</sub>
+
+  screen-main:
+    name: Main Benchmark
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    needs: build
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Download engine artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: rlngin
+          path: build
+      - run: chmod +x build/rlngin
+
+      - name: Download fastchess
+        run: |
+          curl -sL https://github.com/Disservin/fastchess/releases/latest/download/fastchess-linux-x86-64.tar -o fastchess.tar
+          tar xf fastchess.tar
+          cp fastchess-linux-x86-64/fastchess ./fastchess
+          chmod +x ./fastchess
+
+      - name: Download opening book
+        run: make fetch-openings
+
+      - name: Run screen (500 pairs, 60+0.6)
+        run: ./scripts/screen.sh 500 60+0.6 4
+
+      - name: Update README
+        run: ./scripts/update-readme-benchmark.sh results/screen.log
+
+      - name: Commit and push
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git diff --cached --quiet && echo "No changes to commit" && exit 0
+          git commit -m "Update benchmark results"
+          git push
