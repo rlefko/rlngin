@@ -6,6 +6,7 @@
 #include <limits>
 
 static const int MATE_SCORE = 30000;
+static const int INF_SCORE = MATE_SCORE + 1;
 
 static void checkTime(SearchState &state) {
     auto now = std::chrono::steady_clock::now();
@@ -27,7 +28,8 @@ static bool isInCheck(const Board &board) {
     return false;
 }
 
-static int negamax(const Board &board, int depth, int ply, SearchState &state) {
+static int negamax(const Board &board, int depth, int ply, int alpha, int beta,
+                   SearchState &state) {
     state.nodes++;
 
     if (state.nodes % 1024 == 0) checkTime(state);
@@ -42,14 +44,16 @@ static int negamax(const Board &board, int depth, int ply, SearchState &state) {
 
     if (depth == 0) return evaluate(board);
 
-    int bestScore = std::numeric_limits<int>::min();
+    int bestScore = -INF_SCORE;
 
     for (const Move &m : moves) {
         Board copy = board;
         copy.makeMove(m);
-        int score = -negamax(copy, depth - 1, ply + 1, state);
+        int score = -negamax(copy, depth - 1, ply + 1, -beta, -alpha, state);
         if (state.stopped) return 0;
         if (score > bestScore) bestScore = score;
+        if (score > alpha) alpha = score;
+        if (alpha >= beta) break;
     }
 
     return bestScore;
@@ -85,17 +89,20 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
     for (int depth = 1; depth <= maxDepth; depth++) {
         Move currentBest = rootMoves[0];
-        int currentBestScore = std::numeric_limits<int>::min();
+        int currentBestScore = -INF_SCORE;
+        int alpha = -INF_SCORE;
+        int beta = INF_SCORE;
 
         for (const Move &m : rootMoves) {
             Board copy = board;
             copy.makeMove(m);
-            int score = -negamax(copy, depth - 1, 0, state);
+            int score = -negamax(copy, depth - 1, 0, -beta, -alpha, state);
             if (state.stopped) break;
             if (score > currentBestScore) {
                 currentBestScore = score;
                 currentBest = m;
             }
+            if (score > alpha) alpha = score;
         }
 
         if (state.stopped) break;

@@ -3,18 +3,10 @@
 <!-- BENCHMARK:START -->
 ## Latest Benchmark
 
-| | |
-|:--|:--|
-| **Date** | 2026-04-14 |
-| **Games** | 100 games (50 pairs) |
-| **Time Control** | 10+0.1 |
-| **Elo** | 552.08 +/- 134.87 |
-| **Score** | 96.0 / 100 (96.00%) |
-| **Record (W/D/L)** | 92 / 8 / 0 |
-| **Draw Ratio** | 0.00% |
-| **Pentanomial** | [0, 0, 0, 8, 42] |
+![Elo](https://img.shields.io/static/v1?label=Elo&message=240.82%20%2B%2F-%2067.30&color=brightgreen) ![LOS](https://img.shields.io/static/v1?label=LOS&message=100.00%25&color=brightgreen) ![LLR](https://img.shields.io/static/v1?label=LLR&message=N%2FA&color=gray) ![W/D/L](https://img.shields.io/static/v1?label=W/D/L&message=73%20%2F%2014%20%2F%2013&color=lightgray) ![Score](https://img.shields.io/static/v1?label=Score&message=80.0%20%2F%20100%20%2880.00%25%29&color=blue) ![Draws](https://img.shields.io/static/v1?label=Draws&message=24.00%25&color=lightgray)
 
-<sub>Opening book: UHO_Lichess_4852_v1.epd</sub>
+Ptnml(0-2): `[0, 1, 12, 13, 24]`
+100 games (50 pairs) | tc=10+0.1 | UHO_Lichess_4852_v1.epd
 <!-- BENCHMARK:END -->
 
 A chess engine, made with love.
