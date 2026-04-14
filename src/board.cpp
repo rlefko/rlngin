@@ -123,10 +123,13 @@ void Board::setFen(const std::string &fen) {
     occupied = 0;
     byColor[White] = 0;
     byColor[Black] = 0;
+    for (int i = 0; i < 7; i++)
+        byPiece[i] = 0;
     for (int sq = 0; sq < 64; sq++) {
         if (squares[sq].type != None) {
             occupied |= 1ULL << sq;
             byColor[squares[sq].color] |= 1ULL << sq;
+            byPiece[squares[sq].type] |= 1ULL << sq;
         }
     }
 
@@ -154,11 +157,13 @@ void Board::makeMove(const Move &m) {
         squares[capturedPawnSq] = {None, White};
         occupied ^= 1ULL << capturedPawnSq;
         byColor[1 - moving.color] ^= 1ULL << capturedPawnSq;
+        byPiece[Pawn] ^= 1ULL << capturedPawnSq;
     } else if (captured.type != None) {
         // Regular capture: remove captured piece from opponent's bitboard
         key ^= zobrist::piece_keys[captured.color][captured.type][m.to];
         occupied ^= 1ULL << m.to;
         byColor[captured.color] ^= 1ULL << m.to;
+        byPiece[captured.type] ^= 1ULL << m.to;
     }
 
     // Move the piece
@@ -166,10 +171,13 @@ void Board::makeMove(const Move &m) {
     squares[m.from] = {None, White};
     occupied ^= (1ULL << m.from) | (1ULL << m.to);
     byColor[moving.color] ^= (1ULL << m.from) | (1ULL << m.to);
+    byPiece[moving.type] ^= (1ULL << m.from) | (1ULL << m.to);
 
     // Promotion
     if (m.promotion != None) {
         squares[m.to].type = m.promotion;
+        byPiece[moving.type] ^= 1ULL << m.to;
+        byPiece[m.promotion] |= 1ULL << m.to;
     }
 
     // XOR in piece at destination (with promoted type if applicable)
@@ -187,6 +195,7 @@ void Board::makeMove(const Move &m) {
             squares[m.from + 3] = {None, White};
             occupied ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
             byColor[moving.color] ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
+            byPiece[Rook] ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
         } else if (diff == -2) {
             // Queenside
             key ^= zobrist::piece_keys[moving.color][Rook][m.from - 4];
@@ -195,6 +204,7 @@ void Board::makeMove(const Move &m) {
             squares[m.from - 4] = {None, White};
             occupied ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
             byColor[moving.color] ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
+            byPiece[Rook] ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
         }
     }
 
