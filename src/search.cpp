@@ -1,12 +1,12 @@
 #include "search.h"
 #include "eval.h"
 #include "movegen.h"
+#include "tt.h"
 #include <algorithm>
 #include <iostream>
 #include <limits>
 
-static const int MATE_SCORE = 30000;
-static const int INF_SCORE = MATE_SCORE + 1;
+static TranspositionTable tt(16);
 
 static void checkTime(SearchState &state) {
     auto now = std::chrono::steady_clock::now();
@@ -35,6 +35,26 @@ static int negamax(const Board &board, int depth, int ply, int alpha, int beta,
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
 
+    int origAlpha = alpha;
+
+    // TT probe
+    TTEntry ttEntry;
+    Move ttMove = {0, 0, None};
+    if (tt.probe(board.key, ttEntry, ply)) {
+        ttMove = ttEntry.best_move;
+        if (ttEntry.depth >= depth) {
+            if (ttEntry.flag == TT_EXACT) {
+                return ttEntry.score;
+            }
+            if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) {
+                return ttEntry.score;
+            }
+            if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) {
+                return ttEntry.score;
+            }
+        }
+    }
+
     std::vector<Move> moves = generateLegalMoves(board);
 
     if (moves.empty()) {
@@ -44,17 +64,43 @@ static int negamax(const Board &board, int depth, int ply, int alpha, int beta,
 
     if (depth == 0) return evaluate(board);
 
+    // TT move ordering: move the TT move to the front
+    if (ttMove.from != ttMove.to) {
+        for (size_t i = 0; i < moves.size(); i++) {
+            if (moves[i].from == ttMove.from && moves[i].to == ttMove.to &&
+                moves[i].promotion == ttMove.promotion) {
+                std::swap(moves[0], moves[i]);
+                break;
+            }
+        }
+    }
+
     int bestScore = -INF_SCORE;
+    Move bestMove = moves[0];
 
     for (const Move &m : moves) {
         Board copy = board;
         copy.makeMove(m);
         int score = -negamax(copy, depth - 1, ply + 1, -beta, -alpha, state);
         if (state.stopped) return 0;
-        if (score > bestScore) bestScore = score;
+        if (score > bestScore) {
+            bestScore = score;
+            bestMove = m;
+        }
         if (score > alpha) alpha = score;
         if (alpha >= beta) break;
     }
+
+    // TT store
+    TTFlag flag;
+    if (bestScore <= origAlpha) {
+        flag = TT_UPPER_BOUND;
+    } else if (bestScore >= beta) {
+        flag = TT_LOWER_BOUND;
+    } else {
+        flag = TT_EXACT;
+    }
+    tt.store(board.key, bestScore, depth, flag, bestMove, ply);
 
     return bestScore;
 }
@@ -109,6 +155,15 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
         state.bestMove = currentBest;
 
+        // Move the best move to the front for the next iteration
+        for (size_t i = 0; i < rootMoves.size(); i++) {
+            if (rootMoves[i].from == currentBest.from && rootMoves[i].to == currentBest.to &&
+                rootMoves[i].promotion == currentBest.promotion) {
+                std::swap(rootMoves[0], rootMoves[i]);
+                break;
+            }
+        }
+
         std::cout << "info depth " << depth << " score cp " << currentBestScore << " nodes "
                   << state.nodes << std::endl;
 
@@ -126,4 +181,12 @@ Move findBestMove(const Board &board, int depth) {
     SearchState state;
     startSearch(board, limits, state);
     return state.bestMove;
+}
+
+void setHashSize(size_t mb) {
+    tt.resize(mb);
+}
+
+void clearTT() {
+    tt.clear();
 }
