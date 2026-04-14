@@ -1,5 +1,5 @@
 CXX := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -O2
+CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -pthread
 SRCDIR := src
 BUILDDIR := build
 TARGET := $(BUILDDIR)/rlngin
