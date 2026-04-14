@@ -1,10 +1,6 @@
 #include "movegen.h"
 #include "bitboard.h"
 
-static bool inBounds(int rank, int file) {
-    return rank >= 0 && rank < 8 && file >= 0 && file < 8;
-}
-
 bool isSquareAttacked(const Board &board, int sq, Color byColor) {
     Bitboard them = board.byColor[byColor];
     if (KnightAttacks[sq] & board.byPiece[Knight] & them) return true;
@@ -26,57 +22,67 @@ static bool isLegalMove(Board &board, const Move &m) {
     return legal;
 }
 
-static void addPawnMoves(const Board &board, std::vector<Move> &moves) {
-    Color us = board.sideToMove;
-    int dir = (us == White) ? 1 : -1;
-    int startRank = (us == White) ? 1 : 6;
-    int promoRank = (us == White) ? 7 : 0;
-
-    Bitboard pawns = board.byPiece[Pawn] & board.byColor[us];
-    while (pawns) {
-        int sq = popLsb(pawns);
-        int rank = squareRank(sq);
-        int file = squareFile(sq);
-
-        // Single push
-        int pushSq = makeSquare(rank + dir, file);
-        if (inBounds(rank + dir, file) && board.squares[pushSq].type == None) {
-            if (squareRank(pushSq) == promoRank) {
-                for (PieceType pt : {Queen, Rook, Bishop, Knight}) {
-                    moves.push_back({sq, pushSq, pt});
-                }
-            } else {
-                moves.push_back({sq, pushSq, None});
-            }
-
-            // Double push
-            if (rank == startRank) {
-                int dblSq = makeSquare(rank + 2 * dir, file);
-                if (board.squares[dblSq].type == None) {
-                    moves.push_back({sq, dblSq, None});
-                }
-            }
-        }
-
-        // Captures
-        for (int df : {-1, 1}) {
-            int cr = rank + dir, cf = file + df;
-            if (!inBounds(cr, cf)) continue;
-            int capSq = makeSquare(cr, cf);
-            bool isCapture =
-                (board.squares[capSq].type != None && board.squares[capSq].color != us);
-            bool isEp = (capSq == board.enPassantSquare);
-            if (isCapture || isEp) {
-                if (squareRank(capSq) == promoRank) {
-                    for (PieceType pt : {Queen, Rook, Bishop, Knight}) {
-                        moves.push_back({sq, capSq, pt});
-                    }
-                } else {
-                    moves.push_back({sq, capSq, None});
-                }
-            }
+static void addPawnPushes(Bitboard bb, int offset, Bitboard promoRank, std::vector<Move> &moves) {
+    Bitboard promo = bb & promoRank;
+    Bitboard quiet = bb & ~promoRank;
+    while (quiet) {
+        int to = popLsb(quiet);
+        moves.push_back({to + offset, to, None});
+    }
+    while (promo) {
+        int to = popLsb(promo);
+        for (PieceType pt : {Queen, Rook, Bishop, Knight}) {
+            moves.push_back({to + offset, to, pt});
         }
     }
+}
+
+static void addPawnMoves(const Board &board, std::vector<Move> &moves) {
+    Color us = board.sideToMove;
+    Bitboard pawns = board.byPiece[Pawn] & board.byColor[us];
+    Bitboard empty = ~board.occupied;
+    Bitboard enemies = board.byColor[(us == White) ? Black : White];
+    Bitboard promoRank = (us == White) ? Rank8BB : Rank1BB;
+
+    // Single pushes
+    Bitboard singlePush = (us == White) ? (pawns << 8) : (pawns >> 8);
+    singlePush &= empty;
+    int pushOffset = (us == White) ? -8 : 8;
+    addPawnPushes(singlePush, pushOffset, promoRank, moves);
+
+    // Double pushes
+    Bitboard dblRank = (us == White) ? Rank3BB : Rank6BB;
+    Bitboard doublePush =
+        (us == White) ? ((singlePush & dblRank) << 8) : ((singlePush & dblRank) >> 8);
+    doublePush &= empty;
+    while (doublePush) {
+        int to = popLsb(doublePush);
+        int from = (us == White) ? to - 16 : to + 16;
+        moves.push_back({from, to, None});
+    }
+
+    // Captures
+    Bitboard captureTargets = enemies;
+    if (board.enPassantSquare != -1) {
+        captureTargets |= squareBB(board.enPassantSquare);
+    }
+
+    Bitboard leftCap, rightCap;
+    int leftOffset, rightOffset;
+    if (us == White) {
+        leftCap = (pawns << 7) & ~FileHBB & captureTargets;
+        rightCap = (pawns << 9) & ~FileABB & captureTargets;
+        leftOffset = -7;
+        rightOffset = -9;
+    } else {
+        leftCap = (pawns >> 9) & ~FileHBB & captureTargets;
+        rightCap = (pawns >> 7) & ~FileABB & captureTargets;
+        leftOffset = 9;
+        rightOffset = 7;
+    }
+
+    addPawnPushes(leftCap, leftOffset, promoRank, moves);
+    addPawnPushes(rightCap, rightOffset, promoRank, moves);
 }
 
 static void addKnightMoves(const Board &board, std::vector<Move> &moves) {
