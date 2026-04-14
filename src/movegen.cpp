@@ -17,13 +17,13 @@ bool isSquareAttacked(const Board &board, int sq, Color byColor) {
     return false;
 }
 
-static bool isLegalMove(const Board &board, const Move &m) {
-    Board copy = board;
-    copy.makeMove(m);
+static bool isLegalMove(Board &board, const Move &m) {
     Color us = board.sideToMove;
-    Bitboard kingBB = copy.byPiece[King] & copy.byColor[us];
-    if (!kingBB) return false;
-    return !isSquareAttacked(copy, lsb(kingBB), (us == White) ? Black : White);
+    UndoInfo undo = board.makeMove(m);
+    Bitboard kingBB = board.byPiece[King] & board.byColor[us];
+    bool legal = kingBB && !isSquareAttacked(board, lsb(kingBB), (us == White) ? Black : White);
+    board.unmakeMove(m, undo);
+    return legal;
 }
 
 static void addPawnMoves(const Board &board, std::vector<Move> &moves) {
@@ -165,7 +165,7 @@ static void addKingMoves(const Board &board, std::vector<Move> &moves) {
     }
 }
 
-std::vector<Move> generateLegalMoves(const Board &board) {
+std::vector<Move> generateLegalMoves(Board &board) {
     std::vector<Move> pseudo;
 
     addPawnMoves(board, pseudo);

@@ -5,6 +5,14 @@
 #include <cstdint>
 #include <string>
 
+struct UndoInfo {
+    Piece captured;
+    int enPassantSquare;
+    bool castleWK, castleWQ, castleBK, castleBQ;
+    int halfmoveClock;
+    uint64_t key;
+};
+
 class Board {
   public:
     Piece squares[64];
@@ -24,7 +32,8 @@ class Board {
     Board();
     void setStartPos();
     void setFen(const std::string &fen);
-    void makeMove(const Move &m);
+    UndoInfo makeMove(const Move &m);
+    void unmakeMove(const Move &m, const UndoInfo &undo);
     Piece pieceAt(int sq) const;
 
   private:

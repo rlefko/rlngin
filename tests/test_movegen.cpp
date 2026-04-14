@@ -11,14 +11,14 @@ static void ensureInit() {
     }
 }
 
-static uint64_t perft(Board board, int depth) {
+static uint64_t perft(Board &board, int depth) {
     if (depth == 0) return 1;
     std::vector<Move> moves = generateLegalMoves(board);
     uint64_t nodes = 0;
     for (const Move &m : moves) {
-        Board copy = board;
-        copy.makeMove(m);
-        nodes += perft(copy, depth - 1);
+        UndoInfo undo = board.makeMove(m);
+        nodes += perft(board, depth - 1);
+        board.unmakeMove(m, undo);
     }
     return nodes;
 }

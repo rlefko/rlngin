@@ -136,9 +136,19 @@ void Board::setFen(const std::string &fen) {
     computeKey();
 }
 
-void Board::makeMove(const Move &m) {
+UndoInfo Board::makeMove(const Move &m) {
+    UndoInfo undo;
+    undo.enPassantSquare = enPassantSquare;
+    undo.castleWK = castleWK;
+    undo.castleWQ = castleWQ;
+    undo.castleBK = castleBK;
+    undo.castleBQ = castleBQ;
+    undo.halfmoveClock = halfmoveClock;
+    undo.key = key;
+
     Piece moving = squares[m.from];
     Piece captured = squares[m.to];
+    undo.captured = captured;
 
     // XOR out old castling and en passant state
     int oldCastleMask = castlingMask(castleWK, castleWQ, castleBK, castleBQ);
@@ -258,4 +268,75 @@ void Board::makeMove(const Move &m) {
     // Switch side and flip side-to-move key
     sideToMove = (sideToMove == White) ? Black : White;
     key ^= zobrist::side_to_move_key;
+
+    return undo;
+}
+
+void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
+    // Flip side back (makeMove flipped it at the end)
+    sideToMove = (sideToMove == White) ? Black : White;
+    Color us = sideToMove;
+
+    // Determine piece types
+    PieceType movedType = squares[m.to].type;
+    PieceType originalType = (m.promotion != None) ? Pawn : movedType;
+
+    // Undo castling rook movement
+    if (originalType == King) {
+        int diff = m.to - m.from;
+        if (diff == 2) {
+            // Kingside: rook moved from m.from+3 to m.from+1
+            squares[m.from + 3] = squares[m.from + 1];
+            squares[m.from + 1] = {None, White};
+            occupied ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
+            byColor[us] ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
+            byPiece[Rook] ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
+        } else if (diff == -2) {
+            // Queenside: rook moved from m.from-4 to m.from-1
+            squares[m.from - 4] = squares[m.from - 1];
+            squares[m.from - 1] = {None, White};
+            occupied ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
+            byColor[us] ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
+            byPiece[Rook] ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
+        }
+    }
+
+    // Move the piece back
+    squares[m.from] = {originalType, us};
+    squares[m.to] = {None, White};
+    if (m.promotion != None) {
+        byPiece[movedType] ^= 1ULL << m.to;
+        byPiece[Pawn] ^= 1ULL << m.from;
+    } else {
+        byPiece[originalType] ^= (1ULL << m.to) | (1ULL << m.from);
+    }
+    occupied ^= (1ULL << m.from) | (1ULL << m.to);
+    byColor[us] ^= (1ULL << m.from) | (1ULL << m.to);
+
+    // Restore captured piece
+    bool wasEnPassant =
+        (originalType == Pawn && m.to == undo.enPassantSquare && undo.enPassantSquare != -1);
+    if (wasEnPassant) {
+        int capturedPawnSq = (us == White) ? m.to - 8 : m.to + 8;
+        Color them = (us == White) ? Black : White;
+        squares[capturedPawnSq] = {Pawn, them};
+        occupied |= 1ULL << capturedPawnSq;
+        byColor[them] |= 1ULL << capturedPawnSq;
+        byPiece[Pawn] |= 1ULL << capturedPawnSq;
+    } else if (undo.captured.type != None) {
+        squares[m.to] = undo.captured;
+        occupied |= 1ULL << m.to;
+        byColor[undo.captured.color] |= 1ULL << m.to;
+        byPiece[undo.captured.type] |= 1ULL << m.to;
+    }
+
+    // Restore saved state
+    enPassantSquare = undo.enPassantSquare;
+    castleWK = undo.castleWK;
+    castleWQ = undo.castleWQ;
+    castleBK = undo.castleBK;
+    castleBQ = undo.castleBQ;
+    halfmoveClock = undo.halfmoveClock;
+    key = undo.key;
+    if (us == Black) fullmoveNumber--;
 }
