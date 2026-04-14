@@ -3,7 +3,18 @@
 <!-- BENCHMARK:START -->
 ## Latest Benchmark
 
-_No benchmark data yet. Results will appear here after the next merge to main._
+| | |
+|:--|:--|
+| **Date** | 2026-04-14 |
+| **Games** | 100 games (50 pairs) |
+| **Time Control** | 10+0.1 |
+| **Elo** | 552.08 +/- 134.87 |
+| **Score** | 96.0 / 100 (96.00%) |
+| **Record (W/D/L)** | 92 / 8 / 0 |
+| **Draw Ratio** | 0.00% |
+| **Pentanomial** | [0, 0, 0, 8, 42] |
+
+<sub>Opening book: UHO_Lichess_4852_v1.epd</sub>
 <!-- BENCHMARK:END -->
 
 A chess engine, made with love.
