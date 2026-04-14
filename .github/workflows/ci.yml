@@ -1,0 +1,73 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install clang-format
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y clang-format-17
+          sudo ln -sf /usr/bin/clang-format-17 /usr/bin/clang-format
+
+      - name: Check formatting
+        run: make format-check
+
+  build:
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build engine
+        run: make build
+
+      - name: Upload binary
+        uses: actions/upload-artifact@v4
+        with:
+          name: rlngin
+          path: build/rlngin
+
+  test:
+    name: Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Run tests
+        run: make test
+
+  fastchess:
+    name: Fastchess Smoke Test
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build engine
+        run: make build
+
+      - name: Download fastchess
+        run: |
+          curl -sL https://github.com/Disservin/fastchess/releases/latest/download/fastchess-linux-x86-64.tar -o fastchess.tar
+          tar xf fastchess.tar
+          chmod +x fastchess
+
+      - name: Run self-play smoke test
+        run: |
+          ./fastchess \
+            -engine cmd=./build/rlngin name=rlngin-w \
+            -engine cmd=./build/rlngin name=rlngin-b \
+            -each tc=1+0.1 \
+            -rounds 2 \
+            -pgnout selfplay.pgn \
+            -recover
