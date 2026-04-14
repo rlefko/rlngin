@@ -1,6 +1,7 @@
 #include "bitboard.h"
 #include "board.h"
 #include "catch_amalgamated.hpp"
+#include "movegen.h"
 #include "search.h"
 
 static void ensureInit() {
@@ -130,4 +131,64 @@ TEST_CASE("Search: respects time limit", "[search]") {
 
     CHECK(state.bestMove.from != state.bestMove.to);
     CHECK(elapsed < 550);
+}
+
+TEST_CASE("Search: seldepth is populated", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Position with hanging pieces forcing deep quiescence search
+    board.setFen("r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2");
+
+    SearchLimits limits;
+    limits.depth = 1;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.seldepth >= 1);
+}
+
+TEST_CASE("Search: PV starts with best move", "[search][pv]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate in 1: Re1-e8#
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    SearchLimits limits;
+    limits.depth = 2;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.pvLength[0] >= 1);
+    CHECK(state.pv[0][0].from == state.bestMove.from);
+    CHECK(state.pv[0][0].to == state.bestMove.to);
+}
+
+TEST_CASE("Search: PV moves are legal", "[search][pv]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 4;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    Board pos = board;
+    for (int i = 0; i < state.pvLength[0]; i++) {
+        Move pvMove = state.pv[0][i];
+        std::vector<Move> legal = generateLegalMoves(pos);
+        bool found = false;
+        for (const Move &m : legal) {
+            if (m.from == pvMove.from && m.to == pvMove.to && m.promotion == pvMove.promotion) {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found);
+        if (!found) break;
+        pos.makeMove(pvMove);
+    }
 }

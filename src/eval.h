@@ -3,6 +3,8 @@
 
 #include "board.h"
 
+extern const int PieceValue[7];
+
 int evaluate(const Board &board);
 
 #endif
