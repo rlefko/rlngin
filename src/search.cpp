@@ -220,8 +220,27 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             }
         }
 
-        std::cout << "info depth " << depth << " score cp " << currentBestScore << " nodes "
-                  << state.nodes << std::endl;
+        auto now = std::chrono::steady_clock::now();
+        int64_t timeMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime).count();
+        int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
+
+        std::cout << "info depth " << depth << " seldepth " << state.seldepth;
+
+        if (std::abs(currentBestScore) >= MATE_SCORE - 100) {
+            int matePly = MATE_SCORE - std::abs(currentBestScore);
+            int mateInMoves = (matePly + 1) / 2;
+            if (currentBestScore < 0) mateInMoves = -mateInMoves;
+            std::cout << " score mate " << mateInMoves;
+        } else {
+            std::cout << " score cp " << currentBestScore;
+        }
+
+        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs << " pv";
+        for (int i = 0; i < state.pvLength[0]; i++) {
+            std::cout << " " << moveToString(state.pv[0][i]);
+        }
+        std::cout << std::endl;
 
         if (std::abs(currentBestScore) >= MATE_SCORE - 100) break;
     }
