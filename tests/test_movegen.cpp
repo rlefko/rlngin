@@ -113,6 +113,57 @@ TEST_CASE("isSquareAttacked detects knight attacks", "[movegen]") {
     CHECK_FALSE(isSquareAttacked(board, stringToSquare("a1"), White));
 }
 
+TEST_CASE("Capture generation: starting position has no captures", "[movegen][captures]") {
+    ensureInit();
+    Board board;
+
+    std::vector<Move> caps = generateLegalCaptures(board);
+    CHECK(caps.empty());
+}
+
+TEST_CASE("Capture generation: finds all captures", "[movegen][captures]") {
+    ensureInit();
+    Board board;
+    // Knight on e5 can capture pawns on d7 and f7
+    board.setFen("4k3/3p1p2/8/4N3/8/8/8/4K3 w - - 0 1");
+
+    std::vector<Move> caps = generateLegalCaptures(board);
+    CHECK(caps.size() == 2);
+}
+
+TEST_CASE("Capture generation: includes en passant", "[movegen][captures]") {
+    ensureInit();
+    Board board;
+    board.setFen("4k3/8/8/3Pp3/8/8/8/4K3 w - e6 0 1");
+
+    std::vector<Move> caps = generateLegalCaptures(board);
+    bool hasEp = false;
+    for (const Move &m : caps) {
+        if (m.from == stringToSquare("d5") && m.to == stringToSquare("e6")) hasEp = true;
+    }
+    CHECK(hasEp);
+}
+
+TEST_CASE("Capture generation: includes promotion pushes", "[movegen][captures]") {
+    ensureInit();
+    Board board;
+    board.setFen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+
+    std::vector<Move> caps = generateLegalCaptures(board);
+    // 4 promotion pushes (Q, R, B, N)
+    CHECK(caps.size() == 4);
+}
+
+TEST_CASE("Capture generation: includes capture-promotions", "[movegen][captures]") {
+    ensureInit();
+    Board board;
+    // Pawn on a7 can push to a8 (4 promos) or capture b8 knight (4 promos)
+    board.setFen("1n2k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+
+    std::vector<Move> caps = generateLegalCaptures(board);
+    CHECK(caps.size() == 8);
+}
+
 TEST_CASE("Castling blocked when king passes through check", "[movegen]") {
     ensureInit();
     Board board;

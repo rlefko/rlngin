@@ -26,6 +26,38 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
+static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
+    state.nodes++;
+
+    if (state.nodes % 1024 == 0) checkTime(state);
+    if (state.stopped) return 0;
+
+    bool inCheck = isInCheck(board);
+
+    if (!inCheck) {
+        int standPat = evaluate(board);
+        if (standPat >= beta) return beta;
+        if (standPat > alpha) alpha = standPat;
+    }
+
+    // When in check, search all legal moves (must escape check).
+    // Otherwise, search only captures.
+    std::vector<Move> moves = inCheck ? generateLegalMoves(board) : generateLegalCaptures(board);
+
+    if (inCheck && moves.empty()) return -(MATE_SCORE - ply);
+
+    for (const Move &m : moves) {
+        UndoInfo undo = board.makeMove(m);
+        int score = -quiescence(board, -beta, -alpha, ply + 1, state);
+        board.unmakeMove(m, undo);
+        if (state.stopped) return 0;
+        if (score >= beta) return beta;
+        if (score > alpha) alpha = score;
+    }
+
+    return alpha;
+}
+
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
     state.nodes++;
 
@@ -59,7 +91,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         return 0;
     }
 
-    if (depth == 0) return evaluate(board);
+    if (depth == 0) return quiescence(board, alpha, beta, ply, state);
 
     // TT move ordering: move the TT move to the front
     if (ttMove.from != ttMove.to) {

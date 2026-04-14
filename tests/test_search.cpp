@@ -68,6 +68,51 @@ TEST_CASE("Search: alpha-beta prunes nodes at depth 4", "[search]") {
     CHECK(state.nodes < 500000);
 }
 
+TEST_CASE("Search: qsearch avoids leaving piece en prise", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White knight on d4, black bishop on e6 attacks it. White to move.
+    // At depth 1, the engine should not leave the knight to be captured.
+    board.setFen("4k3/8/4b3/8/3N4/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 1);
+    // The knight should move away from d4 (not stay and get captured)
+    CHECK(best.from == stringToSquare("d4"));
+}
+
+TEST_CASE("Search: qsearch resolves pawn capture", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White pawn on e4 can capture black pawn on d5. Simple gain.
+    board.setFen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 1);
+    CHECK(best.from == stringToSquare("e4"));
+    CHECK(best.to == stringToSquare("d5"));
+}
+
+TEST_CASE("Search: qsearch prevents blundering into recapture", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White pawn on e5, black rook on d6. Pawn could try to capture but rook
+    // is worth more. Engine should not move the pawn into the rook.
+    board.setFen("4k3/8/3r4/4P3/8/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 2);
+    // Knight on e5, pawns on d6/e6. Nxe6 loses the knight to dxe6.
+    // Nxd6 is safe since e6 pawn does not defend d6.
+    board.setFen("4k3/8/3pp3/4N3/8/8/8/4K3 w - - 0 1");
+
+    best = findBestMove(board, 1);
+    // Knight should not capture e6 (loses knight for pawn)
+    if (best.from == stringToSquare("e5") && best.to == stringToSquare("e6")) {
+        CHECK(false);
+    }
+}
+
 TEST_CASE("Search: respects time limit", "[search]") {
     ensureInit();
     Board board;
