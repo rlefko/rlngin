@@ -40,6 +40,20 @@ TEST_CASE("Search: returns valid move at deeper depths", "[search]") {
     CHECK(best.from != best.to);
 }
 
+TEST_CASE("Search: alpha-beta prunes nodes at depth 4", "[search]") {
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 4;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // Full minimax at depth 4 from startpos explores ~4 million nodes.
+    // Alpha-beta should prune this down dramatically.
+    CHECK(state.nodes < 500000);
+}
+
 TEST_CASE("Search: respects time limit", "[search]") {
     Board board;
     board.setStartPos();
