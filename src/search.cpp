@@ -28,6 +28,7 @@ static bool isInCheck(const Board &board) {
 
 static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
+    if (ply > state.seldepth) state.seldepth = ply;
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
@@ -60,6 +61,7 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
     state.nodes++;
+    if (ply > state.seldepth) state.seldepth = ply;
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
@@ -164,6 +166,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     if (rootMoves.empty()) return;
 
     for (int depth = 1; depth <= maxDepth; depth++) {
+        state.seldepth = 0;
         Move currentBest = rootMoves[0];
         int currentBestScore = -INF_SCORE;
         int alpha = -INF_SCORE;

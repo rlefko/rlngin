@@ -20,6 +20,7 @@ struct SearchLimits {
 struct SearchState {
     std::atomic<bool> stopped{false};
     int64_t nodes = 0;
+    int seldepth = 0;
     Move bestMove = {0, 0, None};
     std::chrono::steady_clock::time_point startTime;
     int64_t allocatedTimeMs = 0;
