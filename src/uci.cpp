@@ -4,6 +4,7 @@
 #include <iostream>
 #include <sstream>
 #include <string>
+#include <thread>
 
 static void handlePosition(Board &board, std::istringstream &ss) {
     std::string token;
@@ -28,17 +29,44 @@ static void handlePosition(Board &board, std::istringstream &ss) {
     }
 }
 
-static void handleGo(const Board &board) {
-    Move best = findBestMove(board);
-    if (best.from == best.to) {
-        std::cout << "bestmove 0000" << std::endl;
-    } else {
-        std::cout << "bestmove " << moveToString(best) << std::endl;
+static SearchLimits parseGoParams(std::istringstream &ss) {
+    SearchLimits limits;
+    std::string token;
+
+    while (ss >> token) {
+        if (token == "wtime")
+            ss >> limits.wtime;
+        else if (token == "btime")
+            ss >> limits.btime;
+        else if (token == "winc")
+            ss >> limits.winc;
+        else if (token == "binc")
+            ss >> limits.binc;
+        else if (token == "movestogo")
+            ss >> limits.movestogo;
+        else if (token == "depth")
+            ss >> limits.depth;
+        else if (token == "movetime")
+            ss >> limits.movetime;
+        else if (token == "infinite")
+            limits.infinite = true;
     }
+
+    return limits;
 }
 
 void uciLoop() {
     Board board;
+    SearchState searchState;
+    std::thread searchThread;
+
+    auto joinSearch = [&]() {
+        if (searchThread.joinable()) {
+            searchState.stopped = true;
+            searchThread.join();
+        }
+    };
+
     std::string line;
 
     while (std::getline(std::cin, line)) {
@@ -51,17 +79,35 @@ void uciLoop() {
             std::cout << "id author Ryan Lefkowitz" << std::endl;
             std::cout << "uciok" << std::endl;
         } else if (command == "isready") {
+            joinSearch();
             std::cout << "readyok" << std::endl;
         } else if (command == "ucinewgame") {
+            joinSearch();
             board.setStartPos();
         } else if (command == "position") {
+            joinSearch();
             handlePosition(board, ss);
         } else if (command == "go") {
-            handleGo(board);
+            joinSearch();
+            SearchLimits limits = parseGoParams(ss);
+            searchState.stopped = false;
+            searchState.nodes = 0;
+            searchState.bestMove = {0, 0, None};
+            searchThread = std::thread([board, limits, &searchState]() {
+                startSearch(board, limits, searchState);
+                Move best = searchState.bestMove;
+                if (best.from == best.to)
+                    std::cout << "bestmove 0000" << std::endl;
+                else
+                    std::cout << "bestmove " << moveToString(best) << std::endl;
+            });
         } else if (command == "stop") {
-            // No-op: engine responds instantly, so stop is never needed
+            joinSearch();
         } else if (command == "quit") {
+            joinSearch();
             break;
         }
     }
+
+    joinSearch();
 }
