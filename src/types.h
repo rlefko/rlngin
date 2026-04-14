@@ -78,4 +78,7 @@ inline Move stringToMove(const std::string &s) {
     return m;
 }
 
+constexpr int MATE_SCORE = 30000;
+constexpr int INF_SCORE = MATE_SCORE + 1;
+
 #endif

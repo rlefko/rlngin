@@ -2,6 +2,7 @@
 #define BOARD_H
 
 #include "types.h"
+#include <cstdint>
 #include <string>
 
 class Board {
@@ -15,12 +16,16 @@ class Board {
     int enPassantSquare = -1;
     int halfmoveClock = 0;
     int fullmoveNumber = 1;
+    uint64_t key = 0;
 
     Board();
     void setStartPos();
     void setFen(const std::string &fen);
     void makeMove(const Move &m);
     Piece pieceAt(int sq) const;
+
+  private:
+    void computeKey();
 };
 
 #endif

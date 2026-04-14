@@ -5,9 +5,6 @@
 #include <iostream>
 #include <limits>
 
-static const int MATE_SCORE = 30000;
-static const int INF_SCORE = MATE_SCORE + 1;
-
 static void checkTime(SearchState &state) {
     auto now = std::chrono::steady_clock::now();
     auto elapsed =
