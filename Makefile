@@ -7,7 +7,23 @@ TARGET := $(BUILDDIR)/rlngin
 SRCS := $(wildcard $(SRCDIR)/*.cpp)
 OBJS := $(patsubst $(SRCDIR)/%.cpp,$(BUILDDIR)/%.o,$(SRCS))
 
-.PHONY: build clean run
+TESTDIR := tests
+CATCH2DIR := $(TESTDIR)/catch2
+TEST_TARGET := $(BUILDDIR)/test_rlngin
+TEST_SRCS := $(wildcard $(TESTDIR)/test_*.cpp)
+TEST_OBJS := $(patsubst $(TESTDIR)/%.cpp,$(BUILDDIR)/%.o,$(TEST_SRCS))
+CATCH2_OBJ := $(BUILDDIR)/catch_amalgamated.o
+LIB_OBJS := $(filter-out $(BUILDDIR)/main.o,$(OBJS))
+
+UNAME := $(shell uname)
+ifeq ($(UNAME),Darwin)
+FASTCHESS_ASSET := fastchess-mac-arm64.tar
+else
+FASTCHESS_ASSET := fastchess-linux-x86-64.tar
+endif
+FASTCHESS_URL := https://github.com/Disservin/fastchess/releases/latest/download/$(FASTCHESS_ASSET)
+
+.PHONY: build clean run test format format-check fetch-fastchess selfplay
 
 build: $(TARGET)
 
@@ -24,3 +40,35 @@ clean:
 
 run: build
 	./$(TARGET)
+
+test: $(TEST_TARGET)
+	./$(TEST_TARGET)
+
+$(TEST_TARGET): $(TEST_OBJS) $(CATCH2_OBJ) $(LIB_OBJS)
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(BUILDDIR)/test_%.o: $(TESTDIR)/test_%.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -I$(CATCH2DIR) -I$(SRCDIR) -c -o $@ $<
+
+$(CATCH2_OBJ): $(CATCH2DIR)/catch_amalgamated.cpp
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -I$(CATCH2DIR) -c -o $@ $<
+
+format:
+	@find src tests -name '*.cpp' -o -name '*.h' | grep -v catch2 | xargs clang-format -i
+
+format-check:
+	@find src tests -name '*.cpp' -o -name '*.h' | grep -v catch2 | xargs clang-format --dry-run --Werror
+
+fetch-fastchess:
+	@echo "Downloading fastchess..."
+	@curl -sL "$(FASTCHESS_URL)" -o /tmp/fastchess.tar
+	@tar xf /tmp/fastchess.tar -C .
+	@chmod +x fastchess
+	@rm /tmp/fastchess.tar
+	@echo "fastchess downloaded to ./fastchess"
+
+selfplay: build
+	./scripts/selfplay.sh
