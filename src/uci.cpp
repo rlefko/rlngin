@@ -77,13 +77,25 @@ void uciLoop() {
         if (command == "uci") {
             std::cout << "id name rlngin" << std::endl;
             std::cout << "id author Ryan Lefkowitz" << std::endl;
+            std::cout << "option name Hash type spin default 16 min 1 max 1024" << std::endl;
             std::cout << "uciok" << std::endl;
         } else if (command == "isready") {
             joinSearch();
             std::cout << "readyok" << std::endl;
+        } else if (command == "setoption") {
+            std::string token, name;
+            ss >> token; // "name"
+            ss >> name;
+            if (name == "Hash") {
+                std::string valueToken;
+                int value;
+                ss >> valueToken >> value; // "value" <number>
+                setHashSize(static_cast<size_t>(value));
+            }
         } else if (command == "ucinewgame") {
             joinSearch();
             board.setStartPos();
+            clearTT();
         } else if (command == "position") {
             joinSearch();
             handlePosition(board, ss);
