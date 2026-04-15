@@ -204,6 +204,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     int origAlpha = alpha;
+    bool pvNode = (beta - alpha > 1);
 
     // TT probe
     TTEntry ttEntry;
@@ -215,11 +216,14 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             if (ttEntry.flag == TT_EXACT) {
                 return ttEntry.score;
             }
-            if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) {
-                return ttEntry.score;
-            }
-            if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) {
-                return ttEntry.score;
+            // In PV nodes, only cut on exact matches to preserve the full PV line
+            if (!pvNode) {
+                if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) {
+                    return ttEntry.score;
+                }
+                if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) {
+                    return ttEntry.score;
+                }
             }
         }
     }
@@ -239,7 +243,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     });
 
     bool inCheck = isInCheck(board);
-    bool pvNode = (beta - alpha > 1);
 
     // Static eval for pruning decisions (unreliable when in check)
     int staticEval = inCheck ? -INF_SCORE : evaluate(board);
@@ -390,6 +393,9 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     int histScore = state.contHistory->data[prevPt][prevTo][currPt][m.to];
                     reduction -= histScore / 8192;
                 }
+
+                // Reduce less in PV nodes to search them more carefully
+                if (pvNode) reduction--;
 
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
