@@ -548,57 +548,104 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     std::vector<Move> rootMoves = generateLegalMoves(pos);
     if (rootMoves.empty()) return;
 
+    int prevScore = 0;
+
     for (int depth = 1; depth <= maxDepth; depth++) {
-        state.seldepth = 0;
+        int delta = 25;
+        int alpha, beta;
+
+        // Use aspiration windows at depth >= 4 when the previous score is not a mate score
+        if (depth >= 4 && std::abs(prevScore) < MATE_SCORE - 100) {
+            alpha = std::max(prevScore - delta, -INF_SCORE);
+            beta = std::min(prevScore + delta, INF_SCORE);
+        } else {
+            alpha = -INF_SCORE;
+            beta = INF_SCORE;
+        }
+
         Move currentBest = rootMoves[0];
         int currentBestScore = -INF_SCORE;
-        int alpha = -INF_SCORE;
-        int beta = INF_SCORE;
 
-        state.pvLength[0] = 0;
+        // Aspiration window loop: re-search with wider windows on fail-low/fail-high
+        while (true) {
+            state.seldepth = 0;
+            currentBest = rootMoves[0];
+            currentBestScore = -INF_SCORE;
+            int localAlpha = alpha;
 
-        for (size_t mi = 0; mi < rootMoves.size(); mi++) {
-            const Move &m = rootMoves[mi];
+            state.pvLength[0] = 0;
 
-            if (depth >= 2) {
-                std::cout << "info depth " << depth << " currmove " << moveToString(m)
-                          << " currmovenumber " << (mi + 1) << std::endl;
-            }
+            for (size_t mi = 0; mi < rootMoves.size(); mi++) {
+                const Move &m = rootMoves[mi];
 
-            state.moveStack[0] = m;
-            state.movedPiece[0] = pos.squares[m.from].type;
+                if (depth >= 2) {
+                    std::cout << "info depth " << depth << " currmove " << moveToString(m)
+                              << " currmovenumber " << (mi + 1) << std::endl;
+                }
 
-            UndoInfo undo = pos.makeMove(m);
+                state.moveStack[0] = m;
+                state.movedPiece[0] = pos.squares[m.from].type;
 
-            int score;
-            if (mi == 0) {
-                score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
-            } else {
-                // PVS: null-window search for non-first moves
-                score = -negamax(pos, depth - 1, 1, -alpha - 1, -alpha, state);
-                if (score > alpha && score < beta) {
-                    score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
+                UndoInfo undo = pos.makeMove(m);
+
+                int score;
+                if (mi == 0) {
+                    score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
+                } else {
+                    // PVS: null-window search for non-first moves
+                    score = -negamax(pos, depth - 1, 1, -localAlpha - 1, -localAlpha, state);
+                    if (score > localAlpha && score < beta) {
+                        score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
+                    }
+                }
+
+                pos.unmakeMove(m, undo);
+                if (state.stopped) break;
+                if (score > currentBestScore) {
+                    currentBestScore = score;
+                    currentBest = m;
+                }
+                if (score > localAlpha) {
+                    localAlpha = score;
+                    state.pv[0][0] = m;
+                    for (int i = 1; i < state.pvLength[1]; i++) {
+                        state.pv[0][i] = state.pv[1][i];
+                    }
+                    state.pvLength[0] = state.pvLength[1];
                 }
             }
 
-            pos.unmakeMove(m, undo);
             if (state.stopped) break;
-            if (score > currentBestScore) {
-                currentBestScore = score;
-                currentBest = m;
+
+            auto now = std::chrono::steady_clock::now();
+            int64_t timeMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime)
+                    .count();
+
+            if (currentBestScore <= alpha) {
+                // Fail-low: score is below the window, widen downward
+                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_UPPER);
+                beta = (alpha + beta) / 2;
+                alpha = std::max(alpha - delta, -INF_SCORE);
+                delta *= 4;
+            } else if (currentBestScore >= beta) {
+                // Fail-high: score is above the window, widen upward
+                state.bestMove = currentBest;
+                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER);
+                beta = std::min(beta + delta, INF_SCORE);
+                delta *= 4;
+            } else {
+                // Exact: score is within the aspiration window
+                break;
             }
-            if (score > alpha) {
-                alpha = score;
-                state.pv[0][0] = m;
-                for (int i = 1; i < state.pvLength[1]; i++) {
-                    state.pv[0][i] = state.pv[1][i];
-                }
-                state.pvLength[0] = state.pvLength[1];
-            }
+
+            // Fall back to full window after enough widening
+            if (alpha <= -INF_SCORE && beta >= INF_SCORE) break;
         }
 
         if (state.stopped) break;
 
+        prevScore = currentBestScore;
         state.bestMove = currentBest;
 
         if (state.pvLength[0] >= 2) {
