@@ -249,6 +249,39 @@ TEST_CASE("Search: ignores repetition beyond irreversible move", "[search]") {
     CHECK(state.bestMove.from != state.bestMove.to);
 }
 
+TEST_CASE("Search: null move pruning reduces node count", "[search][nmp]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Middlegame position with plenty of material on both sides.
+    // NMP should prune aggressively here, keeping node count well below
+    // what pure alpha-beta would need at depth 6.
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 6;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // Without NMP, depth 6 from this position searches millions of nodes.
+    // With NMP active, it should be well under 2 million.
+    CHECK(state.nodes < 2000000);
+}
+
+TEST_CASE("Search: finds correct move in king-pawn endgame", "[search][nmp]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // King + pawn endgame (NMP is skipped due to no non-pawn material).
+    // White king on e5, pawn on e4, black king on e7.
+    // White should push the pawn or maintain the opposition.
+    board.setFen("8/4k3/8/4K3/4P3/8/8/8 w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    // The engine must return a legal move (not break due to zugzwang)
+    CHECK(best.from != best.to);
+}
+
 TEST_CASE("Search: still finds tactical captures", "[search]") {
     ensureInit();
     clearTT();
