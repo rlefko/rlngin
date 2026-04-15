@@ -284,6 +284,40 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
     }
 
+    // ProbCut: use a shallow search of captures to predict whether a full-depth
+    // search would produce a beta cutoff
+    if (!pvNode && !inCheck && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
+        std::abs(beta) < MATE_SCORE - MAX_PLY) {
+        int probcutBeta = beta + 200;
+        int probcutDepth = depth - 4;
+
+        std::vector<Move> pcMoves = generateLegalCaptures(board);
+
+        Move noTT = {0, 0, None};
+        std::sort(pcMoves.begin(), pcMoves.end(), [&](const Move &a, const Move &b) {
+            return scoreMove(a, board, noTT, -1, state) > scoreMove(b, board, noTT, -1, state);
+        });
+
+        for (const Move &pcMove : pcMoves) {
+            if (!seeGE(board, pcMove, probcutBeta - staticEval)) continue;
+
+            state.moveStack[ply] = pcMove;
+            state.movedPiece[ply] = board.squares[pcMove.from].type;
+            UndoInfo pcUndo = board.makeMove(pcMove);
+
+            int pcScore =
+                -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1, state);
+
+            board.unmakeMove(pcMove, pcUndo);
+            if (state.stopped) return 0;
+
+            if (pcScore >= probcutBeta) {
+                tt.store(board.key, pcScore, depth, TT_LOWER_BOUND, pcMove, ply);
+                return probcutBeta;
+            }
+        }
+    }
+
     // Restricted singular extensions: if the TT move is much better than all
     // alternatives, extend its search by one ply to resolve critical lines
     int singularExtension = 0;
@@ -345,6 +379,22 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 if (capHistScore >= 1000) {
                     moveExtension = 1;
                 }
+            }
+        }
+
+        // SEE pruning: skip captures with very negative SEE at non-PV nodes
+        if (!pvNode && !inCheck && moveIndex > 0 && capture && !isPromotion &&
+            bestScore > -MATE_SCORE + MAX_PLY) {
+            if (!seeGE(board, m, -20 * depth * depth)) {
+                continue;
+            }
+        }
+
+        // SEE pruning: skip quiet moves to heavily attacked squares at shallow depth
+        if (!pvNode && !inCheck && moveIndex > 0 && !capture && !isPromotion && depth <= 8 &&
+            bestScore > -MATE_SCORE + MAX_PLY) {
+            if (!seeGE(board, m, -50 * depth)) {
+                continue;
             }
         }
 

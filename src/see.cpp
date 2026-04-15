@@ -99,3 +99,70 @@ int see(const Board &board, const Move &move) {
 
     return gain[0];
 }
+
+bool seeGE(const Board &board, const Move &move, int threshold) {
+    int gain[32];
+    int depth = 0;
+
+    int toSq = move.to;
+    int fromSq = move.from;
+
+    PieceType attacker = board.squares[fromSq].type;
+    Color side = board.squares[fromSq].color;
+
+    Bitboard occ = board.occupied;
+
+    // Determine the initial captured piece value, minus the threshold
+    Piece captured = board.squares[toSq];
+    if (captured.type != None) {
+        gain[0] = PieceValue[captured.type] - threshold;
+    } else if (attacker == Pawn && toSq == board.enPassantSquare && board.enPassantSquare != -1) {
+        gain[0] = PieceValue[Pawn] - threshold;
+        int epPawnSq = (side == White) ? toSq - 8 : toSq + 8;
+        occ ^= squareBB(epPawnSq);
+    } else {
+        gain[0] = -threshold;
+    }
+
+    // Handle promotions
+    if (move.promotion != None) {
+        gain[0] += PieceValue[move.promotion] - PieceValue[Pawn];
+        attacker = move.promotion;
+    }
+
+    // Remove the initial attacker from occupancy
+    occ ^= squareBB(fromSq);
+
+    Bitboard attackers = getAttackers(board, toSq, occ) & occ;
+
+    side = (side == White) ? Black : White;
+
+    while (true) {
+        depth++;
+
+        int sq;
+        PieceType pt = getLeastValuableAttacker(board, attackers, side, sq);
+        if (pt == None) {
+            depth--;
+            break;
+        }
+
+        gain[depth] = PieceValue[attacker] - gain[depth - 1];
+
+        if (std::max(-gain[depth - 1], gain[depth]) < 0) break;
+
+        attacker = pt;
+        occ ^= squareBB(sq);
+
+        attackers = getAttackers(board, toSq, occ) & occ;
+
+        side = (side == White) ? Black : White;
+    }
+
+    while (depth > 0) {
+        depth--;
+        gain[depth] = -std::max(-gain[depth], gain[depth + 1]);
+    }
+
+    return gain[0] >= 0;
+}

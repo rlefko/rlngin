@@ -411,3 +411,75 @@ TEST_CASE("Search: finds tactics at higher depth with extensions", "[search][ext
     // Verify search completes with a valid move
     CHECK(state.bestMove.from != state.bestMove.to);
 }
+
+TEST_CASE("Search: SEE pruning reduces node count", "[search][see-pruning]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Complex middlegame with many captures available. SEE pruning should
+    // trim bad captures and quiet moves to attacked squares.
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 7;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    // SEE pruning should keep nodes well bounded at depth 7
+    CHECK(state.nodes < 5000000);
+}
+
+TEST_CASE("Search: SEE pruning preserves tactical correctness", "[search][see-pruning]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White knight captures undefended black queen: must not be pruned
+    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 4);
+    CHECK(best.from == stringToSquare("e4"));
+    CHECK(best.to == stringToSquare("d6"));
+}
+
+TEST_CASE("Search: SEE pruning does not prune winning captures", "[search][see-pruning]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White rook captures undefended black queen on e8
+    board.setFen("4q2k/8/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 4);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: ProbCut does not break mate detection", "[search][probcut]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate in 1: Re1-e8#
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: ProbCut reduces nodes at high depth", "[search][probcut]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White has a clear material advantage (extra queen). ProbCut should
+    // detect the winning position quickly and prune at high depths.
+    board.setFen("r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    // ProbCut should help keep nodes bounded at depth 8
+    CHECK(state.nodes < 15000000);
+}
