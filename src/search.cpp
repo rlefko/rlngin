@@ -183,7 +183,8 @@ static bool isRepetition(const Board &board, const SearchState &state, int ply) 
     return false;
 }
 
-static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
+static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state,
+                   bool allowNullMove = true) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
@@ -250,18 +251,28 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Null move pruning: skip the move if the opponent can't beat beta even
     // with a free move, which indicates this position is too good for us
-    if (!inCheck && depth >= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
+    if (allowNullMove && !inCheck && depth >= 3 && beta - alpha == 1 &&
+        beta > -MATE_SCORE + MAX_PLY) {
         Color us = board.sideToMove;
         Bitboard nonPawnMaterial = board.byColor[us] & ~board.byPiece[Pawn] & ~board.byPiece[King];
         if (nonPawnMaterial) {
-            int R = 3 + depth / 3;
+            // Dynamic reduction: base depth component + eval-based component
+            int R = 3 + depth / 3 + std::min((staticEval - beta) / 200, 3);
+            R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
             int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
             board.unmakeNullMove(nullUndo);
             if (state.stopped) return 0;
             if (nullScore >= beta) {
-                return beta;
+                // Verification search at high depths to guard against zugzwang
+                if (depth >= 8) {
+                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false);
+                    if (state.stopped) return 0;
+                    if (verifyScore >= beta) return beta;
+                } else {
+                    return beta;
+                }
             }
         }
     }
