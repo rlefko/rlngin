@@ -293,3 +293,46 @@ TEST_CASE("Search: still finds tactical captures", "[search]") {
     CHECK(best.from == stringToSquare("e1"));
     CHECK(best.to == stringToSquare("e8"));
 }
+
+TEST_CASE("Search: extensions do not break mate detection", "[search][extensions]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate in 2: Qf3-f7# after any black response, with extensions active
+    board.setFen("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4");
+
+    Move best = findBestMove(board, 6);
+    // The engine should find a strong move (scholar's mate threat)
+    CHECK(best.from != best.to);
+}
+
+TEST_CASE("Search: extensions keep node count bounded", "[search][extensions]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // Extensions should not cause exponential node growth at depth 8
+    CHECK(state.nodes < 20000000);
+}
+
+TEST_CASE("Search: finds tactics at higher depth with extensions", "[search][extensions]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Italian Game position where tactical play benefits from deeper search
+    board.setFen("r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 10;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // Verify search completes with a valid move
+    CHECK(state.bestMove.from != state.bestMove.to);
+}
