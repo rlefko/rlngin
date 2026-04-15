@@ -239,12 +239,24 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int numSearchedQuiets = 0;
     int bonus = std::min(depth * depth, 400);
 
-    for (const Move &m : moves) {
+    for (int moveIndex = 0; moveIndex < static_cast<int>(moves.size()); moveIndex++) {
+        const Move &m = moves[moveIndex];
         state.moveStack[ply] = m;
         state.movedPiece[ply] = board.squares[m.from].type;
 
         UndoInfo undo = board.makeMove(m);
-        int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+
+        int score;
+        if (moveIndex == 0) {
+            score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+        } else {
+            // PVS: null-window search for non-first moves
+            score = -negamax(board, depth - 1, ply + 1, -alpha - 1, -alpha, state);
+            if (score > alpha && score < beta) {
+                score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+            }
+        }
+
         board.unmakeMove(m, undo);
         if (state.stopped) return 0;
         if (score > bestScore) {
@@ -371,7 +383,18 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             state.movedPiece[0] = pos.squares[m.from].type;
 
             UndoInfo undo = pos.makeMove(m);
-            int score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
+
+            int score;
+            if (mi == 0) {
+                score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
+            } else {
+                // PVS: null-window search for non-first moves
+                score = -negamax(pos, depth - 1, 1, -alpha - 1, -alpha, state);
+                if (score > alpha && score < beta) {
+                    score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
+                }
+            }
+
             pos.unmakeMove(m, undo);
             if (state.stopped) break;
             if (score > currentBestScore) {
