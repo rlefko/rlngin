@@ -5,8 +5,10 @@
 #include <sstream>
 #include <string>
 #include <thread>
+#include <vector>
 
-static void handlePosition(Board &board, std::istringstream &ss) {
+static void handlePosition(Board &board, std::vector<uint64_t> &posHistory,
+                           std::istringstream &ss) {
     std::string token;
     ss >> token;
 
@@ -22,8 +24,11 @@ static void handlePosition(Board &board, std::istringstream &ss) {
         board.setFen(fen);
     }
 
-    // Apply moves
+    posHistory.clear();
+
+    // Apply moves, recording position keys for repetition detection
     while (ss >> token) {
+        posHistory.push_back(board.key);
         Move m = stringToMove(token);
         board.makeMove(m);
     }
@@ -58,6 +63,7 @@ static SearchLimits parseGoParams(std::istringstream &ss) {
 void uciLoop() {
     Board board;
     SearchState searchState;
+    std::vector<uint64_t> posHistory;
     std::thread searchThread;
 
     auto joinSearch = [&]() {
@@ -96,22 +102,29 @@ void uciLoop() {
             joinSearch();
             board.setStartPos();
             clearTT();
+            clearHistory(searchState);
         } else if (command == "position") {
             joinSearch();
-            handlePosition(board, ss);
+            handlePosition(board, posHistory, ss);
         } else if (command == "go") {
             joinSearch();
             SearchLimits limits = parseGoParams(ss);
             searchState.stopped = false;
             searchState.nodes = 0;
             searchState.bestMove = {0, 0, None};
-            searchThread = std::thread([board, limits, &searchState]() {
-                startSearch(board, limits, searchState);
+            searchThread = std::thread([board, limits, &searchState, posHistory]() {
+                startSearch(board, limits, searchState, posHistory);
                 Move best = searchState.bestMove;
-                if (best.from == best.to)
+                if (best.from == best.to) {
                     std::cout << "bestmove 0000" << std::endl;
-                else
-                    std::cout << "bestmove " << moveToString(best) << std::endl;
+                } else {
+                    std::cout << "bestmove " << moveToString(best);
+                    Move ponder = searchState.ponderMove;
+                    if (ponder.from != ponder.to) {
+                        std::cout << " ponder " << moveToString(ponder);
+                    }
+                    std::cout << std::endl;
+                }
             });
         } else if (command == "stop") {
             joinSearch();

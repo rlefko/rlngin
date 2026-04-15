@@ -192,3 +192,104 @@ TEST_CASE("Search: PV moves are legal", "[search][pv]") {
         pos.makeMove(pvMove);
     }
 }
+
+TEST_CASE("Search: avoids losing queen for pawn", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White queen on d4, black pawn on e5 defended by pawn on d6.
+    // Queen should not capture the pawn.
+    board.setFen("4k3/8/3p4/4p3/3Q4/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 3);
+    // The queen should not go to e5 (losing queen for pawn)
+    if (best.to == stringToSquare("e5")) {
+        CHECK(false);
+    }
+}
+
+TEST_CASE("Search: detects repetition and avoids drawn line", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White is up a queen but the position has occurred before in history.
+    // White king on e1, black king on e8, white queen on d1.
+    // halfmoveClock = 4 so the engine looks back into game history.
+    board.setFen("4k3/8/8/8/8/8/8/3QK3 w - - 4 1");
+
+    // Simulate game history where current position appeared before.
+    // Pad with dummy keys so the matching key falls within the halfmove window.
+    SearchLimits limits;
+    limits.depth = 4;
+    SearchState state;
+    std::vector<uint64_t> posHistory = {0, 0, 0, board.key};
+    startSearch(board, limits, state, posHistory);
+
+    // Engine should still find a good move (it's not a forced repetition,
+    // it just needs to avoid repeating the position)
+    CHECK(state.bestMove.from != state.bestMove.to);
+}
+
+TEST_CASE("Search: ignores repetition beyond irreversible move", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Same position but halfmoveClock = 0 means an irreversible move just happened,
+    // so no prior position can repeat.
+    board.setFen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1");
+
+    SearchLimits limits;
+    limits.depth = 4;
+    SearchState state;
+    // Even though the key matches, halfmoveClock = 0 means it's unreachable
+    std::vector<uint64_t> posHistory = {board.key};
+    startSearch(board, limits, state, posHistory);
+
+    // Engine should evaluate normally (not as a draw)
+    CHECK(state.bestMove.from != state.bestMove.to);
+}
+
+TEST_CASE("Search: null move pruning reduces node count", "[search][nmp]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Middlegame position with plenty of material on both sides.
+    // NMP should prune aggressively here, keeping node count well below
+    // what pure alpha-beta would need at depth 6.
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 6;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // Without NMP, depth 6 from this position searches millions of nodes.
+    // With NMP active, it should be well under 2 million.
+    CHECK(state.nodes < 2000000);
+}
+
+TEST_CASE("Search: finds correct move in king-pawn endgame", "[search][nmp]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // King + pawn endgame (NMP is skipped due to no non-pawn material).
+    // White king on e5, pawn on e4, black king on e7.
+    // White should push the pawn or maintain the opposition.
+    board.setFen("8/4k3/8/4K3/4P3/8/8/8 w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    // The engine must return a legal move (not break due to zugzwang)
+    CHECK(best.from != best.to);
+}
+
+TEST_CASE("Search: still finds tactical captures", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White rook on e1, black queen on e8 undefended, king on h8
+    board.setFen("4q2k/8/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 2);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}

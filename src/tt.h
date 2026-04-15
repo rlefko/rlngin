@@ -24,6 +24,7 @@ class TranspositionTable {
 
     void store(uint64_t key, int score, int depth, TTFlag flag, const Move &best_move, int ply);
     bool probe(uint64_t key, TTEntry &entry, int ply) const;
+    int hashfull() const;
 
   private:
     std::vector<TTEntry> table_;
