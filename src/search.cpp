@@ -285,6 +285,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int numSearchedCaptures = 0;
     int numSearchedQuiets = 0;
     int bonus = std::min(depth * depth, 400);
+    int movesSearched = 0;
 
     for (int moveIndex = 0; moveIndex < static_cast<int>(moves.size()); moveIndex++) {
         const Move &m = moves[moveIndex];
@@ -299,9 +300,20 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
-            alpha > -MATE_SCORE + MAX_PLY) {
+            alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
             int fpMargin = 100 + 80 * depth;
             if (staticEval + fpMargin <= alpha) {
+                board.unmakeMove(m, undo);
+                continue;
+            }
+        }
+
+        // Move count based pruning: at shallow depths, skip late quiet moves
+        // beyond a threshold, as they are unlikely to beat alpha
+        if (!inCheck && depth <= 5 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
+            alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
+            int moveCountThreshold = 3 + depth * depth;
+            if (moveIndex >= moveCountThreshold) {
                 board.unmakeMove(m, undo);
                 continue;
             }
@@ -345,6 +357,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
 
         board.unmakeMove(m, undo);
+        movesSearched++;
         if (state.stopped) return 0;
         if (score > bestScore) {
             bestScore = score;
@@ -401,6 +414,9 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             if (numSearchedQuiets < 64) searchedQuiets[numSearchedQuiets++] = m;
         }
     }
+
+    // If all moves were pruned, fail low to avoid erroneous stalemate scores
+    if (movesSearched == 0) return alpha;
 
     // TT store
     TTFlag flag;
