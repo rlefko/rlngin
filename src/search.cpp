@@ -184,7 +184,7 @@ static bool isRepetition(const Board &board, const SearchState &state, int ply) 
 }
 
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state,
-                   bool allowNullMove = true) {
+                   bool allowNullMove = true, Move excludedMove = {0, 0, None}) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
@@ -206,9 +206,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // TT probe
     TTEntry ttEntry;
     Move ttMove = {0, 0, None};
+    bool hasExcludedMove = (excludedMove.from != 0 || excludedMove.to != 0);
     if (tt.probe(board.key, ttEntry, ply)) {
         ttMove = ttEntry.best_move;
-        if (ttEntry.depth >= depth) {
+        if (!hasExcludedMove && ttEntry.depth >= depth) {
             if (ttEntry.flag == TT_EXACT) {
                 return ttEntry.score;
             }
@@ -236,6 +237,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     });
 
     bool inCheck = isInCheck(board);
+    bool pvNode = (beta - alpha > 1);
 
     // Static eval for pruning decisions (unreliable when in check)
     int staticEval = inCheck ? -INF_SCORE : evaluate(board);
@@ -277,6 +279,25 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
     }
 
+    // Restricted singular extensions: if the TT move is much better than all
+    // alternatives, extend its search by one ply to resolve critical lines
+    int singularExtension = 0;
+    if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove && ttMove.from != 0 &&
+        ttEntry.depth >= depth - 3 &&
+        (ttEntry.flag == TT_LOWER_BOUND || ttEntry.flag == TT_EXACT) &&
+        std::abs(ttEntry.score) < MATE_SCORE - MAX_PLY) {
+
+        int singularBeta = ttEntry.score - depth * 2;
+        int singularDepth = (depth - 1) / 2;
+
+        int singularScore = negamax(board, singularDepth, ply, singularBeta - 1, singularBeta,
+                                    state, false, ttMove);
+
+        if (singularScore < singularBeta) {
+            singularExtension = 1;
+        }
+    }
+
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
 
@@ -289,11 +310,38 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     for (int moveIndex = 0; moveIndex < static_cast<int>(moves.size()); moveIndex++) {
         const Move &m = moves[moveIndex];
+
+        // Skip the excluded move during singular extension searches
+        if (hasExcludedMove && m.from == excludedMove.from && m.to == excludedMove.to &&
+            m.promotion == excludedMove.promotion) {
+            continue;
+        }
+
         state.moveStack[ply] = m;
         state.movedPiece[ply] = board.squares[m.from].type;
 
         bool capture = isCapture(board, m);
         bool isPromotion = (m.promotion != None);
+
+        // Compute extensions before makeMove so piece types are still on the board
+        int moveExtension = 0;
+        if (singularExtension > 0 && m.from == ttMove.from && m.to == ttMove.to &&
+            m.promotion == ttMove.promotion) {
+            moveExtension = singularExtension;
+        }
+
+        // Modern capture extension: extend high-value recaptures in PV nodes
+        if (moveExtension == 0 && pvNode && capture && ply >= 1) {
+            int prevTo = state.moveStack[ply - 1].to;
+            if (m.to == prevTo) {
+                PieceType pt = board.squares[m.from].type;
+                PieceType ct = capturedType(board, m);
+                int capHistScore = state.captureHistory[pt][m.to][ct];
+                if (capHistScore >= 1000) {
+                    moveExtension = 1;
+                }
+            }
+        }
 
         UndoInfo undo = board.makeMove(m);
         bool givesCheck = isInCheck(board);
@@ -319,9 +367,11 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
         }
 
+        int newDepth = depth - 1 + moveExtension;
+
         int score;
         if (moveIndex == 0) {
-            score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
         } else {
             // Late move reductions
             int reduction = 0;
@@ -339,20 +389,20 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     reduction -= histScore / 8192;
                 }
 
-                reduction = std::max(0, std::min(reduction, depth - 2));
+                reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 
             // Reduced null-window search
-            score = -negamax(board, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, state);
+            score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state);
 
             // Re-search at full depth if reduced search beats alpha
             if (reduction > 0 && score > alpha) {
-                score = -negamax(board, depth - 1, ply + 1, -alpha - 1, -alpha, state);
+                score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state);
             }
 
             // PVS: re-search with full window if null-window search beats alpha
             if (score > alpha && score < beta) {
-                score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+                score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
             }
         }
 
@@ -418,16 +468,18 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // If all moves were pruned, fail low to avoid erroneous stalemate scores
     if (movesSearched == 0) return alpha;
 
-    // TT store
-    TTFlag flag;
-    if (bestScore <= origAlpha) {
-        flag = TT_UPPER_BOUND;
-    } else if (bestScore >= beta) {
-        flag = TT_LOWER_BOUND;
-    } else {
-        flag = TT_EXACT;
+    // TT store (skip during singular searches to avoid overwriting deeper entries)
+    if (!hasExcludedMove) {
+        TTFlag flag;
+        if (bestScore <= origAlpha) {
+            flag = TT_UPPER_BOUND;
+        } else if (bestScore >= beta) {
+            flag = TT_LOWER_BOUND;
+        } else {
+            flag = TT_EXACT;
+        }
+        tt.store(board.key, bestScore, depth, flag, bestMove, ply);
     }
-    tt.store(board.key, bestScore, depth, flag, bestMove, ply);
 
     return bestScore;
 }

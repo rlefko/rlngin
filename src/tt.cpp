@@ -34,11 +34,16 @@ int TranspositionTable::scoreFromTT(int16_t score, int ply) {
 void TranspositionTable::store(uint64_t key, int score, int depth, TTFlag flag,
                                const Move &best_move, int ply) {
     size_t i = index(key);
-    table_[i].key = key;
-    table_[i].score = scoreToTT(score, ply);
-    table_[i].depth = static_cast<int16_t>(depth);
-    table_[i].flag = flag;
-    table_[i].best_move = best_move;
+    // Depth-preferred replacement: only overwrite if the slot is empty or the
+    // new search is at least as deep.  This prevents shallow searches (such as
+    // the singular extension subtree) from evicting valuable deep entries.
+    if (table_[i].flag == TT_NONE || depth >= table_[i].depth) {
+        table_[i].key = key;
+        table_[i].score = scoreToTT(score, ply);
+        table_[i].depth = static_cast<int16_t>(depth);
+        table_[i].flag = flag;
+        table_[i].best_move = best_move;
+    }
 }
 
 bool TranspositionTable::probe(uint64_t key, TTEntry &entry, int ply) const {
