@@ -348,6 +348,22 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
         }
 
+        // SEE pruning: skip captures with very negative SEE at non-PV nodes
+        if (!pvNode && !inCheck && moveIndex > 0 && capture && !isPromotion &&
+            bestScore > -MATE_SCORE + MAX_PLY) {
+            if (!seeGE(board, m, -20 * depth * depth)) {
+                continue;
+            }
+        }
+
+        // SEE pruning: skip quiet moves to heavily attacked squares at shallow depth
+        if (!pvNode && !inCheck && moveIndex > 0 && !capture && !isPromotion && depth <= 8 &&
+            bestScore > -MATE_SCORE + MAX_PLY) {
+            if (!seeGE(board, m, -50 * depth)) {
+                continue;
+            }
+        }
+
         UndoInfo undo = board.makeMove(m);
         bool givesCheck = isInCheck(board);
 
