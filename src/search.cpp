@@ -326,10 +326,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         bool capture = isCapture(board, m);
         bool isPromotion = (m.promotion != None);
 
-        UndoInfo undo = board.makeMove(m);
-        bool givesCheck = isInCheck(board);
-
-        // Singular extension: extend the TT move when it is clearly best
+        // Compute extensions before makeMove so piece types are still on the board
         int moveExtension = 0;
         if (singularExtension > 0 && m.from == ttMove.from && m.to == ttMove.to &&
             m.promotion == ttMove.promotion) {
@@ -348,6 +345,9 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 }
             }
         }
+
+        UndoInfo undo = board.makeMove(m);
+        bool givesCheck = isInCheck(board);
 
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
@@ -471,16 +471,18 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // If all moves were pruned, fail low to avoid erroneous stalemate scores
     if (movesSearched == 0) return alpha;
 
-    // TT store
-    TTFlag flag;
-    if (bestScore <= origAlpha) {
-        flag = TT_UPPER_BOUND;
-    } else if (bestScore >= beta) {
-        flag = TT_LOWER_BOUND;
-    } else {
-        flag = TT_EXACT;
+    // TT store (skip during singular searches to avoid overwriting deeper entries)
+    if (!hasExcludedMove) {
+        TTFlag flag;
+        if (bestScore <= origAlpha) {
+            flag = TT_UPPER_BOUND;
+        } else if (bestScore >= beta) {
+            flag = TT_LOWER_BOUND;
+        } else {
+            flag = TT_EXACT;
+        }
+        tt.store(board.key, bestScore, depth, flag, bestMove, ply);
     }
-    tt.store(board.key, bestScore, depth, flag, bestMove, ply);
 
     return bestScore;
 }
