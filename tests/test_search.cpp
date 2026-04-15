@@ -282,6 +282,25 @@ TEST_CASE("Search: finds correct move in king-pawn endgame", "[search][nmp]") {
     CHECK(best.from != best.to);
 }
 
+TEST_CASE("Search: SEE pruning reduces node count", "[search][see-pruning]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Middlegame position with many pieces and tactical possibilities.
+    // SEE pruning should skip losing captures and tactically unsound quiet
+    // moves, keeping the node count well below what we would see without it.
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 7;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // With SEE pruning active alongside other pruning techniques,
+    // the node count at depth 7 should stay under 1 million.
+    CHECK(state.nodes < 1000000);
+}
+
 TEST_CASE("Search: still finds tactical captures", "[search]") {
     ensureInit();
     clearTT();
