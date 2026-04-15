@@ -1,6 +1,8 @@
 #include "uci.h"
 #include "board.h"
 #include "search.h"
+#include <algorithm>
+#include <cctype>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -60,9 +62,77 @@ static SearchLimits parseGoParams(std::istringstream &ss) {
     return limits;
 }
 
+static std::string trim(std::string value) {
+    auto begin = value.find_first_not_of(" \t\r\n");
+    if (begin == std::string::npos) return "";
+    auto end = value.find_last_not_of(" \t\r\n");
+    return value.substr(begin, end - begin + 1);
+}
+
+static bool parseBoolValue(std::string value, bool &out) {
+    value = trim(value);
+    std::transform(value.begin(), value.end(), value.begin(),
+                   [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+
+    if (value == "true" || value == "1" || value == "on") {
+        out = true;
+        return true;
+    }
+    if (value == "false" || value == "0" || value == "off") {
+        out = false;
+        return true;
+    }
+    return false;
+}
+
+static void handleSetOption(std::istringstream &ss, SearchConfig &searchConfig) {
+    std::string token;
+    if (!(ss >> token) || token != "name") return;
+
+    std::string name;
+    while (ss >> token && token != "value") {
+        if (!name.empty()) name += " ";
+        name += token;
+    }
+
+    std::string value;
+    std::getline(ss, value);
+    value = trim(value);
+
+    if (name == "Hash") {
+        if (!value.empty()) {
+            int hashMb = std::stoi(value);
+            setHashSize(static_cast<size_t>(hashMb));
+        }
+        return;
+    }
+
+    bool boolValue = false;
+    if (!parseBoolValue(value, boolValue)) return;
+
+    if (name == "UseQSEEPruning") {
+        searchConfig.useQseePruning = boolValue;
+    } else if (name == "UseRFP") {
+        searchConfig.useRfp = boolValue;
+    } else if (name == "UseNullMove") {
+        searchConfig.useNullMove = boolValue;
+    } else if (name == "UseFutilityPruning") {
+        searchConfig.useFutilityPruning = boolValue;
+    } else if (name == "UseMoveCountPruning") {
+        searchConfig.useMoveCountPruning = boolValue;
+    } else if (name == "UseLMR") {
+        searchConfig.useLmr = boolValue;
+    } else if (name == "UseAspirationWindows") {
+        searchConfig.useAspirationWindows = boolValue;
+    } else if (name == "DebugSearchStats") {
+        searchConfig.debugSearchStats = boolValue;
+    }
+}
+
 void uciLoop() {
     Board board;
     SearchState searchState;
+    SearchConfig searchConfig;
     std::vector<uint64_t> posHistory;
     std::thread searchThread;
 
@@ -84,20 +154,20 @@ void uciLoop() {
             std::cout << "id name rlngin" << std::endl;
             std::cout << "id author Ryan Lefkowitz" << std::endl;
             std::cout << "option name Hash type spin default 16 min 1 max 1024" << std::endl;
+            std::cout << "option name UseQSEEPruning type check default true" << std::endl;
+            std::cout << "option name UseRFP type check default true" << std::endl;
+            std::cout << "option name UseNullMove type check default true" << std::endl;
+            std::cout << "option name UseFutilityPruning type check default true" << std::endl;
+            std::cout << "option name UseMoveCountPruning type check default true" << std::endl;
+            std::cout << "option name UseLMR type check default true" << std::endl;
+            std::cout << "option name UseAspirationWindows type check default true" << std::endl;
+            std::cout << "option name DebugSearchStats type check default false" << std::endl;
             std::cout << "uciok" << std::endl;
         } else if (command == "isready") {
             joinSearch();
             std::cout << "readyok" << std::endl;
         } else if (command == "setoption") {
-            std::string token, name;
-            ss >> token; // "name"
-            ss >> name;
-            if (name == "Hash") {
-                std::string valueToken;
-                int value;
-                ss >> valueToken >> value; // "value" <number>
-                setHashSize(static_cast<size_t>(value));
-            }
+            handleSetOption(ss, searchConfig);
         } else if (command == "ucinewgame") {
             joinSearch();
             board.setStartPos();
@@ -112,8 +182,9 @@ void uciLoop() {
             searchState.stopped = false;
             searchState.nodes = 0;
             searchState.bestMove = {0, 0, None};
-            searchThread = std::thread([board, limits, &searchState, posHistory]() {
-                startSearch(board, limits, searchState, posHistory);
+            SearchConfig activeConfig = searchConfig;
+            searchThread = std::thread([board, limits, &searchState, posHistory, activeConfig]() {
+                startSearch(board, limits, searchState, posHistory, activeConfig);
                 Move best = searchState.bestMove;
                 if (best.from == best.to) {
                     std::cout << "bestmove 0000" << std::endl;

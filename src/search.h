@@ -20,6 +20,30 @@ struct SearchLimits {
     bool infinite = false;
 };
 
+struct SearchConfig {
+    bool useQseePruning = true;
+    bool useRfp = true;
+    bool useNullMove = true;
+    bool useFutilityPruning = true;
+    bool useMoveCountPruning = true;
+    bool useLmr = true;
+    bool useAspirationWindows = true;
+    bool debugSearchStats = false;
+};
+
+struct SearchStats {
+    uint64_t qseePrunes = 0;
+    uint64_t rfpCutoffs = 0;
+    uint64_t nmpAttempts = 0;
+    uint64_t nmpCutoffs = 0;
+    uint64_t fpPrunes = 0;
+    uint64_t lmpPrunes = 0;
+    uint64_t lmrApplied = 0;
+    uint64_t lmrResearched = 0;
+    uint64_t aspirationFailLows = 0;
+    uint64_t aspirationFailHighs = 0;
+};
+
 struct SearchState {
     std::atomic<bool> stopped{false};
     int64_t nodes = 0;
@@ -44,10 +68,12 @@ struct SearchState {
     std::vector<uint64_t> positionHistory;
     std::chrono::steady_clock::time_point startTime;
     int64_t allocatedTimeMs = 0;
+    SearchStats stats;
 };
 
 void startSearch(const Board &board, const SearchLimits &limits, SearchState &state,
-                 const std::vector<uint64_t> &positionHistory = {});
+                 const std::vector<uint64_t> &positionHistory = {},
+                 const SearchConfig &config = {});
 
 Move findBestMove(const Board &board, int depth = 1);
 
