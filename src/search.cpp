@@ -5,12 +5,16 @@
 #include "see.h"
 #include "tt.h"
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <iostream>
 #include <limits>
 
 static constexpr int MAX_HISTORY = 16384;
 static constexpr int MAX_CONT_HISTORY = 16384;
+static constexpr int MAX_LMR_MOVES = 256;
+
+static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 
 static TranspositionTable tt(16);
 
@@ -484,4 +488,16 @@ int getHashfull() {
 void clearHistory(SearchState &state) {
     memset(state.captureHistory, 0, sizeof(state.captureHistory));
     memset(state.contHistory->data, 0, sizeof(state.contHistory->data));
+}
+
+void initSearch() {
+    for (int d = 0; d < MAX_PLY; d++) {
+        for (int m = 0; m < MAX_LMR_MOVES; m++) {
+            if (d == 0 || m == 0) {
+                lmrReductions[d][m] = 0;
+            } else {
+                lmrReductions[d][m] = static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.25);
+            }
+        }
+    }
 }
