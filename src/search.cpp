@@ -155,15 +155,25 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {
     uint64_t key = board.key;
+    int hmc = board.halfmoveClock;
 
-    // Check game history (positions before search started)
-    for (const uint64_t &h : state.positionHistory) {
-        if (h == key) return true;
+    // Only positions within the halfmove clock window can possibly repeat,
+    // since captures and pawn moves make earlier positions unreachable.
+
+    // Check positions during the current search (step by 2 for same side to move)
+    int searchBack = std::min(ply, hmc);
+    for (int i = 2; i <= searchBack; i += 2) {
+        if (state.searchKeys[ply - i] == key) return true;
     }
 
-    // Check positions during the current search (every 2 plies = same side to move)
-    for (int i = ply - 2; i >= 0; i -= 2) {
-        if (state.searchKeys[i] == key) return true;
+    // Check game history (positions before search started)
+    int gameBack = hmc - ply;
+    if (gameBack > 0) {
+        int histSize = static_cast<int>(state.positionHistory.size());
+        int end = std::max(0, histSize - gameBack);
+        for (int i = histSize - 1; i >= end; i--) {
+            if (state.positionHistory[i] == key) return true;
+        }
     }
 
     return false;
