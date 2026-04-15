@@ -294,6 +294,81 @@ TEST_CASE("Search: still finds tactical captures", "[search]") {
     CHECK(best.to == stringToSquare("e8"));
 }
 
+TEST_CASE("Search: aspiration windows find correct moves at depth", "[search][aspiration]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White has a clear advantage (queen vs nothing). Aspiration windows should
+    // resolve quickly since the score is stable across iterations.
+    board.setFen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1");
+
+    Move best = findBestMove(board, 8);
+    CHECK(best.from != best.to);
+}
+
+TEST_CASE("Search: aspiration windows handle mate scores correctly", "[search][aspiration]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate in 1 position: aspiration windows should not interfere with mate detection
+    // since mate scores skip the narrow window
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: aspiration windows with volatile positions", "[search][aspiration]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Complex middlegame where the score may shift between depths,
+    // exercising aspiration window widening
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    // PV should be populated
+    CHECK(state.pvLength[0] >= 1);
+}
+
+TEST_CASE("Search: PV node search produces valid PV lines", "[search][pvs]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 6;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // PV should have multiple moves at depth 6
+    CHECK(state.pvLength[0] >= 2);
+
+    // All PV moves must be legal
+    Board pos = board;
+    for (int i = 0; i < state.pvLength[0]; i++) {
+        Move pvMove = state.pv[0][i];
+        std::vector<Move> legal = generateLegalMoves(pos);
+        bool found = false;
+        for (const Move &m : legal) {
+            if (m.from == pvMove.from && m.to == pvMove.to && m.promotion == pvMove.promotion) {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found);
+        if (!found) break;
+        pos.makeMove(pvMove);
+    }
+}
+
 TEST_CASE("Search: extensions do not break mate detection", "[search][extensions]") {
     ensureInit();
     clearTT();
