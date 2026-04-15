@@ -236,6 +236,18 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     bool inCheck = isInCheck(board);
 
+    // Static eval for pruning decisions (unreliable when in check)
+    int staticEval = inCheck ? -INF_SCORE : evaluate(board);
+
+    // Reverse futility pruning: if static eval is far above beta at shallow depth,
+    // assume this node will fail high
+    if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
+        int rfpMargin = 120 * depth;
+        if (staticEval - rfpMargin >= beta) {
+            return staticEval - rfpMargin;
+        }
+    }
+
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
 
