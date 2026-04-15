@@ -284,19 +284,26 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (!inCheck && depth >= PROBCUT_DEPTH && beta - alpha == 1 &&
         std::abs(beta) < MATE_SCORE - MAX_PLY) {
         int probcutBeta = beta + PROBCUT_MARGIN;
-        std::vector<Move> captures = generateLegalCaptures(board);
-        for (const Move &m : captures) {
-            if (see(board, m) < probcutBeta - staticEval) continue;
 
-            state.moveStack[ply] = m;
-            state.movedPiece[ply] = board.squares[m.from].type;
+        // Skip ProbCut if the TT already indicates the score is below probcutBeta
+        if (!(ttEntry.depth >= depth - 3 && ttEntry.flag != TT_LOWER_BOUND &&
+              ttEntry.score < probcutBeta)) {
+            std::vector<Move> captures = generateLegalCaptures(board);
+            for (const Move &m : captures) {
+                // Only search captures that aren't losing material
+                if (see(board, m) < 0) continue;
 
-            UndoInfo undo = board.makeMove(m);
-            int score = -negamax(board, depth - 4, ply + 1, -probcutBeta, -probcutBeta + 1, state);
-            board.unmakeMove(m, undo);
+                state.moveStack[ply] = m;
+                state.movedPiece[ply] = board.squares[m.from].type;
 
-            if (state.stopped) return 0;
-            if (score >= probcutBeta) return probcutBeta;
+                UndoInfo undo = board.makeMove(m);
+                int score =
+                    -negamax(board, depth - 4, ply + 1, -probcutBeta, -probcutBeta + 1, state);
+                board.unmakeMove(m, undo);
+
+                if (state.stopped) return 0;
+                if (score >= probcutBeta) return probcutBeta;
+            }
         }
     }
 
