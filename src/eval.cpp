@@ -196,8 +196,13 @@ int evaluate(const Board &board) {
 
     // Scale evaluation toward 0 as the halfmove clock approaches 100 so the
     // engine prefers moves that make progress (captures, pawn pushes) and
-    // avoids blundering into 50-move rule draws beyond the search horizon
-    result = result * (200 - board.halfmoveClock) / 200;
+    // avoids blundering into 50-move rule draws beyond the search horizon.
+    // Skip when no pawns remain: in pawnless endgames like KQ vs K the winning
+    // side has no way to reset the clock other than capturing, so the search
+    // tree itself must handle the 50-move horizon without penalizing the eval.
+    if (board.byPiece[Pawn]) {
+        result = result * (200 - board.halfmoveClock) / 200;
+    }
 
     return (board.sideToMove == White) ? result : -result;
 }
