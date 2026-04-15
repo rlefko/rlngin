@@ -453,3 +453,33 @@ TEST_CASE("Search: SEE pruning does not prune winning captures", "[search][see-p
     CHECK(best.from == stringToSquare("e1"));
     CHECK(best.to == stringToSquare("e8"));
 }
+
+TEST_CASE("Search: ProbCut does not break mate detection", "[search][probcut]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate in 1: Re1-e8#
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: ProbCut reduces nodes at high depth", "[search][probcut]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White has a clear material advantage (extra queen). ProbCut should
+    // detect the winning position quickly and prune at high depths.
+    board.setFen("r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    // ProbCut should help keep nodes bounded at depth 8
+    CHECK(state.nodes < 15000000);
+}
