@@ -13,6 +13,8 @@
 static constexpr int MAX_HISTORY = 16384;
 static constexpr int MAX_CONT_HISTORY = 16384;
 static constexpr int MAX_LMR_MOVES = 256;
+static constexpr int PROBCUT_DEPTH = 5;
+static constexpr int PROBCUT_MARGIN = 200;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 
@@ -274,6 +276,27 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     return beta;
                 }
             }
+        }
+    }
+
+    // ProbCut: use a shallow search on captures to predict whether
+    // a deeper search will fail high, pruning the subtree if so
+    if (!inCheck && depth >= PROBCUT_DEPTH && beta - alpha == 1 &&
+        std::abs(beta) < MATE_SCORE - MAX_PLY) {
+        int probcutBeta = beta + PROBCUT_MARGIN;
+        std::vector<Move> captures = generateLegalCaptures(board);
+        for (const Move &m : captures) {
+            if (see(board, m) < probcutBeta - staticEval) continue;
+
+            state.moveStack[ply] = m;
+            state.movedPiece[ply] = board.squares[m.from].type;
+
+            UndoInfo undo = board.makeMove(m);
+            int score = -negamax(board, depth - 4, ply + 1, -probcutBeta, -probcutBeta + 1, state);
+            board.unmakeMove(m, undo);
+
+            if (state.stopped) return 0;
+            if (score >= probcutBeta) return probcutBeta;
         }
     }
 

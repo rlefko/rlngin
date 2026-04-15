@@ -282,6 +282,37 @@ TEST_CASE("Search: finds correct move in king-pawn endgame", "[search][nmp]") {
     CHECK(best.from != best.to);
 }
 
+TEST_CASE("Search: probcut reduces nodes in tactical position", "[search][probcut]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Rich tactical middlegame where ProbCut can prune confidently
+    board.setFen("r1bq1rk1/pp2ppbp/2np1np1/8/3NP3/2N1BP2/PPPQ2PP/R3KB1R w KQ - 0 9");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // With ProbCut active at depth >= 5, we expect meaningful pruning.
+    // Without ProbCut, this position at depth 8 searches significantly more nodes.
+    CHECK(state.nodes < 5000000);
+    CHECK(state.bestMove.from != state.bestMove.to);
+}
+
+TEST_CASE("Search: probcut still finds winning capture", "[search][probcut]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White rook on a1, black queen on a8 undefended, king on g8.
+    // ProbCut should not prevent finding the winning capture.
+    board.setFen("q5k1/5ppp/8/8/8/8/5PPP/R5K1 w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("a1"));
+    CHECK(best.to == stringToSquare("a8"));
+}
+
 TEST_CASE("Search: still finds tactical captures", "[search]") {
     ensureInit();
     clearTT();
