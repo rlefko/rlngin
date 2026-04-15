@@ -2,13 +2,41 @@
 #include "bitboard.h"
 #include "eval.h"
 #include "movegen.h"
+#include "see.h"
 #include "tt.h"
 #include <algorithm>
 #include <cstring>
 #include <iostream>
 #include <limits>
 
+static constexpr int MAX_HISTORY = 16384;
+static constexpr int MAX_CONT_HISTORY = 16384;
+
 static TranspositionTable tt(16);
+
+static void updateHistory(int &entry, int bonus) {
+    entry += bonus - entry * std::abs(bonus) / MAX_HISTORY;
+}
+
+static void updateContHistory(int16_t &entry, int bonus) {
+    entry += static_cast<int16_t>(bonus - entry * std::abs(bonus) / MAX_CONT_HISTORY);
+}
+
+static bool isCapture(const Board &board, const Move &m) {
+    if (board.squares[m.to].type != None) return true;
+    if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
+        board.enPassantSquare != -1)
+        return true;
+    return false;
+}
+
+static PieceType capturedType(const Board &board, const Move &m) {
+    if (board.squares[m.to].type != None) return board.squares[m.to].type;
+    if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
+        board.enPassantSquare != -1)
+        return Pawn;
+    return None;
+}
 
 static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
                      const SearchState &state) {
@@ -17,22 +45,28 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         return 10000000;
     }
 
+    PieceType pt = board.squares[m.from].type;
+
     // Promotions
     if (m.promotion != None) {
-        return 950000 + PieceValue[m.promotion];
+        if (m.promotion == Queen) return 9000000;
+        return -5000000;
     }
 
-    Piece captured = board.squares[m.to];
-
-    // En passant capture
-    if (captured.type == None && board.squares[m.from].type == Pawn &&
-        m.to == board.enPassantSquare && board.enPassantSquare != -1) {
-        return 1000000 + PieceValue[Pawn] * 100 - PieceValue[Pawn];
-    }
-
-    // Captures scored by MVV-LVA
-    if (captured.type != None) {
-        return 1000000 + PieceValue[captured.type] * 100 - PieceValue[board.squares[m.from].type];
+    // Captures: use SEE to separate good from bad (skip SEE in quiescence, ply == -1)
+    if (isCapture(board, m)) {
+        PieceType ct = capturedType(board, m);
+        int capHist = state.captureHistory[pt][m.to][ct];
+        if (ply < 0) {
+            // Quiescence: use MVV-LVA + capture history (no SEE for speed)
+            return 5000000 + PieceValue[ct] * 100 - PieceValue[pt] + capHist / 32;
+        }
+        int seeVal = see(board, m);
+        if (seeVal >= 0) {
+            return 5000000 + seeVal + capHist / 32;
+        } else {
+            return -2000000 + seeVal + capHist / 32;
+        }
     }
 
     // Killer moves
@@ -40,12 +74,20 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         for (int k = 0; k < 2; k++) {
             const Move &killer = state.killers[ply][k];
             if (m.from == killer.from && m.to == killer.to && m.promotion == killer.promotion) {
-                return 900000 - k;
+                return 4000000 - k;
             }
         }
     }
 
-    return 0;
+    // Quiet moves: use continuation history
+    int score = 0;
+    if (ply >= 1) {
+        PieceType prevPt = state.movedPiece[ply - 1];
+        int prevTo = state.moveStack[ply - 1].to;
+        score += state.contHistory->data[prevPt][prevTo][pt][m.to];
+    }
+
+    return score;
 }
 
 static void checkTime(SearchState &state) {
@@ -97,6 +139,9 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     });
 
     for (const Move &m : moves) {
+        // Prune losing captures when not in check
+        if (!inCheck && isCapture(board, m) && see(board, m) < 0) continue;
+
         UndoInfo undo = board.makeMove(m);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
@@ -108,15 +153,48 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     return alpha;
 }
 
+static bool isRepetition(const Board &board, const SearchState &state, int ply) {
+    uint64_t key = board.key;
+    int hmc = board.halfmoveClock;
+
+    // Only positions within the halfmove clock window can possibly repeat,
+    // since captures and pawn moves make earlier positions unreachable.
+
+    // Check positions during the current search (step by 2 for same side to move)
+    int searchBack = std::min(ply, hmc);
+    for (int i = 2; i <= searchBack; i += 2) {
+        if (state.searchKeys[ply - i] == key) return true;
+    }
+
+    // Check game history (positions before search started)
+    int gameBack = hmc - ply;
+    if (gameBack > 0) {
+        int histSize = static_cast<int>(state.positionHistory.size());
+        int end = std::max(0, histSize - gameBack);
+        for (int i = histSize - 1; i >= end; i--) {
+            if (state.positionHistory[i] == key) return true;
+        }
+    }
+
+    return false;
+}
+
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
+    state.searchKeys[ply] = board.key;
 
     if (ply >= MAX_PLY - 1) return evaluate(board);
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
+
+    // Draw detection: repetition and 50-move rule
+    if (ply > 0) {
+        if (board.halfmoveClock >= 100) return 0;
+        if (isRepetition(board, state, ply)) return 0;
+    }
 
     int origAlpha = alpha;
 
@@ -155,7 +233,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
 
+    Move searchedCaptures[64];
+    Move searchedQuiets[64];
+    int numSearchedCaptures = 0;
+    int numSearchedQuiets = 0;
+    int bonus = std::min(depth * depth, 400);
+
     for (const Move &m : moves) {
+        state.moveStack[ply] = m;
+        state.movedPiece[ply] = board.squares[m.from].type;
+
         UndoInfo undo = board.makeMove(m);
         int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
         board.unmakeMove(m, undo);
@@ -173,14 +260,46 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             state.pvLength[ply] = state.pvLength[ply + 1];
         }
         if (alpha >= beta) {
-            // Store killer move if it's a quiet move (not a capture or en passant)
-            if (board.squares[m.to].type == None &&
-                !(board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
-                  board.enPassantSquare != -1)) {
+            bool cap = isCapture(board, m);
+            if (cap) {
+                // Reward the capture that caused the cutoff
+                PieceType pt = board.squares[m.from].type;
+                PieceType ct = capturedType(board, m);
+                updateHistory(state.captureHistory[pt][m.to][ct], bonus);
+                // Penalize previously searched captures
+                for (int i = 0; i < numSearchedCaptures; i++) {
+                    const Move &prev = searchedCaptures[i];
+                    PieceType prevPt = board.squares[prev.from].type;
+                    PieceType prevCt = capturedType(board, prev);
+                    updateHistory(state.captureHistory[prevPt][prev.to][prevCt], -bonus);
+                }
+            } else {
+                // Killer move update
                 state.killers[ply][1] = state.killers[ply][0];
                 state.killers[ply][0] = m;
+                // Continuation history reward
+                if (ply >= 1) {
+                    PieceType prevPt = state.movedPiece[ply - 1];
+                    int prevTo = state.moveStack[ply - 1].to;
+                    PieceType currPt = board.squares[m.from].type;
+                    updateContHistory(state.contHistory->data[prevPt][prevTo][currPt][m.to], bonus);
+                    // Penalize previously searched quiets
+                    for (int i = 0; i < numSearchedQuiets; i++) {
+                        const Move &prev = searchedQuiets[i];
+                        PieceType qPt = board.squares[prev.from].type;
+                        updateContHistory(state.contHistory->data[prevPt][prevTo][qPt][prev.to],
+                                          -bonus);
+                    }
+                }
             }
             break;
+        }
+
+        // Track searched moves for malus
+        if (isCapture(board, m)) {
+            if (numSearchedCaptures < 64) searchedCaptures[numSearchedCaptures++] = m;
+        } else {
+            if (numSearchedQuiets < 64) searchedQuiets[numSearchedQuiets++] = m;
         }
     }
 
@@ -214,11 +333,14 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
     return allocated;
 }
 
-void startSearch(const Board &board, const SearchLimits &limits, SearchState &state) {
+void startSearch(const Board &board, const SearchLimits &limits, SearchState &state,
+                 const std::vector<uint64_t> &positionHistory) {
     state.stopped = false;
     state.nodes = 0;
     state.bestMove = {0, 0, None};
     memset(state.killers, 0, sizeof(state.killers));
+    state.positionHistory = positionHistory;
+    state.searchKeys[0] = board.key;
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = computeTimeAllocation(board, limits);
 
@@ -237,7 +359,17 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
         state.pvLength[0] = 0;
 
-        for (const Move &m : rootMoves) {
+        for (size_t mi = 0; mi < rootMoves.size(); mi++) {
+            const Move &m = rootMoves[mi];
+
+            if (depth >= 2) {
+                std::cout << "info depth " << depth << " currmove " << moveToString(m)
+                          << " currmovenumber " << (mi + 1) << std::endl;
+            }
+
+            state.moveStack[0] = m;
+            state.movedPiece[0] = pos.squares[m.from].type;
+
             UndoInfo undo = pos.makeMove(m);
             int score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
             pos.unmakeMove(m, undo);
@@ -259,6 +391,12 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         if (state.stopped) break;
 
         state.bestMove = currentBest;
+
+        if (state.pvLength[0] >= 2) {
+            state.ponderMove = state.pv[0][1];
+        } else {
+            state.ponderMove = {0, 0, None};
+        }
 
         // Move the best move to the front for the next iteration
         for (size_t i = 0; i < rootMoves.size(); i++) {
@@ -285,7 +423,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             std::cout << " score cp " << currentBestScore;
         }
 
-        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs << " pv";
+        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs
+                  << " hashfull " << getHashfull() << " pv";
         for (int i = 0; i < state.pvLength[0]; i++) {
             std::cout << " " << moveToString(state.pv[0][i]);
         }
@@ -313,4 +452,13 @@ void setHashSize(size_t mb) {
 
 void clearTT() {
     tt.clear();
+}
+
+int getHashfull() {
+    return tt.hashfull();
+}
+
+void clearHistory(SearchState &state) {
+    memset(state.captureHistory, 0, sizeof(state.captureHistory));
+    memset(state.contHistory->data, 0, sizeof(state.contHistory->data));
 }
