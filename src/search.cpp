@@ -295,9 +295,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
-        } else if (singularBeta >= beta) {
-            // Multi-cut: if even non-TT moves beat beta, prune this node
-            return singularBeta;
         }
     }
 
@@ -340,7 +337,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 PieceType pt = board.squares[m.from].type;
                 PieceType ct = capturedType(board, m);
                 int capHistScore = state.captureHistory[pt][m.to][ct];
-                if (capHistScore >= 7000) {
+                if (capHistScore >= 1000) {
                     moveExtension = 1;
                 }
             }
