@@ -511,7 +511,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime).count();
         int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
 
-        std::cout << "info depth " << depth << " seldepth " << state.seldepth << " multipv 1";
+        std::cout << "info depth " << depth << " seldepth " << state.seldepth;
 
         if (std::abs(currentBestScore) >= MATE_SCORE - 100) {
             int matePly = MATE_SCORE - std::abs(currentBestScore);
