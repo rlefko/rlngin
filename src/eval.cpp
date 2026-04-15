@@ -194,5 +194,10 @@ int evaluate(const Board &board) {
     int egPhase = 24 - mgPhase;
     int result = (mgResult * mgPhase + egResult * egPhase) / 24;
 
+    // Scale evaluation toward 0 as the halfmove clock approaches 100 so the
+    // engine prefers moves that make progress (captures, pawn pushes) and
+    // avoids blundering into 50-move rule draws beyond the search horizon
+    result = result * (200 - board.halfmoveClock) / 200;
+
     return (board.sideToMove == White) ? result : -result;
 }
