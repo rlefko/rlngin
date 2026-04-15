@@ -580,7 +580,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             if (state.stopped) break;
             if (!usingAspiration) break;
 
-            if (currentBestScore <= alpha) {
+            if (currentBestScore < alpha) {
                 state.stats.aspirationFailLows++;
                 if (config.debugSearchStats) {
                     emitAspirationDebug(depth, alpha, beta, currentBestScore, delta, "fail-low");
