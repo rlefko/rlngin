@@ -16,7 +16,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 905);
+    CHECK(evaluate(board) == 985);
 }
 
 TEST_CASE("Eval: score flips with side to move", "[eval]") {
@@ -33,35 +33,33 @@ TEST_CASE("Eval: score flips with side to move", "[eval]") {
 TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     Board board;
 
-    // Pawn on a2 (sq 8): PawnPST[8] = 5, so 100 + 5 = 105
+    // Pawn on a2 (sq 8): phase 0, pure endgame: 94 + EgPawnTable[8] = 94 + 13 = 107
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 105);
+    CHECK(evaluate(board) == 107);
 
-    // Knight on a1 (sq 0): KnightPST[0] = -50, so 320 + (-50) = 270
+    // Knight on a1 (sq 0): phase 1, tapered: (232*1 + 252*23) / 24 = 251
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 270);
+    CHECK(evaluate(board) == 251);
 
-    // Bishop on a1 (sq 0): BishopPST[0] = -20, so 330 + (-20) = 310
+    // Bishop on a1 (sq 0): phase 1, tapered: (332*1 + 274*23) / 24 = 276
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 310);
+    CHECK(evaluate(board) == 276);
 
-    // Rook on a1 (sq 0): RookPST[0] = 0, so 500 + 0 = 500
+    // Rook on a1 (sq 0): phase 2, tapered: (458*2 + 503*22) / 24 = 499
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 500);
+    CHECK(evaluate(board) == 499);
 
-    // Queen on d5 (sq 35): QueenPST[35] = 5, so 900 + 5 = 905
+    // Queen on d5 (sq 35): phase 4, tapered: (1009*4 + 981*20) / 24 = 985
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 905);
+    CHECK(evaluate(board) == 985);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
     Board board;
 
-    // Knight on e4 (sq 28): KnightPST[28] = 20
     board.setFen("4k3/8/8/8/4N3/8/8/4K3 w - - 0 1");
     int centralKnight = evaluate(board);
 
-    // Knight on a1 (sq 0): KnightPST[0] = -50
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
     int cornerKnight = evaluate(board);
 
@@ -71,11 +69,10 @@ TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
 TEST_CASE("Eval: endgame king prefers center", "[eval]") {
     Board board;
 
-    // No queens -> endgame. King on d4 (sq 27): KingEGPST[27] = 40
+    // No queens, no pieces -> phase 0, pure endgame: king prefers center
     board.setFen("4k3/8/8/8/3K4/8/8/8 w - - 0 1");
     int centralKing = evaluate(board);
 
-    // King on a1 (sq 0): KingEGPST[0] = -50
     board.setFen("4k3/8/8/8/8/8/8/K7 w - - 0 1");
     int cornerKing = evaluate(board);
 
@@ -85,40 +82,39 @@ TEST_CASE("Eval: endgame king prefers center", "[eval]") {
 TEST_CASE("Eval: middlegame king prefers castled position", "[eval]") {
     Board board;
 
-    // Queen + rook -> not endgame. King on g1 (sq 6): KingMGPST[6] = 30
-    board.setFen("r2qk3/8/8/8/8/8/8/R2Q2K1 w - - 0 1");
+    // Heavy material (Q+R+B+N per side, phase 16) -> MG-dominated, king prefers safety
+    board.setFen("rnbqk3/8/8/8/8/8/8/RNBQ2K1 w - - 0 1");
     int castledKing = evaluate(board);
 
-    // King on e4 (sq 28): KingMGPST[28] = -40
-    board.setFen("r2qk3/8/8/8/4K3/8/8/R2Q4 w - - 0 1");
+    board.setFen("rnbqk3/8/8/8/4K3/8/8/RNBQ4 w - - 0 1");
     int exposedKing = evaluate(board);
 
     CHECK(castledKing > exposedKing);
 }
 
-TEST_CASE("Eval: endgame detection", "[eval]") {
+TEST_CASE("Eval: tapered eval blends middlegame and endgame", "[eval]") {
     Board board;
 
-    // No queens -> endgame (king prefers center)
+    // Pure endgame (phase 0): king prefers center over edge
     board.setFen("4k3/8/8/8/3K4/8/8/8 w - - 0 1");
-    int noQueensCenter = evaluate(board);
+    int egCenter = evaluate(board);
     board.setFen("4k3/8/8/8/8/8/8/3K4 w - - 0 1");
-    int noQueensEdge = evaluate(board);
-    CHECK(noQueensCenter > noQueensEdge);
+    int egEdge = evaluate(board);
+    CHECK(egCenter > egEdge);
 
-    // Queen + rook -> not endgame (king prefers safety)
-    board.setFen("3qk3/8/8/8/8/8/8/R2QK3 w - - 0 1");
-    int qrCastled = evaluate(board);
-    board.setFen("3qk3/8/8/8/4K3/8/8/R2Q4 w - - 0 1");
-    int qrExposed = evaluate(board);
-    CHECK(qrCastled > qrExposed);
-
-    // Queen + one minor -> endgame (king prefers center)
+    // Light material (Q+minor per side, phase ~10): center king still viable
     board.setFen("3qk3/8/8/8/3K4/8/8/3QN3 w - - 0 1");
-    int qnCenter = evaluate(board);
+    int lightCenter = evaluate(board);
     board.setFen("3qk3/8/8/8/8/8/8/3QNK2 w - - 0 1");
-    int qnEdge = evaluate(board);
-    CHECK(qnCenter > qnEdge);
+    int lightEdge = evaluate(board);
+    CHECK(lightCenter > lightEdge);
+
+    // Heavy material (Q+R+B+N per side, phase 16): castled king preferred
+    board.setFen("rnbqk3/8/8/8/8/8/8/RNBQ2K1 w - - 0 1");
+    int heavyCastled = evaluate(board);
+    board.setFen("rnbqk3/8/8/8/4K3/8/8/RNBQ4 w - - 0 1");
+    int heavyExposed = evaluate(board);
+    CHECK(heavyCastled > heavyExposed);
 }
 
 TEST_CASE("Eval: symmetric positions score 0", "[eval]") {
