@@ -284,9 +284,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (!inCheck && depth >= PROBCUT_DEPTH && beta - alpha == 1 &&
         std::abs(beta) < MATE_SCORE - MAX_PLY) {
         int probcutBeta = beta + PROBCUT_MARGIN;
+        int probcutDepth = depth - 3;
 
         // Skip ProbCut if the TT already indicates the score is below probcutBeta
-        if (!(ttEntry.depth >= depth - 3 && ttEntry.flag != TT_LOWER_BOUND &&
+        if (!(ttEntry.depth >= probcutDepth && ttEntry.flag != TT_LOWER_BOUND &&
               ttEntry.score < probcutBeta)) {
             std::vector<Move> captures = generateLegalCaptures(board);
             for (const Move &m : captures) {
@@ -298,11 +299,14 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
                 UndoInfo undo = board.makeMove(m);
                 int score =
-                    -negamax(board, depth - 4, ply + 1, -probcutBeta, -probcutBeta + 1, state);
+                    -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1, state);
                 board.unmakeMove(m, undo);
 
                 if (state.stopped) return 0;
-                if (score >= probcutBeta) return probcutBeta;
+                if (score >= probcutBeta) {
+                    tt.store(board.key, probcutBeta, probcutDepth, TT_LOWER_BOUND, m, ply);
+                    return probcutBeta;
+                }
             }
         }
     }
