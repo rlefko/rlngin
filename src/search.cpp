@@ -234,6 +234,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         return scoreMove(a, board, ttMove, ply, state) > scoreMove(b, board, ttMove, ply, state);
     });
 
+    bool inCheck = isInCheck(board);
+
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
 
@@ -248,14 +250,44 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         state.moveStack[ply] = m;
         state.movedPiece[ply] = board.squares[m.from].type;
 
+        bool capture = isCapture(board, m);
+        bool isPromotion = (m.promotion != None);
+
         UndoInfo undo = board.makeMove(m);
+        bool givesCheck = isInCheck(board);
 
         int score;
         if (moveIndex == 0) {
             score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
         } else {
-            // PVS: null-window search for non-first moves
-            score = -negamax(board, depth - 1, ply + 1, -alpha - 1, -alpha, state);
+            // Late move reductions
+            int reduction = 0;
+            if (depth >= 3 && moveIndex >= 2 && !capture && !isPromotion && !inCheck &&
+                !givesCheck) {
+                reduction = lmrReductions[std::min(depth, MAX_PLY - 1)]
+                                         [std::min(moveIndex, MAX_LMR_MOVES - 1)];
+
+                // Adjust reduction based on continuation history
+                if (ply >= 1) {
+                    PieceType prevPt = state.movedPiece[ply - 1];
+                    int prevTo = state.moveStack[ply - 1].to;
+                    PieceType currPt = state.movedPiece[ply];
+                    int histScore = state.contHistory->data[prevPt][prevTo][currPt][m.to];
+                    reduction -= histScore / 8192;
+                }
+
+                reduction = std::max(0, std::min(reduction, depth - 2));
+            }
+
+            // Reduced null-window search
+            score = -negamax(board, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, state);
+
+            // Re-search at full depth if reduced search beats alpha
+            if (reduction > 0 && score > alpha) {
+                score = -negamax(board, depth - 1, ply + 1, -alpha - 1, -alpha, state);
+            }
+
+            // PVS: re-search with full window if null-window search beats alpha
             if (score > alpha && score < beta) {
                 score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
             }
