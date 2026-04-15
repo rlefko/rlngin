@@ -192,3 +192,30 @@ TEST_CASE("Search: PV moves are legal", "[search][pv]") {
         pos.makeMove(pvMove);
     }
 }
+
+TEST_CASE("Search: avoids losing queen for pawn", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White queen on d4, black pawn on e5 defended by pawn on d6.
+    // Queen should not capture the pawn.
+    board.setFen("4k3/8/3p4/4p3/3Q4/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 3);
+    // The queen should not go to e5 (losing queen for pawn)
+    if (best.to == stringToSquare("e5")) {
+        CHECK(false);
+    }
+}
+
+TEST_CASE("Search: still finds tactical captures", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White rook on e1, black queen on e8 undefended, king on h8
+    board.setFen("4q2k/8/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 2);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}

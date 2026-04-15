@@ -72,7 +72,10 @@ int see(const Board &board, const Move &move) {
 
         int sq;
         PieceType pt = getLeastValuableAttacker(board, attackers, side, sq);
-        if (pt == None) break;
+        if (pt == None) {
+            depth--;
+            break;
+        }
 
         gain[depth] = PieceValue[attacker] - gain[depth - 1];
 
