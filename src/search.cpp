@@ -535,11 +535,12 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             if (state.stopped) break;
 
             if (currentBestScore <= alpha) {
+                beta = (alpha + beta) / 2;
                 alpha = std::max(alpha - delta, -INF_SCORE);
-                delta *= 2;
+                delta += delta / 2;
             } else if (currentBestScore >= beta) {
                 beta = std::min(beta + delta, INF_SCORE);
-                delta *= 2;
+                delta += delta / 2;
             } else {
                 break;
             }
