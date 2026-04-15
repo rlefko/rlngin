@@ -630,15 +630,20 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
             if (currentBestScore <= alpha) {
                 // Fail-low: score is below the window, widen downward
+                // Ensure the PV contains at least the best move for UCI output
+                if (state.pvLength[0] == 0) {
+                    state.pv[0][0] = currentBest;
+                    state.pvLength[0] = 1;
+                }
                 printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_UPPER);
                 beta = (alpha + beta) / 2;
-                alpha = std::max(alpha - delta, -INF_SCORE);
+                alpha = std::max(currentBestScore - delta, -INF_SCORE);
                 delta *= 4;
             } else if (currentBestScore >= beta) {
                 // Fail-high: score is above the window, widen upward
                 state.bestMove = currentBest;
                 printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER);
-                beta = std::min(beta + delta, INF_SCORE);
+                beta = std::min(currentBestScore + delta, INF_SCORE);
                 delta *= 4;
             } else {
                 // Exact: score is within the aspiration window
