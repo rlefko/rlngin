@@ -111,7 +111,25 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
-static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
+static void emitAspirationDebug(int depth, int alpha, int beta, int score, int delta,
+                                const char *result) {
+    std::cout << "info string aspiration depth " << depth << " result " << result << " alpha "
+              << alpha << " beta " << beta << " score " << score << " delta " << delta << std::endl;
+}
+
+static void emitSearchStats(const SearchState &state) {
+    std::cout << "info string searchstats"
+              << " qseePrunes " << state.stats.qseePrunes << " rfpCutoffs "
+              << state.stats.rfpCutoffs << " nmpAttempts " << state.stats.nmpAttempts
+              << " nmpCutoffs " << state.stats.nmpCutoffs << " fpPrunes " << state.stats.fpPrunes
+              << " lmpPrunes " << state.stats.lmpPrunes << " lmrApplied " << state.stats.lmrApplied
+              << " lmrResearched " << state.stats.lmrResearched << " aspirationFailLows "
+              << state.stats.aspirationFailLows << " aspirationFailHighs "
+              << state.stats.aspirationFailHighs << std::endl;
+}
+
+static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state,
+                      const SearchConfig &config) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
 
@@ -144,10 +162,13 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
     for (const Move &m : moves) {
         // Prune losing captures when not in check
-        if (!inCheck && isCapture(board, m) && see(board, m) < 0) continue;
+        if (config.useQseePruning && !inCheck && isCapture(board, m) && see(board, m) < 0) {
+            state.stats.qseePrunes++;
+            continue;
+        }
 
         UndoInfo undo = board.makeMove(m);
-        int score = -quiescence(board, -beta, -alpha, ply + 1, state);
+        int score = -quiescence(board, -beta, -alpha, ply + 1, state, config);
         board.unmakeMove(m, undo);
         if (state.stopped) return 0;
         if (score >= beta) return beta;
@@ -184,7 +205,7 @@ static bool isRepetition(const Board &board, const SearchState &state, int ply) 
 }
 
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state,
-                   bool allowNullMove = true) {
+                   const SearchConfig &config, bool allowNullMove = true) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
@@ -228,7 +249,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         return 0;
     }
 
-    if (depth <= 0) return quiescence(board, alpha, beta, ply, state);
+    if (depth <= 0) return quiescence(board, alpha, beta, ply, state, config);
 
     // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
     std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
@@ -242,35 +263,44 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Reverse futility pruning: if static eval is far above beta at shallow depth,
     // assume this node will fail high
-    if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
+    if (config.useRfp && !inCheck && depth <= 3 && beta - alpha == 1 &&
+        beta > -MATE_SCORE + MAX_PLY) {
         int rfpMargin = 120 * depth;
         if (staticEval - rfpMargin >= beta) {
+            state.stats.rfpCutoffs++;
             return staticEval - rfpMargin;
         }
     }
 
     // Null move pruning: skip the move if the opponent can't beat beta even
     // with a free move, which indicates this position is too good for us
-    if (allowNullMove && !inCheck && depth >= 3 && beta - alpha == 1 &&
+    if (config.useNullMove && allowNullMove && !inCheck && depth >= 3 && beta - alpha == 1 &&
         beta > -MATE_SCORE + MAX_PLY) {
         Color us = board.sideToMove;
         Bitboard nonPawnMaterial = board.byColor[us] & ~board.byPiece[Pawn] & ~board.byPiece[King];
         if (nonPawnMaterial) {
+            state.stats.nmpAttempts++;
             // Dynamic reduction: base depth component + eval-based bonus
             int R = 3 + depth / 3 + std::clamp((staticEval - beta) / 200, 0, 3);
             R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
-            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
+            int nullScore =
+                -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state, config, false);
             board.unmakeNullMove(nullUndo);
             if (state.stopped) return 0;
             if (nullScore >= beta) {
                 // Verification search at high depths to guard against zugzwang
                 if (depth >= 8) {
-                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false);
+                    int verifyScore =
+                        negamax(board, depth - 1 - R, ply, alpha, beta, state, config, false);
                     if (state.stopped) return 0;
-                    if (verifyScore >= beta) return beta;
+                    if (verifyScore >= beta) {
+                        state.stats.nmpCutoffs++;
+                        return beta;
+                    }
                 } else {
+                    state.stats.nmpCutoffs++;
                     return beta;
                 }
             }
@@ -299,10 +329,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         bool givesCheck = isInCheck(board);
 
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
-        if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
-            alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
+        if (config.useFutilityPruning && !inCheck && depth <= 3 && moveIndex > 0 && !capture &&
+            !isPromotion && !givesCheck && alpha > -MATE_SCORE + MAX_PLY &&
+            beta < MATE_SCORE - MAX_PLY) {
             int fpMargin = 100 + 80 * depth;
             if (staticEval + fpMargin <= alpha) {
+                state.stats.fpPrunes++;
                 board.unmakeMove(m, undo);
                 continue;
             }
@@ -310,10 +342,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         // Move count based pruning: at shallow depths, skip late quiet moves
         // beyond a threshold, as they are unlikely to beat alpha
-        if (!inCheck && depth <= 5 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
-            alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
+        if (config.useMoveCountPruning && !inCheck && depth <= 5 && moveIndex > 0 && !capture &&
+            !isPromotion && !givesCheck && alpha > -MATE_SCORE + MAX_PLY &&
+            beta < MATE_SCORE - MAX_PLY) {
             int moveCountThreshold = 3 + depth * depth;
             if (moveIndex >= moveCountThreshold) {
+                state.stats.lmpPrunes++;
                 board.unmakeMove(m, undo);
                 continue;
             }
@@ -321,12 +355,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         int score;
         if (moveIndex == 0) {
-            score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+            score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state, config);
         } else {
             // Late move reductions
             int reduction = 0;
-            if (depth >= 3 && moveIndex >= 2 && !capture && !isPromotion && !inCheck &&
-                !givesCheck) {
+            if (config.useLmr && depth >= 3 && moveIndex >= 2 && !capture && !isPromotion &&
+                !inCheck && !givesCheck) {
                 reduction = lmrReductions[std::min(depth, MAX_PLY - 1)]
                                          [std::min(moveIndex, MAX_LMR_MOVES - 1)];
 
@@ -343,16 +377,19 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
 
             // Reduced null-window search
-            score = -negamax(board, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, state);
+            if (reduction > 0) state.stats.lmrApplied++;
+            score =
+                -negamax(board, depth - 1 - reduction, ply + 1, -alpha - 1, -alpha, state, config);
 
             // Re-search at full depth if reduced search beats alpha
             if (reduction > 0 && score > alpha) {
-                score = -negamax(board, depth - 1, ply + 1, -alpha - 1, -alpha, state);
+                state.stats.lmrResearched++;
+                score = -negamax(board, depth - 1, ply + 1, -alpha - 1, -alpha, state, config);
             }
 
             // PVS: re-search with full window if null-window search beats alpha
             if (score > alpha && score < beta) {
-                score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
+                score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state, config);
             }
         }
 
@@ -449,21 +486,26 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
 }
 
 void startSearch(const Board &board, const SearchLimits &limits, SearchState &state,
-                 const std::vector<uint64_t> &positionHistory) {
+                 const std::vector<uint64_t> &positionHistory, const SearchConfig &config) {
     state.stopped = false;
     state.nodes = 0;
     state.bestMove = {0, 0, None};
+    state.ponderMove = {0, 0, None};
     memset(state.killers, 0, sizeof(state.killers));
     state.positionHistory = positionHistory;
     state.searchKeys[0] = board.key;
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = computeTimeAllocation(board, limits);
+    state.stats = {};
 
     int maxDepth = (limits.depth > 0) ? limits.depth : 100;
 
     Board pos = board;
     std::vector<Move> rootMoves = generateLegalMoves(pos);
-    if (rootMoves.empty()) return;
+    if (rootMoves.empty()) {
+        if (config.debugSearchStats) emitSearchStats(state);
+        return;
+    }
 
     static constexpr int ASPIRATION_DELTA = 25;
     int prevScore = -INF_SCORE;
@@ -471,8 +513,10 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     for (int depth = 1; depth <= maxDepth; depth++) {
         int delta = ASPIRATION_DELTA;
         int alpha, beta;
+        bool usingAspiration =
+            config.useAspirationWindows && depth >= 2 && std::abs(prevScore) < MATE_SCORE - 100;
 
-        if (depth >= 2 && std::abs(prevScore) < MATE_SCORE - 100) {
+        if (usingAspiration) {
             alpha = std::max(prevScore - delta, -INF_SCORE);
             beta = std::min(prevScore + delta, INF_SCORE);
         } else {
@@ -506,12 +550,13 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
                 int score;
                 if (mi == 0) {
-                    score = -negamax(pos, depth - 1, 1, -beta, -searchAlpha, state);
+                    score = -negamax(pos, depth - 1, 1, -beta, -searchAlpha, state, config);
                 } else {
                     // PVS: null-window search for non-first moves
-                    score = -negamax(pos, depth - 1, 1, -searchAlpha - 1, -searchAlpha, state);
+                    score =
+                        -negamax(pos, depth - 1, 1, -searchAlpha - 1, -searchAlpha, state, config);
                     if (score > searchAlpha && score < beta) {
-                        score = -negamax(pos, depth - 1, 1, -beta, -searchAlpha, state);
+                        score = -negamax(pos, depth - 1, 1, -beta, -searchAlpha, state, config);
                     }
                 }
 
@@ -533,12 +578,21 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             }
 
             if (state.stopped) break;
+            if (!usingAspiration) break;
 
             if (currentBestScore <= alpha) {
+                state.stats.aspirationFailLows++;
+                if (config.debugSearchStats) {
+                    emitAspirationDebug(depth, alpha, beta, currentBestScore, delta, "fail-low");
+                }
                 beta = (alpha + beta) / 2;
                 alpha = std::max(alpha - delta, -INF_SCORE);
                 delta += delta / 2;
             } else if (currentBestScore >= beta) {
+                state.stats.aspirationFailHighs++;
+                if (config.debugSearchStats) {
+                    emitAspirationDebug(depth, alpha, beta, currentBestScore, delta, "fail-high");
+                }
                 beta = std::min(beta + delta, INF_SCORE);
                 delta += delta / 2;
             } else {
@@ -600,6 +654,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     if (state.bestMove.from == 0 && state.bestMove.to == 0 && !rootMoves.empty()) {
         state.bestMove = rootMoves[0];
     }
+
+    if (config.debugSearchStats) emitSearchStats(state);
 }
 
 Move findBestMove(const Board &board, int depth) {

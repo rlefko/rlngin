@@ -3,13 +3,33 @@
 #include "catch_amalgamated.hpp"
 #include "movegen.h"
 #include "search.h"
+#include "zobrist.h"
+#include <functional>
+#include <iostream>
+#include <sstream>
+#include <string>
 
 static void ensureInit() {
     static bool done = false;
     if (!done) {
         initBitboards();
+        zobrist::init();
+        initSearch();
         done = true;
     }
+}
+
+static std::string captureStdout(const std::function<void()> &fn) {
+    std::ostringstream buffer;
+    std::streambuf *old = std::cout.rdbuf(buffer.rdbuf());
+    try {
+        fn();
+    } catch (...) {
+        std::cout.rdbuf(old);
+        throw;
+    }
+    std::cout.rdbuf(old);
+    return buffer.str();
 }
 
 TEST_CASE("Search: captures hanging queen", "[search]") {
@@ -292,4 +312,136 @@ TEST_CASE("Search: still finds tactical captures", "[search]") {
     Move best = findBestMove(board, 2);
     CHECK(best.from == stringToSquare("e1"));
     CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: explicit default config matches implicit config", "[search][config]") {
+    ensureInit();
+    Board board;
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 5;
+    SearchState implicitState;
+    SearchState explicitState;
+    SearchConfig config;
+
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, implicitState); });
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, explicitState, {}, config); });
+
+    CHECK(implicitState.bestMove.from == explicitState.bestMove.from);
+    CHECK(implicitState.bestMove.to == explicitState.bestMove.to);
+    CHECK(implicitState.bestMove.promotion == explicitState.bestMove.promotion);
+    CHECK(implicitState.nodes == explicitState.nodes);
+}
+
+TEST_CASE("Search: debug stats do not change chosen move", "[search][config]") {
+    ensureInit();
+    Board board;
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 5;
+    SearchState normalState;
+    SearchState debugState;
+    SearchConfig debugConfig;
+    debugConfig.debugSearchStats = true;
+
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, normalState); });
+    clearTT();
+    std::string output =
+        captureStdout([&]() { startSearch(board, limits, debugState, {}, debugConfig); });
+
+    CHECK(normalState.bestMove.from == debugState.bestMove.from);
+    CHECK(normalState.bestMove.to == debugState.bestMove.to);
+    CHECK(normalState.bestMove.promotion == debugState.bestMove.promotion);
+    CHECK(output.find("info string searchstats") != std::string::npos);
+}
+
+TEST_CASE("Search: disabling aspiration windows still returns legal PV", "[search][config]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 4;
+    SearchState state;
+    SearchConfig config;
+    config.useAspirationWindows = false;
+
+    captureStdout([&]() { startSearch(board, limits, state, {}, config); });
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    CHECK(state.pvLength[0] >= 1);
+    CHECK(state.pv[0][0].from == state.bestMove.from);
+    CHECK(state.pv[0][0].to == state.bestMove.to);
+}
+
+TEST_CASE("Search: disabling null move preserves or increases nodes", "[search][config][nmp]") {
+    ensureInit();
+    Board board;
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 6;
+    SearchState defaultState;
+    SearchState noNullState;
+    SearchConfig noNullConfig;
+    noNullConfig.useNullMove = false;
+
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, defaultState); });
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, noNullState, {}, noNullConfig); });
+
+    CHECK(defaultState.stats.nmpAttempts > 0);
+    CHECK(noNullState.stats.nmpAttempts == 0);
+    CHECK(noNullState.nodes >= defaultState.nodes);
+}
+
+TEST_CASE("Search: NMP reduces nodes at depth 8", "[search][config][nmp]") {
+    ensureInit();
+    Board board;
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState defaultState;
+    SearchState noNullState;
+    SearchConfig noNullConfig;
+    noNullConfig.useNullMove = false;
+
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, defaultState); });
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, noNullState, {}, noNullConfig); });
+
+    CHECK(defaultState.stats.nmpAttempts > 0);
+    CHECK(defaultState.stats.nmpCutoffs > 0);
+    CHECK(noNullState.nodes >= defaultState.nodes);
+}
+
+TEST_CASE("Search: disabling move count pruning removes LMP prunes", "[search][config][lmp]") {
+    ensureInit();
+    Board board;
+    board.setFen("r1bqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1");
+
+    SearchLimits limits;
+    limits.depth = 6;
+    SearchState defaultState;
+    SearchState noLmpState;
+    SearchConfig noLmpConfig;
+    noLmpConfig.useMoveCountPruning = false;
+
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, defaultState); });
+    clearTT();
+    captureStdout([&]() { startSearch(board, limits, noLmpState, {}, noLmpConfig); });
+
+    CHECK(defaultState.stats.lmpPrunes > 0);
+    CHECK(noLmpState.stats.lmpPrunes == 0);
+    CHECK(noLmpState.nodes >= defaultState.nodes);
 }
