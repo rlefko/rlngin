@@ -294,6 +294,23 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         bool capture = isCapture(board, m);
         bool isPromotion = (m.promotion != None);
 
+        // SEE pruning for captures: skip losing captures at low depths
+        if (!inCheck && moveIndex > 0 && capture && !isPromotion && depth <= 8 &&
+            beta > -MATE_SCORE + MAX_PLY) {
+            if (see(board, m) < -90 * depth) {
+                continue;
+            }
+        }
+
+        // SEE pruning for quiet moves: skip moves to squares where the piece
+        // would be captured at a significant loss
+        if (!inCheck && moveIndex > 0 && !capture && !isPromotion && depth <= 8 &&
+            beta > -MATE_SCORE + MAX_PLY) {
+            if (see(board, m) < -21 * depth * depth) {
+                continue;
+            }
+        }
+
         UndoInfo undo = board.makeMove(m);
         bool givesCheck = isInCheck(board);
 
