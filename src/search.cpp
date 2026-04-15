@@ -18,6 +18,8 @@ static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 
 static TranspositionTable tt(16);
 
+enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
+
 static void updateHistory(int &entry, int bonus) {
     entry += bonus - entry * std::abs(bonus) / MAX_HISTORY;
 }
@@ -202,6 +204,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     int origAlpha = alpha;
+    bool pvNode = (beta - alpha > 1);
 
     // TT probe
     TTEntry ttEntry;
@@ -213,11 +216,14 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             if (ttEntry.flag == TT_EXACT) {
                 return ttEntry.score;
             }
-            if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) {
-                return ttEntry.score;
-            }
-            if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) {
-                return ttEntry.score;
+            // In PV nodes, only cut on exact matches to preserve the full PV line
+            if (!pvNode) {
+                if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) {
+                    return ttEntry.score;
+                }
+                if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) {
+                    return ttEntry.score;
+                }
             }
         }
     }
@@ -237,7 +243,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     });
 
     bool inCheck = isInCheck(board);
-    bool pvNode = (beta - alpha > 1);
 
     // Static eval for pruning decisions (unreliable when in check)
     int staticEval = inCheck ? -INF_SCORE : evaluate(board);
@@ -500,6 +505,35 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
     return allocated;
 }
 
+static void printSearchInfo(int depth, const SearchState &state, int score, int64_t timeMs,
+                            BoundType bound) {
+    int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
+
+    std::cout << "info depth " << depth << " seldepth " << state.seldepth;
+
+    if (std::abs(score) >= MATE_SCORE - 100) {
+        int matePly = MATE_SCORE - std::abs(score);
+        int mateInMoves = (matePly + 1) / 2;
+        if (score < 0) mateInMoves = -mateInMoves;
+        std::cout << " score mate " << mateInMoves;
+    } else {
+        std::cout << " score cp " << score;
+    }
+
+    if (bound == BOUND_LOWER) {
+        std::cout << " lowerbound";
+    } else if (bound == BOUND_UPPER) {
+        std::cout << " upperbound";
+    }
+
+    std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs << " hashfull "
+              << getHashfull() << " pv";
+    for (int i = 0; i < state.pvLength[0]; i++) {
+        std::cout << " " << moveToString(state.pv[0][i]);
+    }
+    std::cout << std::endl;
+}
+
 void startSearch(const Board &board, const SearchLimits &limits, SearchState &state,
                  const std::vector<uint64_t> &positionHistory) {
     state.stopped = false;
@@ -517,57 +551,109 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     std::vector<Move> rootMoves = generateLegalMoves(pos);
     if (rootMoves.empty()) return;
 
+    int prevScore = 0;
+
     for (int depth = 1; depth <= maxDepth; depth++) {
-        state.seldepth = 0;
+        int delta = 25;
+        int alpha, beta;
+
+        // Use aspiration windows at depth >= 4 when the previous score is not a mate score
+        if (depth >= 4 && std::abs(prevScore) < MATE_SCORE - 100) {
+            alpha = std::max(prevScore - delta, -INF_SCORE);
+            beta = std::min(prevScore + delta, INF_SCORE);
+        } else {
+            alpha = -INF_SCORE;
+            beta = INF_SCORE;
+        }
+
         Move currentBest = rootMoves[0];
         int currentBestScore = -INF_SCORE;
-        int alpha = -INF_SCORE;
-        int beta = INF_SCORE;
 
-        state.pvLength[0] = 0;
+        // Aspiration window loop: re-search with wider windows on fail-low/fail-high
+        while (true) {
+            state.seldepth = 0;
+            currentBest = rootMoves[0];
+            currentBestScore = -INF_SCORE;
+            int localAlpha = alpha;
 
-        for (size_t mi = 0; mi < rootMoves.size(); mi++) {
-            const Move &m = rootMoves[mi];
+            state.pvLength[0] = 0;
 
-            if (depth >= 2) {
-                std::cout << "info depth " << depth << " currmove " << moveToString(m)
-                          << " currmovenumber " << (mi + 1) << std::endl;
-            }
+            for (size_t mi = 0; mi < rootMoves.size(); mi++) {
+                const Move &m = rootMoves[mi];
 
-            state.moveStack[0] = m;
-            state.movedPiece[0] = pos.squares[m.from].type;
+                if (depth >= 2) {
+                    std::cout << "info depth " << depth << " currmove " << moveToString(m)
+                              << " currmovenumber " << (mi + 1) << std::endl;
+                }
 
-            UndoInfo undo = pos.makeMove(m);
+                state.moveStack[0] = m;
+                state.movedPiece[0] = pos.squares[m.from].type;
 
-            int score;
-            if (mi == 0) {
-                score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
-            } else {
-                // PVS: null-window search for non-first moves
-                score = -negamax(pos, depth - 1, 1, -alpha - 1, -alpha, state);
-                if (score > alpha && score < beta) {
-                    score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
+                UndoInfo undo = pos.makeMove(m);
+
+                int score;
+                if (mi == 0) {
+                    score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
+                } else {
+                    // PVS: null-window search for non-first moves
+                    score = -negamax(pos, depth - 1, 1, -localAlpha - 1, -localAlpha, state);
+                    if (score > localAlpha && score < beta) {
+                        score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
+                    }
+                }
+
+                pos.unmakeMove(m, undo);
+                if (state.stopped) break;
+                if (score > currentBestScore) {
+                    currentBestScore = score;
+                    currentBest = m;
+                }
+                if (score > localAlpha) {
+                    localAlpha = score;
+                    state.pv[0][0] = m;
+                    for (int i = 1; i < state.pvLength[1]; i++) {
+                        state.pv[0][i] = state.pv[1][i];
+                    }
+                    state.pvLength[0] = state.pvLength[1];
                 }
             }
 
-            pos.unmakeMove(m, undo);
             if (state.stopped) break;
-            if (score > currentBestScore) {
-                currentBestScore = score;
-                currentBest = m;
-            }
-            if (score > alpha) {
-                alpha = score;
-                state.pv[0][0] = m;
-                for (int i = 1; i < state.pvLength[1]; i++) {
-                    state.pv[0][i] = state.pv[1][i];
+
+            auto now = std::chrono::steady_clock::now();
+            int64_t timeMs =
+                std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime)
+                    .count();
+
+            if (currentBestScore <= alpha) {
+                // Fail-low: score is below the window, widen downward
+                // Ensure the PV contains at least the best move for UCI output
+                if (state.pvLength[0] == 0) {
+                    state.pv[0][0] = currentBest;
+                    state.pvLength[0] = 1;
                 }
-                state.pvLength[0] = state.pvLength[1];
+                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_UPPER);
+                beta = (alpha + beta) / 2;
+                alpha = std::max(currentBestScore - delta, -INF_SCORE);
+                delta *= 4;
+            } else if (currentBestScore >= beta) {
+                // Fail-high: score is above the window, widen upward
+                state.bestMove = currentBest;
+                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER);
+                beta = std::min(currentBestScore + delta, INF_SCORE);
+                delta *= 4;
+            } else {
+                // Exact: score is within the aspiration window
+                break;
             }
+
+            // Fall back to full window after enough widening
+            if (alpha <= -INF_SCORE && beta >= INF_SCORE) break;
         }
 
         if (state.stopped) break;
 
+        prevScore = currentBestScore;
         state.bestMove = currentBest;
 
         if (state.pvLength[0] >= 2) {
@@ -588,25 +674,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         auto now = std::chrono::steady_clock::now();
         int64_t timeMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime).count();
-        int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
 
-        std::cout << "info depth " << depth << " seldepth " << state.seldepth;
-
-        if (std::abs(currentBestScore) >= MATE_SCORE - 100) {
-            int matePly = MATE_SCORE - std::abs(currentBestScore);
-            int mateInMoves = (matePly + 1) / 2;
-            if (currentBestScore < 0) mateInMoves = -mateInMoves;
-            std::cout << " score mate " << mateInMoves;
-        } else {
-            std::cout << " score cp " << currentBestScore;
-        }
-
-        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs
-                  << " hashfull " << getHashfull() << " pv";
-        for (int i = 0; i < state.pvLength[0]; i++) {
-            std::cout << " " << moveToString(state.pv[0][i]);
-        }
-        std::cout << std::endl;
+        printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT);
 
         if (std::abs(currentBestScore) >= MATE_SCORE - 100) break;
     }
