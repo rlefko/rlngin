@@ -248,6 +248,24 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
     }
 
+    // Null move pruning: skip the move if the opponent can't beat beta even
+    // with a free move, which indicates this position is too good for us
+    if (!inCheck && depth >= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
+        Color us = board.sideToMove;
+        Bitboard nonPawnMaterial = board.byColor[us] & ~board.byPiece[Pawn] & ~board.byPiece[King];
+        if (nonPawnMaterial) {
+            int R = 3 + depth / 3;
+            UndoInfo nullUndo = board.makeNullMove();
+            state.searchKeys[ply + 1] = board.key;
+            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
+            board.unmakeNullMove(nullUndo);
+            if (state.stopped) return 0;
+            if (nullScore >= beta) {
+                return beta;
+            }
+        }
+    }
+
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
 
