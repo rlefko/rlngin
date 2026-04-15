@@ -149,15 +149,38 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     return alpha;
 }
 
+static bool isRepetition(const Board &board, const SearchState &state, int ply) {
+    uint64_t key = board.key;
+
+    // Check game history (positions before search started)
+    for (const uint64_t &h : state.positionHistory) {
+        if (h == key) return true;
+    }
+
+    // Check positions during the current search (every 2 plies = same side to move)
+    for (int i = ply - 2; i >= 0; i -= 2) {
+        if (state.searchKeys[i] == key) return true;
+    }
+
+    return false;
+}
+
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
+    state.searchKeys[ply] = board.key;
 
     if (ply >= MAX_PLY - 1) return evaluate(board);
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
+
+    // Draw detection: repetition and 50-move rule
+    if (ply > 0) {
+        if (board.halfmoveClock >= 100) return 0;
+        if (isRepetition(board, state, ply)) return 0;
+    }
 
     int origAlpha = alpha;
 
@@ -296,11 +319,14 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
     return allocated;
 }
 
-void startSearch(const Board &board, const SearchLimits &limits, SearchState &state) {
+void startSearch(const Board &board, const SearchLimits &limits, SearchState &state,
+                 const std::vector<uint64_t> &positionHistory) {
     state.stopped = false;
     state.nodes = 0;
     state.bestMove = {0, 0, None};
     memset(state.killers, 0, sizeof(state.killers));
+    state.positionHistory = positionHistory;
+    state.searchKeys[0] = board.key;
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = computeTimeAllocation(board, limits);
 

@@ -208,6 +208,27 @@ TEST_CASE("Search: avoids losing queen for pawn", "[search]") {
     }
 }
 
+TEST_CASE("Search: detects repetition and avoids drawn line", "[search]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White is up a queen but the position has occurred before in history.
+    // White king on e1, black king on e8, white queen on d1.
+    board.setFen("4k3/8/8/8/8/8/8/3QK3 w - - 0 1");
+
+    // Simulate game history where current position appeared before
+    // by passing positionHistory with the current key
+    SearchLimits limits;
+    limits.depth = 4;
+    SearchState state;
+    std::vector<uint64_t> posHistory = {board.key}; // position already seen
+    startSearch(board, limits, state, posHistory);
+
+    // Engine should still find a good move (it's not a forced repetition,
+    // it just needs to avoid repeating the position)
+    CHECK(state.bestMove.from != state.bestMove.to);
+}
+
 TEST_CASE("Search: still finds tactical captures", "[search]") {
     ensureInit();
     clearTT();

@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstring>
 #include <memory>
+#include <vector>
 
 struct SearchLimits {
     int depth = 0;
@@ -39,11 +40,14 @@ struct SearchState {
 
     Move moveStack[MAX_PLY] = {};
     PieceType movedPiece[MAX_PLY] = {};
+    uint64_t searchKeys[MAX_PLY] = {};
+    std::vector<uint64_t> positionHistory;
     std::chrono::steady_clock::time_point startTime;
     int64_t allocatedTimeMs = 0;
 };
 
-void startSearch(const Board &board, const SearchLimits &limits, SearchState &state);
+void startSearch(const Board &board, const SearchLimits &limits, SearchState &state,
+                 const std::vector<uint64_t> &positionHistory = {});
 
 Move findBestMove(const Board &board, int depth = 1);
 
