@@ -18,6 +18,8 @@ static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 
 static TranspositionTable tt(16);
 
+enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
+
 static void updateHistory(int &entry, int bonus) {
     entry += bonus - entry * std::abs(bonus) / MAX_HISTORY;
 }
@@ -500,6 +502,35 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
     return allocated;
 }
 
+static void printSearchInfo(int depth, const SearchState &state, int score, int64_t timeMs,
+                            BoundType bound) {
+    int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
+
+    std::cout << "info depth " << depth << " seldepth " << state.seldepth;
+
+    if (std::abs(score) >= MATE_SCORE - 100) {
+        int matePly = MATE_SCORE - std::abs(score);
+        int mateInMoves = (matePly + 1) / 2;
+        if (score < 0) mateInMoves = -mateInMoves;
+        std::cout << " score mate " << mateInMoves;
+    } else {
+        std::cout << " score cp " << score;
+    }
+
+    if (bound == BOUND_LOWER) {
+        std::cout << " lowerbound";
+    } else if (bound == BOUND_UPPER) {
+        std::cout << " upperbound";
+    }
+
+    std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs << " hashfull "
+              << getHashfull() << " pv";
+    for (int i = 0; i < state.pvLength[0]; i++) {
+        std::cout << " " << moveToString(state.pv[0][i]);
+    }
+    std::cout << std::endl;
+}
+
 void startSearch(const Board &board, const SearchLimits &limits, SearchState &state,
                  const std::vector<uint64_t> &positionHistory) {
     state.stopped = false;
@@ -588,25 +619,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         auto now = std::chrono::steady_clock::now();
         int64_t timeMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime).count();
-        int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
 
-        std::cout << "info depth " << depth << " seldepth " << state.seldepth;
-
-        if (std::abs(currentBestScore) >= MATE_SCORE - 100) {
-            int matePly = MATE_SCORE - std::abs(currentBestScore);
-            int mateInMoves = (matePly + 1) / 2;
-            if (currentBestScore < 0) mateInMoves = -mateInMoves;
-            std::cout << " score mate " << mateInMoves;
-        } else {
-            std::cout << " score cp " << currentBestScore;
-        }
-
-        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs
-                  << " hashfull " << getHashfull() << " pv";
-        for (int i = 0; i < state.pvLength[0]; i++) {
-            std::cout << " " << moveToString(state.pv[0][i]);
-        }
-        std::cout << std::endl;
+        printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT);
 
         if (std::abs(currentBestScore) >= MATE_SCORE - 100) break;
     }
