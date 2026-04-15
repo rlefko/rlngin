@@ -8,7 +8,34 @@
 #include <iostream>
 #include <limits>
 
+static constexpr int MAX_HISTORY = 16384;
+static constexpr int MAX_CONT_HISTORY = 16384;
+
 static TranspositionTable tt(16);
+
+static void updateHistory(int &entry, int bonus) {
+    entry += bonus - entry * std::abs(bonus) / MAX_HISTORY;
+}
+
+static void updateContHistory(int16_t &entry, int bonus) {
+    entry += static_cast<int16_t>(bonus - entry * std::abs(bonus) / MAX_CONT_HISTORY);
+}
+
+static bool isCapture(const Board &board, const Move &m) {
+    if (board.squares[m.to].type != None) return true;
+    if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
+        board.enPassantSquare != -1)
+        return true;
+    return false;
+}
+
+static PieceType capturedType(const Board &board, const Move &m) {
+    if (board.squares[m.to].type != None) return board.squares[m.to].type;
+    if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
+        board.enPassantSquare != -1)
+        return Pawn;
+    return None;
+}
 
 static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
                      const SearchState &state) {
@@ -155,7 +182,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int bestScore = -INF_SCORE;
     Move bestMove = moves[0];
 
+    Move searchedCaptures[64];
+    Move searchedQuiets[64];
+    int numSearchedCaptures = 0;
+    int numSearchedQuiets = 0;
+    int bonus = std::min(depth * depth, 400);
+
     for (const Move &m : moves) {
+        state.moveStack[ply] = m;
+        state.movedPiece[ply] = board.squares[m.from].type;
+
         UndoInfo undo = board.makeMove(m);
         int score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
         board.unmakeMove(m, undo);
@@ -173,14 +209,46 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             state.pvLength[ply] = state.pvLength[ply + 1];
         }
         if (alpha >= beta) {
-            // Store killer move if it's a quiet move (not a capture or en passant)
-            if (board.squares[m.to].type == None &&
-                !(board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
-                  board.enPassantSquare != -1)) {
+            bool cap = isCapture(board, m);
+            if (cap) {
+                // Reward the capture that caused the cutoff
+                PieceType pt = board.squares[m.from].type;
+                PieceType ct = capturedType(board, m);
+                updateHistory(state.captureHistory[pt][m.to][ct], bonus);
+                // Penalize previously searched captures
+                for (int i = 0; i < numSearchedCaptures; i++) {
+                    const Move &prev = searchedCaptures[i];
+                    PieceType prevPt = board.squares[prev.from].type;
+                    PieceType prevCt = capturedType(board, prev);
+                    updateHistory(state.captureHistory[prevPt][prev.to][prevCt], -bonus);
+                }
+            } else {
+                // Killer move update
                 state.killers[ply][1] = state.killers[ply][0];
                 state.killers[ply][0] = m;
+                // Continuation history reward
+                if (ply >= 1) {
+                    PieceType prevPt = state.movedPiece[ply - 1];
+                    int prevTo = state.moveStack[ply - 1].to;
+                    PieceType currPt = board.squares[m.from].type;
+                    updateContHistory(state.contHistory->data[prevPt][prevTo][currPt][m.to], bonus);
+                    // Penalize previously searched quiets
+                    for (int i = 0; i < numSearchedQuiets; i++) {
+                        const Move &prev = searchedQuiets[i];
+                        PieceType qPt = board.squares[prev.from].type;
+                        updateContHistory(state.contHistory->data[prevPt][prevTo][qPt][prev.to],
+                                          -bonus);
+                    }
+                }
             }
             break;
+        }
+
+        // Track searched moves for malus
+        if (isCapture(board, m)) {
+            if (numSearchedCaptures < 64) searchedCaptures[numSearchedCaptures++] = m;
+        } else {
+            if (numSearchedQuiets < 64) searchedQuiets[numSearchedQuiets++] = m;
         }
     }
 
@@ -331,4 +399,9 @@ void clearTT() {
 
 int getHashfull() {
     return tt.hashfull();
+}
+
+void clearHistory(SearchState &state) {
+    memset(state.captureHistory, 0, sizeof(state.captureHistory));
+    memset(state.contHistory->data, 0, sizeof(state.contHistory->data));
 }

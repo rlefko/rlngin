@@ -96,6 +96,7 @@ void uciLoop() {
             joinSearch();
             board.setStartPos();
             clearTT();
+            clearHistory(searchState);
         } else if (command == "position") {
             joinSearch();
             handlePosition(board, ss);
