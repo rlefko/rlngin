@@ -294,25 +294,20 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         bool capture = isCapture(board, m);
         bool isPromotion = (m.promotion != None);
 
-        // Pre-compute SEE for pruning (needs board state before makeMove)
+        // SEE pruning for captures: skip losing captures at low depths,
+        // but never prune moves that give check
         int seeVal = 0;
-        bool seePrune = false;
-        if (!inCheck && moveIndex > 0 && !isPromotion && alpha > -MATE_SCORE + MAX_PLY) {
-            if (capture && depth <= 8) {
-                seeVal = see(board, m);
-                seePrune = (seeVal < -90 * depth);
-            } else if (!capture && depth <= 6) {
-                seeVal = see(board, m);
-                seePrune = (seeVal < -21 * depth * depth);
-            }
+        bool seePruneCapture = false;
+        if (!inCheck && moveIndex > 0 && capture && !isPromotion && depth <= 8 &&
+            alpha > -MATE_SCORE + MAX_PLY) {
+            seeVal = see(board, m);
+            seePruneCapture = (seeVal < -90 * depth);
         }
 
         UndoInfo undo = board.makeMove(m);
         bool givesCheck = isInCheck(board);
 
-        // SEE pruning: skip losing captures and tactically unsound quiet moves,
-        // but never prune moves that give check
-        if (seePrune && !givesCheck) {
+        if (seePruneCapture && !givesCheck) {
             board.unmakeMove(m, undo);
             continue;
         }
