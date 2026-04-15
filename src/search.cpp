@@ -53,11 +53,15 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         return -5000000;
     }
 
-    // Captures: use SEE to separate good from bad
+    // Captures: use SEE to separate good from bad (skip SEE in quiescence, ply == -1)
     if (isCapture(board, m)) {
-        int seeVal = see(board, m);
         PieceType ct = capturedType(board, m);
         int capHist = state.captureHistory[pt][m.to][ct];
+        if (ply < 0) {
+            // Quiescence: use MVV-LVA + capture history (no SEE for speed)
+            return 5000000 + PieceValue[ct] * 100 - PieceValue[pt] + capHist / 32;
+        }
+        int seeVal = see(board, m);
         if (seeVal >= 0) {
             return 5000000 + seeVal + capHist / 32;
         } else {
@@ -352,6 +356,9 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 std::cout << "info depth " << depth << " currmove " << moveToString(m)
                           << " currmovenumber " << (mi + 1) << std::endl;
             }
+
+            state.moveStack[0] = m;
+            state.movedPiece[0] = pos.squares[m.from].type;
 
             UndoInfo undo = pos.makeMove(m);
             int score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
