@@ -2,6 +2,7 @@
 #include "bitboard.h"
 #include "eval.h"
 #include "movegen.h"
+#include "see.h"
 #include "tt.h"
 #include <algorithm>
 #include <cstring>
@@ -44,22 +45,24 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         return 10000000;
     }
 
+    PieceType pt = board.squares[m.from].type;
+
     // Promotions
     if (m.promotion != None) {
-        return 950000 + PieceValue[m.promotion];
+        if (m.promotion == Queen) return 9000000;
+        return -5000000;
     }
 
-    Piece captured = board.squares[m.to];
-
-    // En passant capture
-    if (captured.type == None && board.squares[m.from].type == Pawn &&
-        m.to == board.enPassantSquare && board.enPassantSquare != -1) {
-        return 1000000 + PieceValue[Pawn] * 100 - PieceValue[Pawn];
-    }
-
-    // Captures scored by MVV-LVA
-    if (captured.type != None) {
-        return 1000000 + PieceValue[captured.type] * 100 - PieceValue[board.squares[m.from].type];
+    // Captures: use SEE to separate good from bad
+    if (isCapture(board, m)) {
+        int seeVal = see(board, m);
+        PieceType ct = capturedType(board, m);
+        int capHist = state.captureHistory[pt][m.to][ct];
+        if (seeVal >= 0) {
+            return 5000000 + seeVal + capHist / 32;
+        } else {
+            return -2000000 + seeVal + capHist / 32;
+        }
     }
 
     // Killer moves
@@ -67,12 +70,20 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         for (int k = 0; k < 2; k++) {
             const Move &killer = state.killers[ply][k];
             if (m.from == killer.from && m.to == killer.to && m.promotion == killer.promotion) {
-                return 900000 - k;
+                return 4000000 - k;
             }
         }
     }
 
-    return 0;
+    // Quiet moves: use continuation history
+    int score = 0;
+    if (ply >= 1) {
+        PieceType prevPt = state.movedPiece[ply - 1];
+        int prevTo = state.moveStack[ply - 1].to;
+        score += state.contHistory->data[prevPt][prevTo][pt][m.to];
+    }
+
+    return score;
 }
 
 static void checkTime(SearchState &state) {
@@ -124,6 +135,9 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     });
 
     for (const Move &m : moves) {
+        // Prune losing captures when not in check
+        if (!inCheck && isCapture(board, m) && see(board, m) < 0) continue;
+
         UndoInfo undo = board.makeMove(m);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
