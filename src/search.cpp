@@ -307,6 +307,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
         }
 
+        // Move count based pruning: at shallow depths, skip late quiet moves
+        // beyond a threshold, as they are unlikely to beat alpha
+        if (!inCheck && depth <= 5 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
+            alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
+            int moveCountThreshold = 3 + depth * depth;
+            if (moveIndex >= moveCountThreshold) {
+                board.unmakeMove(m, undo);
+                continue;
+            }
+        }
+
         int score;
         if (moveIndex == 0) {
             score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
