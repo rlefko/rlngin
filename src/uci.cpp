@@ -108,10 +108,16 @@ void uciLoop() {
             searchThread = std::thread([board, limits, &searchState]() {
                 startSearch(board, limits, searchState);
                 Move best = searchState.bestMove;
-                if (best.from == best.to)
+                if (best.from == best.to) {
                     std::cout << "bestmove 0000" << std::endl;
-                else
-                    std::cout << "bestmove " << moveToString(best) << std::endl;
+                } else {
+                    std::cout << "bestmove " << moveToString(best);
+                    Move ponder = searchState.ponderMove;
+                    if (ponder.from != ponder.to) {
+                        std::cout << " ponder " << moveToString(ponder);
+                    }
+                    std::cout << std::endl;
+                }
             });
         } else if (command == "stop") {
             joinSearch();

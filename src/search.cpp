@@ -237,7 +237,14 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
         state.pvLength[0] = 0;
 
-        for (const Move &m : rootMoves) {
+        for (size_t mi = 0; mi < rootMoves.size(); mi++) {
+            const Move &m = rootMoves[mi];
+
+            if (depth >= 2) {
+                std::cout << "info depth " << depth << " currmove " << moveToString(m)
+                          << " currmovenumber " << (mi + 1) << std::endl;
+            }
+
             UndoInfo undo = pos.makeMove(m);
             int score = -negamax(pos, depth - 1, 1, -beta, -alpha, state);
             pos.unmakeMove(m, undo);
@@ -259,6 +266,12 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         if (state.stopped) break;
 
         state.bestMove = currentBest;
+
+        if (state.pvLength[0] >= 2) {
+            state.ponderMove = state.pv[0][1];
+        } else {
+            state.ponderMove = {0, 0, None};
+        }
 
         // Move the best move to the front for the next iteration
         for (size_t i = 0; i < rootMoves.size(); i++) {
@@ -285,7 +298,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             std::cout << " score cp " << currentBestScore;
         }
 
-        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs << " pv";
+        std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs
+                  << " hashfull " << getHashfull() << " pv";
         for (int i = 0; i < state.pvLength[0]; i++) {
             std::cout << " " << moveToString(state.pv[0][i]);
         }
@@ -313,4 +327,8 @@ void setHashSize(size_t mb) {
 
 void clearTT() {
     tt.clear();
+}
+
+int getHashfull() {
+    return tt.hashfull();
 }

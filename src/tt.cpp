@@ -50,3 +50,17 @@ bool TranspositionTable::probe(uint64_t key, TTEntry &entry, int ply) const {
     }
     return false;
 }
+
+int TranspositionTable::hashfull() const {
+    size_t sample = std::min(num_entries_, static_cast<size_t>(1000));
+    int used = 0;
+    for (size_t i = 0; i < sample; i++) {
+        if (table_[i].flag != TT_NONE) {
+            used++;
+        }
+    }
+    if (sample < 1000) {
+        return static_cast<int>(used * 1000 / sample);
+    }
+    return used;
+}

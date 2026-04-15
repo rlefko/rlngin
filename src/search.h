@@ -22,6 +22,7 @@ struct SearchState {
     int64_t nodes = 0;
     int seldepth = 0;
     Move bestMove = {0, 0, None};
+    Move ponderMove = {0, 0, None};
     Move pv[MAX_PLY][MAX_PLY];
     int pvLength[MAX_PLY] = {};
     Move killers[MAX_PLY][2] = {};
@@ -35,5 +36,6 @@ Move findBestMove(const Board &board, int depth = 1);
 
 void setHashSize(size_t mb);
 void clearTT();
+int getHashfull();
 
 #endif
