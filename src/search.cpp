@@ -394,9 +394,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     reduction -= histScore / 8192;
                 }
 
-                // Reduce less in PV nodes to search them more carefully
-                if (pvNode) reduction--;
-
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 
