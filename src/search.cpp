@@ -268,6 +268,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         UndoInfo undo = board.makeMove(m);
         bool givesCheck = isInCheck(board);
 
+        // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
+        if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
+            alpha > -MATE_SCORE + MAX_PLY) {
+            int fpMargin = 100 + 80 * depth;
+            if (staticEval + fpMargin <= alpha) {
+                board.unmakeMove(m, undo);
+                continue;
+            }
+        }
+
         int score;
         if (moveIndex == 0) {
             score = -negamax(board, depth - 1, ply + 1, -beta, -alpha, state);
