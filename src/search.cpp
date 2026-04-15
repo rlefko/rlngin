@@ -237,6 +237,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     });
 
     bool inCheck = isInCheck(board);
+    bool pvNode = (beta - alpha > 1);
 
     // Static eval for pruning decisions (unreliable when in check)
     int staticEval = inCheck ? -INF_SCORE : evaluate(board);
@@ -333,6 +334,19 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         if (singularExtension > 0 && m.from == ttMove.from && m.to == ttMove.to &&
             m.promotion == ttMove.promotion) {
             moveExtension = singularExtension;
+        }
+
+        // Modern capture extension: extend high-value recaptures in PV nodes
+        if (moveExtension == 0 && pvNode && capture && ply >= 1) {
+            int prevTo = state.moveStack[ply - 1].to;
+            if (m.to == prevTo) {
+                PieceType pt = board.squares[m.from].type;
+                PieceType ct = capturedType(board, m);
+                int capHistScore = state.captureHistory[pt][m.to][ct];
+                if (capHistScore >= 7000) {
+                    moveExtension = 1;
+                }
+            }
         }
 
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
