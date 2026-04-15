@@ -272,6 +272,43 @@ UndoInfo Board::makeMove(const Move &m) {
     return undo;
 }
 
+UndoInfo Board::makeNullMove() {
+    UndoInfo undo;
+    undo.captured = {None, White};
+    undo.enPassantSquare = enPassantSquare;
+    undo.castleWK = castleWK;
+    undo.castleWQ = castleWQ;
+    undo.castleBK = castleBK;
+    undo.castleBQ = castleBQ;
+    undo.halfmoveClock = halfmoveClock;
+    undo.key = key;
+
+    // Clear en passant
+    if (enPassantSquare != -1) {
+        key ^= zobrist::en_passant_keys[squareFile(enPassantSquare)];
+        enPassantSquare = -1;
+    }
+
+    // Flip side to move
+    sideToMove = (sideToMove == White) ? Black : White;
+    key ^= zobrist::side_to_move_key;
+
+    halfmoveClock++;
+
+    return undo;
+}
+
+void Board::unmakeNullMove(const UndoInfo &undo) {
+    sideToMove = (sideToMove == White) ? Black : White;
+    enPassantSquare = undo.enPassantSquare;
+    castleWK = undo.castleWK;
+    castleWQ = undo.castleWQ;
+    castleBK = undo.castleBK;
+    castleBQ = undo.castleBQ;
+    halfmoveClock = undo.halfmoveClock;
+    key = undo.key;
+}
+
 void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
     // Flip side back (makeMove flipped it at the end)
     sideToMove = (sideToMove == White) ? Black : White;
