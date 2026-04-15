@@ -228,7 +228,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         return 0;
     }
 
-    if (depth == 0) return quiescence(board, alpha, beta, ply, state);
+    if (depth <= 0) return quiescence(board, alpha, beta, ply, state);
 
     // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
     std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
@@ -258,6 +258,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         if (nonPawnMaterial) {
             // Dynamic reduction: base depth component + eval-based bonus
             int R = 3 + depth / 3 + std::clamp((staticEval - beta) / 200, 0, 3);
+            R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
             int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
