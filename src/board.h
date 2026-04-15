@@ -34,6 +34,8 @@ class Board {
     void setFen(const std::string &fen);
     UndoInfo makeMove(const Move &m);
     void unmakeMove(const Move &m, const UndoInfo &undo);
+    UndoInfo makeNullMove();
+    void unmakeNullMove(const UndoInfo &undo);
     Piece pieceAt(int sq) const;
 
   private:
