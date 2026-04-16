@@ -221,6 +221,24 @@ static const int KingAttackPenalty[13] = {
     140, 192, 252, 320, 396, 480,
 };
 
+// Penalty per king-zone square attacked by enemy but not defended by
+// any friendly piece: {MG, EG}
+static const int UndefendedKingZoneSq[2] = {-7, -1};
+
+// Penalty by number of safe squares the king can move to (0 = most
+// dangerous). Index is the count of safe squares, capped at 8.
+static const int KingSafeSqPenalty[9][2] = {
+    {-50, -5},  // 0 safe squares
+    {-35, -3},  // 1
+    {-20, -1},  // 2
+    {-10,  0},  // 3
+    { -4,  0},  // 4
+    {  0,  0},  // 5
+    {  0,  0},  // 6
+    {  0,  0},  // 7
+    {  0,  0},  // 8
+};
+
 // clang-format on
 
 static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
@@ -290,10 +308,26 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
         int attackUnits = 0;
         bool attackingQueenPresent = false;
 
+        // Accumulate all enemy attacks for square control evaluation
+        Bitboard enemyAttacks = 0;
+
+        // Enemy pawn attacks
+        if (them == White) {
+            enemyAttacks |= ((theirPawns & ~FileHBB) << 9) | ((theirPawns & ~FileABB) << 7);
+        } else {
+            enemyAttacks |= ((theirPawns & ~FileABB) >> 9) | ((theirPawns & ~FileHBB) >> 7);
+        }
+
+        // Enemy king attacks
+        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
+        if (theirKingBB) enemyAttacks |= KingAttacks[lsb(theirKingBB)];
+
         Bitboard theirKnights = board.byPiece[Knight] & board.byColor[them];
         while (theirKnights) {
             int sq = popLsb(theirKnights);
-            if (KnightAttacks[sq] & kZone) {
+            Bitboard atk = KnightAttacks[sq];
+            enemyAttacks |= atk;
+            if (atk & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Knight];
             }
@@ -302,7 +336,9 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
         Bitboard theirBishops = board.byPiece[Bishop] & board.byColor[them];
         while (theirBishops) {
             int sq = popLsb(theirBishops);
-            if (bishopAttacks(sq, occ) & kZone) {
+            Bitboard atk = bishopAttacks(sq, occ);
+            enemyAttacks |= atk;
+            if (atk & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Bishop];
             }
@@ -311,7 +347,9 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
         Bitboard theirRooks = board.byPiece[Rook] & board.byColor[them];
         while (theirRooks) {
             int sq = popLsb(theirRooks);
-            if (rookAttacks(sq, occ) & kZone) {
+            Bitboard atk = rookAttacks(sq, occ);
+            enemyAttacks |= atk;
+            if (atk & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Rook];
             }
@@ -320,7 +358,9 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
         Bitboard theirQueens = board.byPiece[Queen] & board.byColor[them];
         while (theirQueens) {
             int sq = popLsb(theirQueens);
-            if (queenAttacks(sq, occ) & kZone) {
+            Bitboard atk = queenAttacks(sq, occ);
+            enemyAttacks |= atk;
+            if (atk & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Queen];
                 attackingQueenPresent = true;
@@ -337,6 +377,40 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
             mg[us] -= penalty;
             eg[us] -= penalty / 8;
         }
+
+        // Square control: undefended king zone squares and safe king squares
+
+        // Build friendly defense map from all our pieces
+        Bitboard friendlyDefense = KingAttacks[kingSq];
+        if (us == White) {
+            friendlyDefense |= ((ourPawns & ~FileHBB) << 9) | ((ourPawns & ~FileABB) << 7);
+        } else {
+            friendlyDefense |= ((ourPawns & ~FileABB) >> 9) | ((ourPawns & ~FileHBB) >> 7);
+        }
+        Bitboard ourKnights = board.byPiece[Knight] & board.byColor[us];
+        while (ourKnights)
+            friendlyDefense |= KnightAttacks[popLsb(ourKnights)];
+        Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
+        while (ourBishops)
+            friendlyDefense |= bishopAttacks(popLsb(ourBishops), occ);
+        Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
+        while (ourRooks)
+            friendlyDefense |= rookAttacks(popLsb(ourRooks), occ);
+        Bitboard ourQueens = board.byPiece[Queen] & board.byColor[us];
+        while (ourQueens)
+            friendlyDefense |= queenAttacks(popLsb(ourQueens), occ);
+
+        // Penalize king zone squares attacked by enemy but not defended
+        Bitboard undefAttacked = kZone & enemyAttacks & ~friendlyDefense;
+        int undefCount = popcount(undefAttacked);
+        mg[us] += undefCount * UndefendedKingZoneSq[0];
+        eg[us] += undefCount * UndefendedKingZoneSq[1];
+
+        // Penalize when the king has few safe escape squares
+        Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
+        int safeCount = std::min(popcount(kingMoves & ~enemyAttacks), 8);
+        mg[us] += KingSafeSqPenalty[safeCount][0];
+        eg[us] += KingSafeSqPenalty[safeCount][1];
     }
 }
 
