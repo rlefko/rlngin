@@ -48,13 +48,16 @@ inline int msb(Bitboard b) {
     return 63 - __builtin_clzll(b);
 }
 
-// Indexed file mask lookup (FileBB[0] = a-file, FileBB[7] = h-file)
-// clang-format off
-constexpr Bitboard FileBB[8] = {
-    FileABB, FileBBB, FileCBB, FileDBB,
-    FileEBB, FileFBB, FileGBB, FileHBB
-};
-// clang-format on
+// File and rank convenience arrays (indexed versions of the individual constants)
+extern const Bitboard FileBB[8];
+extern const Bitboard RankBB[8];
+
+// Pawn structure masks
+extern Bitboard AdjacentFilesBB[8];
+extern Bitboard ForwardRanksBB[2][8];
+extern Bitboard ForwardFileBB[2][64];
+extern Bitboard PassedPawnMask[2][64];
+extern Bitboard PawnSpanMask[2][64];
 
 // Non-sliding attack tables
 extern Bitboard KnightAttacks[64];

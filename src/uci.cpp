@@ -1,5 +1,6 @@
 #include "uci.h"
 #include "board.h"
+#include "eval.h"
 #include "search.h"
 #include <iostream>
 #include <sstream>
@@ -102,6 +103,7 @@ void uciLoop() {
             joinSearch();
             board.setStartPos();
             clearTT();
+            clearPawnHash();
             clearHistory(searchState);
         } else if (command == "position") {
             joinSearch();

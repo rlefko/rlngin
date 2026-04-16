@@ -123,6 +123,74 @@ TEST_CASE("Queen attacks combine rook and bishop", "[bitboard][queen]") {
     CHECK(popcount(qa) == 27);
 }
 
+TEST_CASE("Adjacent files for edge file", "[bitboard][pawn]") {
+    initBitboards();
+
+    // File A (index 0) only has file B as neighbor
+    CHECK(AdjacentFilesBB[0] == FileBBB);
+    // File H (index 7) only has file G as neighbor
+    CHECK(AdjacentFilesBB[7] == FileGBB);
+}
+
+TEST_CASE("Adjacent files for center file", "[bitboard][pawn]") {
+    initBitboards();
+
+    // File D (index 3) has files C and E as neighbors
+    CHECK(AdjacentFilesBB[3] == (FileCBB | FileEBB));
+}
+
+TEST_CASE("Forward ranks", "[bitboard][pawn]") {
+    initBitboards();
+
+    // White forward from rank index 3 (4th rank) covers rank indices 4-7
+    CHECK(ForwardRanksBB[White][3] == (Rank5BB | Rank6BB | Rank7BB | Rank8BB));
+    // Black forward from rank index 3 covers rank indices 0-2
+    CHECK(ForwardRanksBB[Black][3] == (Rank1BB | Rank2BB | Rank3BB));
+    // White forward from rank 7 is empty (nothing above rank 8)
+    CHECK(ForwardRanksBB[White][7] == 0);
+    // Black forward from rank 0 is empty (nothing below rank 1)
+    CHECK(ForwardRanksBB[Black][0] == 0);
+}
+
+TEST_CASE("Forward file", "[bitboard][pawn]") {
+    initBitboards();
+
+    // White pawn on e2 (sq 12): forward file covers e3-e8
+    int e2 = stringToSquare("e2");
+    Bitboard fwd = ForwardFileBB[White][e2];
+    CHECK((fwd & squareBB(stringToSquare("e3"))) != 0);
+    CHECK((fwd & squareBB(stringToSquare("e8"))) != 0);
+    CHECK((fwd & squareBB(stringToSquare("e2"))) == 0);
+    CHECK((fwd & squareBB(stringToSquare("e1"))) == 0);
+    CHECK(popcount(fwd) == 6);
+}
+
+TEST_CASE("Passed pawn mask", "[bitboard][pawn]") {
+    initBitboards();
+
+    // White pawn on e4: mask covers d5-d8, e5-e8, f5-f8
+    int e4 = stringToSquare("e4");
+    Bitboard mask = PassedPawnMask[White][e4];
+    CHECK((mask & squareBB(stringToSquare("e5"))) != 0);
+    CHECK((mask & squareBB(stringToSquare("d7"))) != 0);
+    CHECK((mask & squareBB(stringToSquare("f8"))) != 0);
+    CHECK((mask & squareBB(stringToSquare("e4"))) == 0);
+    CHECK((mask & squareBB(stringToSquare("c5"))) == 0);
+    CHECK(popcount(mask) == 12);
+}
+
+TEST_CASE("Pawn span mask", "[bitboard][pawn]") {
+    initBitboards();
+
+    // White pawn on e4: span covers d5-d8, f5-f8 (adjacent files only, not own file)
+    int e4 = stringToSquare("e4");
+    Bitboard span = PawnSpanMask[White][e4];
+    CHECK((span & squareBB(stringToSquare("d5"))) != 0);
+    CHECK((span & squareBB(stringToSquare("f7"))) != 0);
+    CHECK((span & squareBB(stringToSquare("e5"))) == 0);
+    CHECK(popcount(span) == 8);
+}
+
 TEST_CASE("Board occupancy", "[bitboard]") {
     initBitboards();
 
