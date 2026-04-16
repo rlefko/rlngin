@@ -1,33 +1,23 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Usage: selfplay.sh [rounds]
+#
+# Thin wrapper around screen.sh for quick local regression checks.
+# Compares ENGINE_DEV (default: ./build/rlngin) against ENGINE_BASE.
+#
+# Environment variables (same as screen.sh):
+#   ENGINE_DEV:  path to the dev engine (default: ./build/rlngin)
+#   ENGINE_BASE: path to the base engine (required)
+#   FASTCHESS:   path to fastchess binary (default: ./fastchess)
+#   OPENINGS:    path to opening book (default: openings/UHO_Lichess_4852_v1.epd)
+
 ROUNDS="${1:-10}"
-FASTCHESS="${FASTCHESS:-./fastchess}"
-ENGINE="./build/rlngin"
 
-if [ ! -f "$FASTCHESS" ]; then
-    echo "Error: fastchess not found at $FASTCHESS"
-    echo "Run 'make fetch-fastchess' to download it."
+if [ -z "${ENGINE_BASE:-}" ]; then
+    echo "Error: ENGINE_BASE must be set to the baseline engine binary."
+    echo "Usage: ENGINE_BASE=path/to/base ./scripts/selfplay.sh [rounds]"
     exit 1
 fi
 
-if [ ! -f "$ENGINE" ]; then
-    echo "Error: engine not found at $ENGINE"
-    echo "Run 'make build' first."
-    exit 1
-fi
-
-mkdir -p results
-
-echo "Running $ROUNDS rounds of self-play..."
-
-"$FASTCHESS" \
-    -engine cmd="$ENGINE" name=rlngin-current \
-    -engine cmd="$ENGINE" name=rlngin-baseline \
-    -each tc=10+0.1 \
-    -rounds "$ROUNDS" \
-    -pgnout file=results/selfplay.pgn \
-    -recover \
-    2>&1 | tee results/selfplay.log
-
-echo "Results saved to results/"
+exec "$(dirname "$0")/screen.sh" "$ROUNDS" "10+0.1" 1
