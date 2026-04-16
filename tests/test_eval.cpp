@@ -28,7 +28,7 @@ TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     ensureInit();
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 985);
+    CHECK(evaluate(board) == 993);
 }
 
 TEST_CASE("Eval: score flips with side to move", "[eval]") {
@@ -55,17 +55,17 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
     CHECK(evaluate(board) == 251);
 
-    // Bishop on a1 (sq 0): phase 1, tapered: (332*1 + 274*23) / 24 = 276
+    // Bishop on a1 (sq 0): phase 1, tapered plus square control terms
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 276);
+    CHECK(evaluate(board) == 277);
 
     // Rook on a1 (sq 0): phase 2, tapered: (458*2 + 503*22) / 24 = 499
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
     CHECK(evaluate(board) == 499);
 
-    // Queen on d5 (sq 35): phase 4, tapered: (1009*4 + 981*20) / 24 = 985
+    // Queen on d5 (sq 35): phase 4, tapered plus square control terms
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 985);
+    CHECK(evaluate(board) == 993);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -214,4 +214,38 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // Symmetric with castled kings
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
     CHECK(evaluate(board) == 0);
+}
+
+TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
+    ensureInit();
+    Board board;
+
+    // Black queen on f3 covers f1 and f2, restricting White king escape
+    // on g1 (only h1 is safe). Queen PST also penalizes Black less when
+    // the queen is well-placed, so both effects align.
+    board.setFen("6k1/5ppp/8/8/8/5q2/6PP/6K1 w - - 0 1");
+    int restricted = evaluate(board);
+
+    // Same material, queen on a3 far from White king -- f1, f2, h1 all safe
+    board.setFen("6k1/5ppp/8/8/8/q7/6PP/6K1 w - - 0 1");
+    int unrestricted = evaluate(board);
+
+    CHECK(unrestricted > restricted);
+}
+
+TEST_CASE("Eval: undefended king zone squares penalize defender", "[eval][kingsafety]") {
+    ensureInit();
+    Board board;
+
+    // Black g-pawn advanced to g5 -- no longer defends f6/h6 in king
+    // zone, weaker shield, and queen h4 attacks undefended zone squares
+    board.setFen("6k1/5p1p/8/6p1/7Q/8/8/6K1 w - - 0 1");
+    int weakZone = evaluate(board);
+
+    // Same material but g-pawn on g7 -- defends f6 and h6, strong shield
+    board.setFen("6k1/5ppp/8/8/7Q/8/8/6K1 w - - 0 1");
+    int strongZone = evaluate(board);
+
+    // White scores better when Black's king zone has undefended squares
+    CHECK(weakZone > strongZone);
 }
