@@ -16,7 +16,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 989);
+    CHECK(evaluate(board) == 1185);
 }
 
 TEST_CASE("Eval: score flips with side to move", "[eval]") {
@@ -38,22 +38,25 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
     CHECK(evaluate(board) == 97);
 
-    // Knight on a1 (sq 0): phase 1, tapered: (232*1 + 252*23) / 24 = 251
+    // Knight on a1: material and PSQT plus mobility bonus for its two legal
+    // moves from the corner
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 251);
+    CHECK(evaluate(board) == 221);
 
-    // Bishop on a1 (sq 0): phase 1, tapered plus square control terms
+    // Bishop on a1: material, PSQT, square control, and bishop mobility
+    // along the long diagonal
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 277);
+    CHECK(evaluate(board) == 334);
 
-    // Rook on a1 (sq 0): phase 2, tapered: (458*2 + 503*22) / 24 = 499
+    // Rook on a1: material, PSQT, and rook mobility across file a and
+    // rank 1
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 499);
+    CHECK(evaluate(board) == 644);
 
-    // Queen on d5 (sq 35): phase 4, tapered plus the undefended-zone term
-    // that fires when a single enemy piece attacks the opposing king zone
+    // Queen on d5: material, PSQT, the undefended-zone term, and mobility
+    // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 989);
+    CHECK(evaluate(board) == 1185);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -367,4 +370,56 @@ TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
 
     // Scores should be equal and opposite
     CHECK(whitePassed == -blackPassed);
+}
+
+TEST_CASE("Eval: central rook has more mobility than cornered rook", "[eval][mobility]") {
+    Board board;
+
+    board.setFen("4k3/8/8/8/3R4/8/8/4K3 w - - 0 1");
+    int centralRook = evaluate(board);
+
+    board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+    int cornerRook = evaluate(board);
+
+    CHECK(centralRook > cornerRook);
+}
+
+TEST_CASE("Eval: bishop blocked by own pawn scores lower than open bishop", "[eval][mobility]") {
+    Board board;
+
+    // Bishop on a1 with an own pawn on b2 shuts down the long diagonal
+    board.setFen("4k3/8/8/8/8/8/1P6/B3K3 w - - 0 1");
+    int blocked = evaluate(board);
+
+    // Same material but the pawn sits on a3 and leaves the diagonal open
+    board.setFen("4k3/8/8/8/8/P7/8/B3K3 w - - 0 1");
+    int open = evaluate(board);
+
+    CHECK(blocked < open);
+}
+
+TEST_CASE("Eval: queen mobility excludes squares attacked by enemy pawns", "[eval][mobility]") {
+    Board board;
+
+    // White queen on e4 with enemy pawns on d5 and f5 attacking c4, d4, e4,
+    // f4, g4. Mobility area excludes squares covered by enemy pawn attacks.
+    board.setFen("4k3/8/8/3p1p2/4Q3/8/8/4K3 w - - 0 1");
+    int queenVsPawns = evaluate(board);
+
+    board.setFen("4k3/8/8/8/4Q3/8/8/4K3 w - - 0 1");
+    int queenOpen = evaluate(board);
+
+    CHECK(queenVsPawns < queenOpen);
+}
+
+TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
+    Board board;
+
+    board.setFen("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1");
+    int whiteKnight = evaluate(board);
+
+    board.setFen("4k3/8/8/3n4/8/8/8/4K3 w - - 0 1");
+    int blackKnight = evaluate(board);
+
+    CHECK(whiteKnight == -blackKnight);
 }
