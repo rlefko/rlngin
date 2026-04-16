@@ -1,5 +1,14 @@
 #include "bitboard.h"
 
+const Bitboard FileBB[8] = {FileABB, FileBBB, FileCBB, FileDBB, FileEBB, FileFBB, FileGBB, FileHBB};
+const Bitboard RankBB[8] = {Rank1BB, Rank2BB, Rank3BB, Rank4BB, Rank5BB, Rank6BB, Rank7BB, Rank8BB};
+
+Bitboard AdjacentFilesBB[8];
+Bitboard ForwardRanksBB[2][8];
+Bitboard ForwardFileBB[2][64];
+Bitboard PassedPawnMask[2][64];
+Bitboard PawnSpanMask[2][64];
+
 Bitboard KnightAttacks[64];
 Bitboard KingAttacks[64];
 Bitboard PawnAttacks[2][64];
@@ -265,10 +274,44 @@ static void initMagics(Magic magics[], Bitboard table[], const Bitboard magicNum
     }
 }
 
+static void initPawnMasks() {
+    for (int f = 0; f < 8; f++) {
+        AdjacentFilesBB[f] = (f > 0 ? FileBB[f - 1] : 0) | (f < 7 ? FileBB[f + 1] : 0);
+    }
+
+    for (int r = 0; r < 8; r++) {
+        Bitboard above = 0;
+        for (int rr = r + 1; rr < 8; rr++)
+            above |= RankBB[rr];
+        ForwardRanksBB[White][r] = above;
+
+        Bitboard below = 0;
+        for (int rr = r - 1; rr >= 0; rr--)
+            below |= RankBB[rr];
+        ForwardRanksBB[Black][r] = below;
+    }
+
+    for (int sq = 0; sq < 64; sq++) {
+        int f = squareFile(sq);
+        int r = squareRank(sq);
+
+        ForwardFileBB[White][sq] = FileBB[f] & ForwardRanksBB[White][r];
+        ForwardFileBB[Black][sq] = FileBB[f] & ForwardRanksBB[Black][r];
+
+        Bitboard fileSpan = FileBB[f] | AdjacentFilesBB[f];
+        PassedPawnMask[White][sq] = fileSpan & ForwardRanksBB[White][r];
+        PassedPawnMask[Black][sq] = fileSpan & ForwardRanksBB[Black][r];
+
+        PawnSpanMask[White][sq] = AdjacentFilesBB[f] & ForwardRanksBB[White][r];
+        PawnSpanMask[Black][sq] = AdjacentFilesBB[f] & ForwardRanksBB[Black][r];
+    }
+}
+
 void initBitboards() {
     initKnightAttacks();
     initKingAttacks();
     initPawnAttacks();
+    initPawnMasks();
     initMagics(RookMagics, RookTable, RookMagicNumbers, RookBits, rookMask, rookAttacksSlow);
     initMagics(BishopMagics, BishopTable, BishopMagicNumbers, BishopBits, bishopMask,
                bishopAttacksSlow);
