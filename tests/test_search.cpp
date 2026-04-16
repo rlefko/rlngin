@@ -483,3 +483,43 @@ TEST_CASE("Search: ProbCut reduces nodes at high depth", "[search][probcut]") {
     // ProbCut should help keep nodes bounded at depth 8
     CHECK(state.nodes < 15000000);
 }
+
+TEST_CASE("Search: improving heuristic preserves tactical correctness", "[search][improving]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White knight on e4 can capture undefended black queen on d6
+    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 4);
+    CHECK(best.from == stringToSquare("e4"));
+    CHECK(best.to == stringToSquare("d6"));
+}
+
+TEST_CASE("Search: improving heuristic does not break mate detection", "[search][improving]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate in 1: Re1-e8#
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: improving heuristic keeps node count bounded", "[search][improving]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    // The improving heuristic should not cause node explosion at depth 8
+    CHECK(state.nodes < 20000000);
+}
