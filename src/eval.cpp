@@ -173,6 +173,15 @@ static const int *EgPST[] = {
     EgKingTable    // King
 };
 
+static void ensureEvalBitboards() {
+    static const bool initialized = []() {
+        initBitboards();
+        return true;
+    }();
+
+    (void)initialized;
+}
+
 // clang-format off
 
 // Passed pawn bonus by rank index (0 = rank 1, 7 = rank 8)
@@ -268,6 +277,8 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
 }
 
 int evaluate(const Board &board) {
+    ensureEvalBitboards();
+
     int mg[2] = {0, 0};
     int eg[2] = {0, 0};
     int gamePhase = 0;

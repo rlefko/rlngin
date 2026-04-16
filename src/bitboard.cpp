@@ -1,5 +1,7 @@
 #include "bitboard.h"
 
+#include <mutex>
+
 const Bitboard FileBB[8] = {FileABB, FileBBB, FileCBB, FileDBB, FileEBB, FileFBB, FileGBB, FileHBB};
 const Bitboard RankBB[8] = {Rank1BB, Rank2BB, Rank3BB, Rank4BB, Rank5BB, Rank6BB, Rank7BB, Rank8BB};
 
@@ -307,7 +309,7 @@ static void initPawnMasks() {
     }
 }
 
-void initBitboards() {
+static void doInitBitboards() {
     initKnightAttacks();
     initKingAttacks();
     initPawnAttacks();
@@ -315,4 +317,9 @@ void initBitboards() {
     initMagics(RookMagics, RookTable, RookMagicNumbers, RookBits, rookMask, rookAttacksSlow);
     initMagics(BishopMagics, BishopTable, BishopMagicNumbers, BishopBits, bishopMask,
                bishopAttacksSlow);
+}
+
+void initBitboards() {
+    static std::once_flag initFlag;
+    std::call_once(initFlag, doInitBitboards);
 }
