@@ -217,14 +217,13 @@ static const int ConnectedPawnBonus[8][2] = {
 // --- King safety constants ---
 
 // Pawn shield bonus per shield-file pawn by relative rank: {MG, EG}
-// Index 0 = pawn on 2nd rank (unmoved, strongest), index 1 = pawn on 3rd rank
+// Index 0 = pawn on 2nd rank (unmoved, strongest), index 1 = pawn on 3rd rank.
+// Values are conservative so the shield signal cannot dominate material,
+// PST, or pawn structure in normal middlegame positions.
 static const int PawnShieldBonus[2][2] = {
-    {35, 5},  // 2nd rank
-    {20, 3},  // 3rd rank
+    {20, 3},  // 2nd rank
+    {12, 2},  // 3rd rank
 };
-
-// Penalty when no friendly pawn exists on a shield file
-static const int MissingShieldPenalty[2] = {-10, 0};
 
 // Pawn storm penalty indexed by rank distance from our king: {MG, EG}
 // Index 0 = 4+ ranks away, index 4 = on the same rank (blocked)
@@ -236,9 +235,12 @@ static const int PawnStormPenalty[5][2] = {
     {10, 0},  // same rank (blocked, less dangerous)
 };
 
-// Per-file penalty when our pawns or all pawns are missing near the king
-static const int SemiOpenFileNearKing[2] = {-15, 0};
-static const int OpenFileNearKing[2]     = {-25, 0};
+// Per-file penalty when our pawns or all pawns are missing near the king.
+// A shield pawn's absence is the same signal as the file being semi-open
+// or open for us, so we express it only once here rather than stacking a
+// separate "missing shield" penalty on top.
+static const int SemiOpenFileNearKing[2] = {-10, 0};
+static const int OpenFileNearKing[2]     = {-15, 0};
 
 // Attack units per piece type when it attacks the king zone
 static const int KingAttackUnits[] = {
@@ -379,7 +381,10 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
             Bitboard ourPawnsOnFile = ourPawns & fileMask;
             Bitboard theirPawnsOnFile = theirPawns & fileMask;
 
-            // Pawn shield: find the closest friendly pawn to our back rank
+            // Pawn shield: find the closest friendly pawn to our back rank.
+            // When the file has no friendly pawn, the missing-shield signal
+            // is captured by the semi-open / open file penalties below, so
+            // no separate penalty is applied here.
             if (ourPawnsOnFile) {
                 int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
                 int relativeRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
@@ -391,9 +396,6 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
                     mg[us] += PawnShieldBonus[1][0];
                     eg[us] += PawnShieldBonus[1][1];
                 }
-            } else {
-                mg[us] += MissingShieldPenalty[0];
-                eg[us] += MissingShieldPenalty[1];
             }
 
             // Pawn storm: find the most-advanced enemy pawn on this file
