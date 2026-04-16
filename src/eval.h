@@ -3,8 +3,13 @@
 
 #include "board.h"
 
+#include <cstddef>
+
 extern const int PieceValue[7];
 
 int evaluate(const Board &board);
+
+void clearPawnHash();
+void setPawnHashSize(size_t mb);
 
 #endif

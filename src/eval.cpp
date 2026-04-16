@@ -1,6 +1,8 @@
 #include "eval.h"
 
 #include "bitboard.h"
+#include "pawn_hash.h"
+#include "zobrist.h"
 
 #include <algorithm>
 
@@ -173,8 +175,9 @@ static const int *EgPST[] = {
     EgKingTable    // King
 };
 
-static void ensureEvalBitboards() {
+static void ensureEvalInit() {
     static const bool initialized = []() {
+        zobrist::init();
         initBitboards();
         return true;
     }();
@@ -217,7 +220,13 @@ static const int IsolatedPawnPenalty[2] = {-15, -20}; // MG, EG
 static const int DoubledPawnPenalty[2] = {-10, -20};  // MG, EG
 static const int BackwardPawnPenalty[2] = {-10, -15}; // MG, EG
 
+static PawnHashTable pawnHashTable(2);
+
 static void evaluatePawns(const Board &board, int &mg, int &eg) {
+    if (pawnHashTable.probe(board.pawnKey, mg, eg)) {
+        return;
+    }
+
     Bitboard whitePawns = board.byPiece[Pawn] & board.byColor[White];
     Bitboard blackPawns = board.byPiece[Pawn] & board.byColor[Black];
 
@@ -277,10 +286,12 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
             }
         }
     }
+
+    pawnHashTable.store(board.pawnKey, mg, eg);
 }
 
 int evaluate(const Board &board) {
-    ensureEvalBitboards();
+    ensureEvalInit();
 
     int mg[2] = {0, 0};
     int eg[2] = {0, 0};
@@ -318,4 +329,12 @@ int evaluate(const Board &board) {
     }
 
     return (board.sideToMove == White) ? result : -result;
+}
+
+void clearPawnHash() {
+    pawnHashTable.clear();
+}
+
+void setPawnHashSize(size_t mb) {
+    pawnHashTable.resize(mb);
 }
