@@ -48,10 +48,10 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
     CHECK(evaluate(board) == 334);
 
-    // Rook on a1: material, PSQT, and rook mobility across file a and
-    // rank 1
+    // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
+    // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 644);
+    CHECK(evaluate(board) == 666);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
@@ -410,6 +410,37 @@ TEST_CASE("Eval: queen mobility excludes squares attacked by enemy pawns", "[eva
     int queenOpen = evaluate(board);
 
     CHECK(queenVsPawns < queenOpen);
+}
+
+TEST_CASE("Eval: rook on open file beats rook on closed file", "[eval][rook]") {
+    Board board;
+
+    // Rook on file e with both an own pawn on e2 and an enemy pawn on e6
+    // sitting on the same file -- closed, no bonus
+    board.setFen("4k3/8/4p3/8/8/8/4P3/4K2R w K - 0 1");
+    int closed = evaluate(board);
+
+    // Same material shifted so the rook sits on file d with no pawns on its
+    // file of either color -- fully open
+    board.setFen("4k3/8/4p3/8/8/8/4P3/3RK3 w - - 0 1");
+    int open = evaluate(board);
+
+    CHECK(open > closed);
+}
+
+TEST_CASE("Eval: rook on semi-open file beats rook on closed file", "[eval][rook]") {
+    Board board;
+
+    // Closed: rook on a1 with own pawn a2 blocking, enemy pawn a7 capping.
+    board.setFen("4k3/p7/8/8/8/8/P7/R3K3 w - - 0 1");
+    int closed = evaluate(board);
+
+    // Semi-open: rook on a1 with only the enemy pawn on a7 on its file;
+    // the own pawn now sits on b2 so material matches.
+    board.setFen("4k3/p7/8/8/8/8/1P6/R3K3 w - - 0 1");
+    int semiOpen = evaluate(board);
+
+    CHECK(semiOpen > closed);
 }
 
 TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {

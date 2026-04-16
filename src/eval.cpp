@@ -236,6 +236,13 @@ static const int MobilityBonus[7][28][2] = {
     {},  // King
 };
 
+// Rook bonuses for open and semi-open files. An "open file" has no pawns of
+// either color; a "semi-open file" has no friendly pawns but at least one
+// enemy pawn. Both bonuses are larger in the middlegame where file control
+// translates into direct king pressure.
+static const int RookOpenFileBonus[2] = {45, 20};
+static const int RookSemiOpenFileBonus[2] = {20, 7};
+
 // Connected pawn bonus by rank index
 static const int ConnectedPawnBonus[8][2] = {
     //  MG,  EG
@@ -405,15 +412,18 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
     pawnHashTable.store(board.pawnKey, mg, eg);
 }
 
-// Accumulate piece-activity terms (mobility for now; rooks on open files,
-// outposts, and trapped-piece penalties plug into this loop next). Mobility
-// is intentionally pseudo-legal -- pinned pieces still get credit for the
+// Accumulate piece-activity terms: mobility for every non-pawn non-king
+// piece, and rook bonuses for open and semi-open files. Mobility is
+// intentionally pseudo-legal -- pinned pieces still get credit for the
 // squares they attack because the search resolves pin tactics on its own,
 // which matches Stockfish's choice here.
 static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2], int eg[2]) {
     Bitboard occ = board.occupied;
 
     for (int c = 0; c < 2; c++) {
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
+        Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[c ^ 1];
+
         Bitboard knights = board.byPiece[Knight] & board.byColor[c];
         while (knights) {
             int sq = popLsb(knights);
@@ -436,6 +446,17 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
             int count = popcount(rookAttacks(sq, occ) & ctx.mobilityArea[c]);
             mg[c] += MobilityBonus[Rook][count][0];
             eg[c] += MobilityBonus[Rook][count][1];
+
+            Bitboard fileMask = FileBB[squareFile(sq)];
+            bool noOurPawns = !(fileMask & ourPawns);
+            bool noTheirPawns = !(fileMask & theirPawns);
+            if (noOurPawns && noTheirPawns) {
+                mg[c] += RookOpenFileBonus[0];
+                eg[c] += RookOpenFileBonus[1];
+            } else if (noOurPawns) {
+                mg[c] += RookSemiOpenFileBonus[0];
+                eg[c] += RookSemiOpenFileBonus[1];
+            }
         }
 
         Bitboard queens = board.byPiece[Queen] & board.byColor[c];
