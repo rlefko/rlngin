@@ -186,7 +186,8 @@ static bool isRepetition(const Board &board, const SearchState &state, int ply) 
 }
 
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state,
-                   bool allowNullMove = true, Move excludedMove = {0, 0, None}) {
+                   bool allowNullMove = true, Move excludedMove = {0, 0, None},
+                   bool cutNode = false) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
@@ -247,7 +248,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // Internal Iterative Reduction: reduce depth at expected cut-nodes when
     // no TT move is available, since these positions lack prior search
     // information and are less likely to be critical
-    if (depth >= 5 && !pvNode && !inCheck && ttMove.from == 0 && !hasExcludedMove) {
+    if (depth >= 4 && cutNode && !inCheck && ttMove.from == 0 && !hasExcludedMove) {
         depth--;
     }
 
@@ -288,13 +289,15 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
-            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
+            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state, true,
+                                     {0, 0, None}, !cutNode);
             board.unmakeNullMove(nullUndo);
             if (state.stopped) return 0;
             if (nullScore >= beta) {
                 // Verification search at high depths to guard against zugzwang
                 if (depth >= 8) {
-                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false);
+                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false,
+                                              {0, 0, None}, false);
                     if (state.stopped) return 0;
                     if (verifyScore >= beta) return beta;
                 } else {
@@ -325,8 +328,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             state.movedPiece[ply] = board.squares[pcMove.from].type;
             UndoInfo pcUndo = board.makeMove(pcMove);
 
-            int pcScore =
-                -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1, state);
+            int pcScore = -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1,
+                                   state, true, {0, 0, None}, !cutNode);
 
             board.unmakeMove(pcMove, pcUndo);
             if (state.stopped) return 0;
@@ -350,7 +353,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         int singularDepth = (depth - 1) / 2;
 
         int singularScore = negamax(board, singularDepth, ply, singularBeta - 1, singularBeta,
-                                    state, false, ttMove);
+                                    state, false, ttMove, cutNode);
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
@@ -446,7 +449,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         int score;
         if (moveIndex == 0) {
-            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
+            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true, {0, 0, None},
+                             !cutNode);
         } else {
             // Late move reductions
             int reduction = 0;
@@ -471,16 +475,19 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
 
             // Reduced null-window search
-            score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state);
+            score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state, true,
+                             {0, 0, None}, !cutNode);
 
             // Re-search at full depth if reduced search beats alpha
             if (reduction > 0 && score > alpha) {
-                score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state);
+                score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state, true,
+                                 {0, 0, None}, !cutNode);
             }
 
             // PVS: re-search with full window if null-window search beats alpha
             if (score > alpha && score < beta) {
-                score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
+                score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true, {0, 0, None},
+                                 false);
             }
         }
 
@@ -667,12 +674,15 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
                 int score;
                 if (mi == 0) {
-                    score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
+                    score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state, true,
+                                     {0, 0, None}, false);
                 } else {
                     // PVS: null-window search for non-first moves
-                    score = -negamax(pos, depth - 1, 1, -localAlpha - 1, -localAlpha, state);
+                    score = -negamax(pos, depth - 1, 1, -localAlpha - 1, -localAlpha, state, true,
+                                     {0, 0, None}, true);
                     if (score > localAlpha && score < beta) {
-                        score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
+                        score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state, true,
+                                         {0, 0, None}, false);
                     }
                 }
 
