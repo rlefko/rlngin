@@ -40,6 +40,7 @@ struct SearchState {
 
     Move moveStack[MAX_PLY] = {};
     PieceType movedPiece[MAX_PLY] = {};
+    int staticEvals[MAX_PLY] = {};
     uint64_t searchKeys[MAX_PLY] = {};
     std::vector<uint64_t> positionHistory;
     std::chrono::steady_clock::time_point startTime;

@@ -246,11 +246,24 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Static eval for pruning decisions (unreliable when in check)
     int staticEval = inCheck ? -INF_SCORE : evaluate(board);
+    state.staticEvals[ply] = staticEval;
+
+    // Determine if the position is improving (eval better than 2 plies ago)
+    bool improving = false;
+    if (inCheck) {
+        improving = false;
+    } else if (ply >= 2 && state.staticEvals[ply - 2] != -INF_SCORE) {
+        improving = staticEval > state.staticEvals[ply - 2];
+    } else if (ply >= 4 && state.staticEvals[ply - 4] != -INF_SCORE) {
+        improving = staticEval > state.staticEvals[ply - 4];
+    } else {
+        improving = true;
+    }
 
     // Reverse futility pruning: if static eval is far above beta at shallow depth,
     // assume this node will fail high
     if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
-        int rfpMargin = 120 * depth;
+        int rfpMargin = (120 - 60 * improving) * depth;
         if (staticEval - rfpMargin >= beta) {
             return staticEval - rfpMargin;
         }
@@ -288,7 +301,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // search would produce a beta cutoff
     if (!pvNode && !inCheck && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
         std::abs(beta) < MATE_SCORE - MAX_PLY) {
-        int probcutBeta = beta + 200;
+        int probcutBeta = beta + 200 - 60 * improving;
         int probcutDepth = depth - 4;
 
         std::vector<Move> pcMoves = generateLegalCaptures(board);
@@ -415,7 +428,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // beyond a threshold, as they are unlikely to beat alpha
         if (!inCheck && depth <= 5 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
             alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
-            int moveCountThreshold = 3 + depth * depth;
+            int moveCountThreshold = (3 + depth * depth) / (2 - improving);
             if (moveIndex >= moveCountThreshold) {
                 board.unmakeMove(m, undo);
                 continue;
@@ -443,6 +456,9 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     int histScore = state.contHistory->data[prevPt][prevTo][currPt][m.to];
                     reduction -= histScore / 8192;
                 }
+
+                // Reduce less when position is improving
+                reduction -= improving;
 
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
@@ -592,6 +608,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     memset(state.killers, 0, sizeof(state.killers));
     state.positionHistory = positionHistory;
     state.searchKeys[0] = board.key;
+    state.staticEvals[0] = evaluate(board);
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = computeTimeAllocation(board, limits);
 
