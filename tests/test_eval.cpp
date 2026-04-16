@@ -28,7 +28,7 @@ TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     ensureInit();
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 993);
+    CHECK(evaluate(board) == 989);
 }
 
 TEST_CASE("Eval: score flips with side to move", "[eval]") {
@@ -63,9 +63,10 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
     CHECK(evaluate(board) == 499);
 
-    // Queen on d5 (sq 35): phase 4, tapered plus square control terms
+    // Queen on d5 (sq 35): phase 4, tapered plus the undefended-zone term
+    // that fires when a single enemy piece attacks the opposing king zone
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 993);
+    CHECK(evaluate(board) == 989);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {

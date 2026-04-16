@@ -367,20 +367,8 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
             }
         }
 
-        // Only penalize when at least 2 pieces attack the zone -- a single
-        // piece rarely creates a real mating threat on its own
-        if (attackerCount >= 2) {
-            int penalty = KingAttackPenalty[std::min(attackUnits, 12)];
-            if (!attackingQueenPresent) {
-                penalty /= 2;
-            }
-            mg[us] -= penalty;
-            eg[us] -= penalty / 8;
-        }
-
-        // Square control: undefended king zone squares and safe king squares
-
-        // Build friendly defense map from all our pieces
+        // Build friendly defense map from all our pieces -- reused by both
+        // the undefended-square term and the gated safe-square term
         Bitboard friendlyDefense = KingAttacks[kingSq];
         if (us == White) {
             friendlyDefense |= ((ourPawns & ~FileHBB) << 9) | ((ourPawns & ~FileABB) << 7);
@@ -400,17 +388,31 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
         while (ourQueens)
             friendlyDefense |= queenAttacks(popLsb(ourQueens), occ);
 
-        // Penalize king zone squares attacked by enemy but not defended
+        // Undefended zone squares -- self-regulating: with no enemy piece
+        // attacking the zone this contributes zero, so no gate is needed
         Bitboard undefAttacked = kZone & enemyAttacks & ~friendlyDefense;
         int undefCount = popcount(undefAttacked);
         mg[us] += undefCount * UndefendedKingZoneSq[0];
         eg[us] += undefCount * UndefendedKingZoneSq[1];
 
-        // Penalize when the king has few safe escape squares
-        Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
-        int safeCount = std::min(popcount(kingMoves & ~enemyAttacks), 8);
-        mg[us] += KingSafeSqPenalty[safeCount][0];
-        eg[us] += KingSafeSqPenalty[safeCount][1];
+        // Only penalize when at least 2 pieces attack the zone -- a single
+        // piece rarely creates a real mating threat on its own
+        if (attackerCount >= 2) {
+            int penalty = KingAttackPenalty[std::min(attackUnits, 12)];
+            if (!attackingQueenPresent) {
+                penalty /= 2;
+            }
+            mg[us] -= penalty;
+            eg[us] -= penalty / 8;
+
+            // Gate the safe-square penalty on the same multi-attacker
+            // condition so that a king boxed in by its own pawns is not
+            // scored as if it were under attack
+            Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
+            int safeCount = std::min(popcount(kingMoves & ~enemyAttacks), 8);
+            mg[us] += KingSafeSqPenalty[safeCount][0];
+            eg[us] += KingSafeSqPenalty[safeCount][1];
+        }
     }
 }
 
