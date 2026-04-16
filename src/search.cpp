@@ -449,8 +449,9 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         int score;
         if (moveIndex == 0) {
+            // PV first child stays PV (cutNode = false); non-PV alternates
             score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true, {0, 0, None},
-                             !cutNode);
+                             pvNode ? false : !cutNode);
         } else {
             // Late move reductions
             int reduction = 0;
