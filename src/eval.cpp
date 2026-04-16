@@ -1,5 +1,7 @@
 #include "eval.h"
 
+#include "bitboard.h"
+
 #include <algorithm>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
@@ -171,6 +173,100 @@ static const int *EgPST[] = {
     EgKingTable    // King
 };
 
+// clang-format off
+
+// Passed pawn bonus by rank index (0 = rank 1, 7 = rank 8)
+// Indices 0 and 7 are impossible for pawns; included for indexing simplicity
+static const int PassedPawnBonus[8][2] = {
+    //  MG,  EG
+    {   0,   0},  // rank 1
+    {   5,  10},  // rank 2
+    {  10,  17},  // rank 3
+    {  15,  32},  // rank 4
+    {  30,  62},  // rank 5
+    {  55, 107},  // rank 6
+    {  90, 170},  // rank 7
+    {   0,   0},  // rank 8
+};
+
+// Connected pawn bonus by rank index
+static const int ConnectedPawnBonus[8][2] = {
+    //  MG,  EG
+    {   0,   0},  // rank 1
+    {   7,   0},  // rank 2
+    {   8,   3},  // rank 3
+    {  12,   7},  // rank 4
+    {  25,  17},  // rank 5
+    {  45,  30},  // rank 6
+    {  70,  42},  // rank 7
+    {   0,   0},  // rank 8
+};
+
+// clang-format on
+
+static const int IsolatedPawnPenalty[2] = {-15, -20}; // MG, EG
+static const int DoubledPawnPenalty[2] = {-10, -20};  // MG, EG
+static const int BackwardPawnPenalty[2] = {-10, -15}; // MG, EG
+
+static void evaluatePawns(const Board &board, int &mg, int &eg) {
+    Bitboard whitePawns = board.byPiece[Pawn] & board.byColor[White];
+    Bitboard blackPawns = board.byPiece[Pawn] & board.byColor[Black];
+
+    for (int c = 0; c < 2; c++) {
+        Bitboard ourPawns = (c == White) ? whitePawns : blackPawns;
+        Bitboard theirPawns = (c == White) ? blackPawns : whitePawns;
+        int sign = (c == White) ? 1 : -1;
+
+        Bitboard pawns = ourPawns;
+        while (pawns) {
+            int sq = popLsb(pawns);
+            int r = squareRank(sq);
+            int f = squareFile(sq);
+            int relativeRank = (c == White) ? r : (7 - r);
+
+            // Passed pawn: no enemy pawns ahead on same or adjacent files
+            if (!(PassedPawnMask[c][sq] & theirPawns)) {
+                mg += sign * PassedPawnBonus[relativeRank][0];
+                eg += sign * PassedPawnBonus[relativeRank][1];
+            }
+
+            // Isolated pawn: no friendly pawns on adjacent files
+            bool isolated = !(AdjacentFilesBB[f] & ourPawns);
+            if (isolated) {
+                mg += sign * IsolatedPawnPenalty[0];
+                eg += sign * IsolatedPawnPenalty[1];
+            }
+
+            // Doubled pawn: another friendly pawn ahead on the same file
+            if (ForwardFileBB[c][sq] & ourPawns) {
+                mg += sign * DoubledPawnPenalty[0];
+                eg += sign * DoubledPawnPenalty[1];
+            }
+
+            // Connected pawn: phalanx (same rank, adjacent file) or defended by friendly pawn
+            bool phalanx = (ourPawns & AdjacentFilesBB[f] & RankBB[r]) != 0;
+            bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
+            if (phalanx || defended) {
+                mg += sign * ConnectedPawnBonus[relativeRank][0];
+                eg += sign * ConnectedPawnBonus[relativeRank][1];
+            }
+
+            // Backward pawn: not connected, not isolated, all adjacent friendly pawns
+            // are ahead, and the stop square is controlled by an enemy pawn
+            if (!phalanx && !defended && !isolated) {
+                bool noneBelow = !(PawnSpanMask[c ^ 1][sq] & ourPawns);
+                if (noneBelow) {
+                    int stopSq = (c == White) ? sq + 8 : sq - 8;
+                    if (PawnAttacks[c][stopSq] & theirPawns) {
+                        mg += sign * BackwardPawnPenalty[0];
+                        eg += sign * BackwardPawnPenalty[1];
+                    }
+                }
+            }
+        }
+    }
+}
+
 int evaluate(const Board &board) {
     int mg[2] = {0, 0};
     int eg[2] = {0, 0};
@@ -187,8 +283,11 @@ int evaluate(const Board &board) {
         gamePhase += GamePhaseInc[p.type];
     }
 
-    int mgResult = mg[White] - mg[Black];
-    int egResult = eg[White] - eg[Black];
+    int pawnMg = 0, pawnEg = 0;
+    evaluatePawns(board, pawnMg, pawnEg);
+
+    int mgResult = mg[White] - mg[Black] + pawnMg;
+    int egResult = eg[White] - eg[Black] + pawnEg;
 
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
