@@ -180,12 +180,12 @@ static const int *EgPST[] = {
 static const int PassedPawnBonus[8][2] = {
     //  MG,  EG
     {   0,   0},  // rank 1
-    {   5,  10},  // rank 2
-    {  10,  17},  // rank 3
-    {  15,  32},  // rank 4
-    {  30,  62},  // rank 5
-    {  55, 107},  // rank 6
-    {  90, 170},  // rank 7
+    {  10,  18},  // rank 2
+    {  15,  23},  // rank 3
+    {  20,  42},  // rank 4
+    {  42,  80},  // rank 5
+    {  92, 170},  // rank 6
+    { 165, 260},  // rank 7
     {   0,   0},  // rank 8
 };
 
@@ -193,20 +193,20 @@ static const int PassedPawnBonus[8][2] = {
 static const int ConnectedPawnBonus[8][2] = {
     //  MG,  EG
     {   0,   0},  // rank 1
-    {   7,   0},  // rank 2
-    {   8,   3},  // rank 3
-    {  12,   7},  // rank 4
-    {  25,  17},  // rank 5
-    {  45,  30},  // rank 6
-    {  70,  42},  // rank 7
+    {  10,   3},  // rank 2
+    {  12,   5},  // rank 3
+    {  17,  10},  // rank 4
+    {  35,  22},  // rank 5
+    {  62,  40},  // rank 6
+    {  95,  55},  // rank 7
     {   0,   0},  // rank 8
 };
 
 // clang-format on
 
-static const int IsolatedPawnPenalty[2] = {-15, -20}; // MG, EG
-static const int DoubledPawnPenalty[2] = {-10, -20};  // MG, EG
-static const int BackwardPawnPenalty[2] = {-10, -15}; // MG, EG
+static const int IsolatedPawnPenalty[2] = {-18, -25}; // MG, EG
+static const int DoubledPawnPenalty[2] = {-12, -25};  // MG, EG
+static const int BackwardPawnPenalty[2] = {-12, -18}; // MG, EG
 
 static void evaluatePawns(const Board &board, int &mg, int &eg) {
     Bitboard whitePawns = board.byPiece[Pawn] & board.byColor[White];

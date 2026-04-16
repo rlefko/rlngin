@@ -1,25 +1,38 @@
+#include "bitboard.h"
 #include "board.h"
 #include "catch_amalgamated.hpp"
 #include "eval.h"
 
+static void ensureInit() {
+    static bool done = false;
+    if (!done) {
+        initBitboards();
+        done = true;
+    }
+}
+
 TEST_CASE("Eval: starting position is 0", "[eval]") {
+    ensureInit();
     Board board;
     CHECK(evaluate(board) == 0);
 }
 
 TEST_CASE("Eval: kings only is 0", "[eval]") {
+    ensureInit();
     Board board;
     board.setFen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
     CHECK(evaluate(board) == 0);
 }
 
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
+    ensureInit();
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
     CHECK(evaluate(board) == 985);
 }
 
 TEST_CASE("Eval: score flips with side to move", "[eval]") {
+    ensureInit();
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
     int whiteToMove = evaluate(board);
@@ -31,12 +44,13 @@ TEST_CASE("Eval: score flips with side to move", "[eval]") {
 }
 
 TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
+    ensureInit();
     Board board;
 
     // Pawn on a2 (sq 8): phase 0, pure endgame: 94 + EgPawnTable[8] = 94 + 13 = 107
-    // Pawn structure: isolated (-20 EG) + passed rank 1 (+10 EG) = -10 -> 97
+    // Pawn structure: isolated (-25 EG) + passed rank 1 (+18 EG) = -7 -> 100
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 97);
+    CHECK(evaluate(board) == 100);
 
     // Knight on a1 (sq 0): phase 1, tapered: (232*1 + 252*23) / 24 = 251
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
@@ -56,6 +70,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
+    ensureInit();
     Board board;
 
     board.setFen("4k3/8/8/8/4N3/8/8/4K3 w - - 0 1");
@@ -68,6 +83,7 @@ TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
 }
 
 TEST_CASE("Eval: endgame king prefers center", "[eval]") {
+    ensureInit();
     Board board;
 
     // No queens, no pieces -> phase 0, pure endgame: king prefers center
@@ -81,6 +97,7 @@ TEST_CASE("Eval: endgame king prefers center", "[eval]") {
 }
 
 TEST_CASE("Eval: middlegame king prefers castled position", "[eval]") {
+    ensureInit();
     Board board;
 
     // Heavy material (Q+R+B+N per side, phase 16) -> MG-dominated, king prefers safety
@@ -94,6 +111,7 @@ TEST_CASE("Eval: middlegame king prefers castled position", "[eval]") {
 }
 
 TEST_CASE("Eval: tapered eval blends middlegame and endgame", "[eval]") {
+    ensureInit();
     Board board;
 
     // Pure endgame (phase 0): king prefers center over edge
@@ -119,6 +137,7 @@ TEST_CASE("Eval: tapered eval blends middlegame and endgame", "[eval]") {
 }
 
 TEST_CASE("Eval: symmetric positions score 0", "[eval]") {
+    ensureInit();
     Board board;
 
     // Mirror position: identical pieces on mirrored squares
@@ -127,6 +146,7 @@ TEST_CASE("Eval: symmetric positions score 0", "[eval]") {
 }
 
 TEST_CASE("Eval: passed pawn scores higher than blocked pawn", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     // White pawn on e5, no black pawns on d/e/f files ahead = passed
@@ -141,6 +161,7 @@ TEST_CASE("Eval: passed pawn scores higher than blocked pawn", "[eval][pawn]") {
 }
 
 TEST_CASE("Eval: advanced passed pawn worth more than rear passed pawn", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     // White passed pawn on e6 (rank index 5)
@@ -155,6 +176,7 @@ TEST_CASE("Eval: advanced passed pawn worth more than rear passed pawn", "[eval]
 }
 
 TEST_CASE("Eval: isolated pawn scores lower than supported pawn", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     // White pawn on e4, alone (isolated)
@@ -169,6 +191,7 @@ TEST_CASE("Eval: isolated pawn scores lower than supported pawn", "[eval][pawn]"
 }
 
 TEST_CASE("Eval: doubled pawns score lower than separated pawns", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     // Two white pawns doubled on e-file
@@ -183,6 +206,7 @@ TEST_CASE("Eval: doubled pawns score lower than separated pawns", "[eval][pawn]"
 }
 
 TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     // Two white pawns side by side (phalanx) on d4, e4
@@ -197,6 +221,7 @@ TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][
 }
 
 TEST_CASE("Eval: backward pawn scores lower than non-backward pawn", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     // White pawn on e3, friendly pawn on d4 (ahead on adjacent file)
@@ -212,6 +237,7 @@ TEST_CASE("Eval: backward pawn scores lower than non-backward pawn", "[eval][paw
 }
 
 TEST_CASE("Eval: pawn chain gives connected bonus", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     // White pawn chain: e4 defended by d3
@@ -226,6 +252,7 @@ TEST_CASE("Eval: pawn chain gives connected bonus", "[eval][pawn]") {
 }
 
 TEST_CASE("Eval: symmetric pawn structure scores 0", "[eval][pawn]") {
+    ensureInit();
     Board board;
 
     board.setFen("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
