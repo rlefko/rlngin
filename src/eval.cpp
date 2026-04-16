@@ -256,6 +256,14 @@ static const int BishopOutpostBonus[2] = {18, 8};
 // rights on that side are gone, since the rook has no quick escape either.
 static const int TrappedRookByKingPenalty = -52;
 
+// Space evaluation: count safe central squares on our own side of the board.
+// Stockfish weights the result quadratically by non-pawn piece count so the
+// term fades in the endgame where space is no longer a trump. Gated on a
+// minimum piece count to keep the bonus from firing in thin positions where
+// it does not translate into a real plan.
+static const int SpaceWeightDivisor = 16;
+static const int SpaceMinPieceCount = 2;
+
 // Connected pawn bonus by rank index
 static const int ConnectedPawnBonus[8][2] = {
     //  MG,  EG
@@ -514,6 +522,36 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
     }
 }
 
+// Count central squares on our side of the board that are safe from enemy
+// pawn attacks and not occupied by our own pawns. Squares behind our own
+// pawn chain count double: they are already committed territory and
+// amplify the bonus Stockfish-style. Scaled quadratically by the number
+// of our non-pawn non-king pieces so the term only bites in middlegames
+// with enough material to exploit the extra space.
+static void evaluateSpace(const Board &board, const EvalContext &ctx, int mg[2], int eg[2]) {
+    (void)eg;
+    for (int c = 0; c < 2; c++) {
+        Bitboard ourPieces = board.byColor[c] & ~board.byPiece[Pawn] & ~board.byPiece[King];
+        int weight = popcount(ourPieces);
+        if (weight < SpaceMinPieceCount) continue;
+
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
+        Bitboard safe = SpaceMask[c] & ~ctx.pawnAttacks[c ^ 1] & ~ourPawns;
+
+        Bitboard behind = ourPawns;
+        if (c == White) {
+            behind |= behind >> 8;
+            behind |= behind >> 16;
+        } else {
+            behind |= behind << 8;
+            behind |= behind << 16;
+        }
+
+        int bonus = popcount(safe) + popcount(safe & behind);
+        mg[c] += bonus * weight * weight / SpaceWeightDivisor;
+    }
+}
+
 static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
     Bitboard occ = board.occupied;
 
@@ -719,6 +757,7 @@ int evaluate(const Board &board) {
     ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
 
     evaluatePieces(board, ctx, mg, eg);
+    evaluateSpace(board, ctx, mg, eg);
     evaluateKingSafety(board, mg, eg);
 
     int mgResult = mg[White] - mg[Black] + pawnMg;

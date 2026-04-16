@@ -2,6 +2,8 @@
 #include "catch_amalgamated.hpp"
 #include "eval.h"
 
+#include <cstdlib>
+
 TEST_CASE("Eval: starting position is 0", "[eval]") {
     Board board;
     CHECK(evaluate(board) == 0);
@@ -513,6 +515,42 @@ TEST_CASE("Eval: bishop outpost smaller than knight outpost", "[eval][outpost]")
     int knightDelta = knightOutpost - knightOff;
     int bishopDelta = bishopOutpost - bishopOff;
     CHECK(knightDelta > bishopDelta);
+}
+
+TEST_CASE("Eval: space bonus favors side with advanced center pawns", "[eval][space]") {
+    Board board;
+
+    // White has central pawns on c4/d4/e4 controlling squares on the White
+    // side of the board. Heavy minor/major material means the space weight
+    // fires and scales quadratically.
+    board.setFen("rnbqkbnr/pppppppp/8/8/2PPP3/8/PP3PPP/RNBQKBNR w KQkq - 0 1");
+    int advanced = evaluate(board);
+
+    // Same material with the center pawns held back on their starting
+    // squares -- fewer safe central squares, so a smaller space bonus.
+    board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    int starting = evaluate(board);
+
+    CHECK(advanced > starting);
+}
+
+TEST_CASE("Eval: space bonus vanishes in thin endgames", "[eval][space]") {
+    Board board;
+
+    // Two kings plus White's central pawn on e4. No minor or major pieces
+    // remain, so the SpaceMinPieceCount gate should suppress the bonus.
+    board.setFen("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
+    int withEndgamePawn = evaluate(board);
+
+    // Compute expected material+PST+pawn-structure contribution without the
+    // space term by moving the pawn outside the SpaceMask (file a is not
+    // central, so no space credit possible) -- same position shape.
+    board.setFen("4k3/8/8/8/P7/8/8/4K3 w - - 0 1");
+    int withEdgePawn = evaluate(board);
+
+    // Neither case should produce a space bonus, so the two scores differ
+    // only by PST and pawn-structure deltas, not by the space term.
+    CHECK(std::abs(withEndgamePawn - withEdgePawn) < 100);
 }
 
 TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
