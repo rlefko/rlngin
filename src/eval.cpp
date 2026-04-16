@@ -233,8 +233,17 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
             int f = squareFile(sq);
             int relativeRank = (c == White) ? r : (7 - r);
 
-            // Passed pawn: no enemy pawns ahead on same or adjacent files
-            if (!(PassedPawnMask[c][sq] & theirPawns)) {
+            // Doubled pawn: another friendly pawn ahead on the same file
+            bool isDoubled = (ForwardFileBB[c][sq] & ourPawns) != 0;
+            if (isDoubled) {
+                mg += sign * DoubledPawnPenalty[0];
+                eg += sign * DoubledPawnPenalty[1];
+            }
+
+            // Passed pawn: no enemy pawns ahead on same or adjacent files,
+            // and no friendly pawn ahead on the same file (rear doubled pawns
+            // are not passed)
+            if (!isDoubled && !(PassedPawnMask[c][sq] & theirPawns)) {
                 mg += sign * PassedPawnBonus[relativeRank][0];
                 eg += sign * PassedPawnBonus[relativeRank][1];
             }
@@ -244,12 +253,6 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
             if (isolated) {
                 mg += sign * IsolatedPawnPenalty[0];
                 eg += sign * IsolatedPawnPenalty[1];
-            }
-
-            // Doubled pawn: another friendly pawn ahead on the same file
-            if (ForwardFileBB[c][sq] & ourPawns) {
-                mg += sign * DoubledPawnPenalty[0];
-                eg += sign * DoubledPawnPenalty[1];
             }
 
             // Connected pawn: phalanx (same rank, adjacent file) or defended by friendly pawn
