@@ -44,10 +44,34 @@ inline Bitboard squareBB(int sq) {
     return 1ULL << sq;
 }
 
+inline int msb(Bitboard b) {
+    return 63 - __builtin_clzll(b);
+}
+
+// Indexed file mask lookup (FileBB[0] = a-file, FileBB[7] = h-file)
+// clang-format off
+constexpr Bitboard FileBB[8] = {
+    FileABB, FileBBB, FileCBB, FileDBB,
+    FileEBB, FileFBB, FileGBB, FileHBB
+};
+// clang-format on
+
 // Non-sliding attack tables
 extern Bitboard KnightAttacks[64];
 extern Bitboard KingAttacks[64];
 extern Bitboard PawnAttacks[2][64];
+
+// King zone: king attacks + king square, extended one rank toward the enemy.
+// This roughly covers the 3x4 rectangle in front of and around the king where
+// incoming piece attacks are most dangerous.
+inline Bitboard kingZoneBB(int kingSq, Color side) {
+    Bitboard zone = KingAttacks[kingSq] | squareBB(kingSq);
+    if (side == White)
+        zone |= (zone << 8);
+    else
+        zone |= (zone >> 8);
+    return zone;
+}
 
 // Magic bitboard structures
 struct Magic {
