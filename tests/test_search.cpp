@@ -114,6 +114,20 @@ TEST_CASE("Search: qsearch prevents blundering into recapture", "[search][qsearc
     }
 }
 
+TEST_CASE("Search: avoids premature queen trade from overstated king danger",
+          "[search][kingsafety]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setFen("rnb1kbnr/ppp1pppp/8/4q3/8/2N5/PPPP1PPP/R1BQKBNR w KQkq - 2 4");
+
+    Move best = findBestMove(board, 6);
+    bool isPrematureQueenTrade =
+        best.from == stringToSquare("d1") && best.to == stringToSquare("e2");
+
+    CHECK_FALSE(isPrematureQueenTrade);
+}
+
 TEST_CASE("Search: respects time limit", "[search]") {
     ensureInit();
     Board board;
