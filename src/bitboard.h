@@ -44,6 +44,10 @@ inline Bitboard squareBB(int sq) {
     return 1ULL << sq;
 }
 
+inline int msb(Bitboard b) {
+    return 63 - __builtin_clzll(b);
+}
+
 // File and rank convenience arrays (indexed versions of the individual constants)
 extern const Bitboard FileBB[8];
 extern const Bitboard RankBB[8];
@@ -59,6 +63,18 @@ extern Bitboard PawnSpanMask[2][64];
 extern Bitboard KnightAttacks[64];
 extern Bitboard KingAttacks[64];
 extern Bitboard PawnAttacks[2][64];
+
+// King zone: king attacks + king square, extended one rank toward the enemy.
+// This roughly covers the 3x4 rectangle in front of and around the king where
+// incoming piece attacks are most dangerous.
+inline Bitboard kingZoneBB(int kingSq, Color side) {
+    Bitboard zone = KingAttacks[kingSq] | squareBB(kingSq);
+    if (side == White)
+        zone |= (zone << 8);
+    else
+        zone |= (zone >> 8);
+    return zone;
+}
 
 // Magic bitboard structures
 struct Magic {
