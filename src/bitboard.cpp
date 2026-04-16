@@ -11,6 +11,11 @@ Bitboard ForwardFileBB[2][64];
 Bitboard PassedPawnMask[2][64];
 Bitboard PawnSpanMask[2][64];
 
+Bitboard OutpostRanks[2];
+Bitboard SpaceMask[2];
+Bitboard KingSideBB;
+Bitboard QueenSideBB;
+
 Bitboard KnightAttacks[64];
 Bitboard KingAttacks[64];
 Bitboard PawnAttacks[2][64];
@@ -309,11 +314,24 @@ static void initPawnMasks() {
     }
 }
 
+static void initPieceActivityMasks() {
+    OutpostRanks[White] = Rank4BB | Rank5BB | Rank6BB;
+    OutpostRanks[Black] = Rank3BB | Rank4BB | Rank5BB;
+
+    Bitboard centerFiles = FileCBB | FileDBB | FileEBB | FileFBB;
+    SpaceMask[White] = centerFiles & (Rank2BB | Rank3BB | Rank4BB);
+    SpaceMask[Black] = centerFiles & (Rank5BB | Rank6BB | Rank7BB);
+
+    KingSideBB = FileFBB | FileGBB | FileHBB;
+    QueenSideBB = FileABB | FileBBB | FileCBB;
+}
+
 static void doInitBitboards() {
     initKnightAttacks();
     initKingAttacks();
     initPawnAttacks();
     initPawnMasks();
+    initPieceActivityMasks();
     initMagics(RookMagics, RookTable, RookMagicNumbers, RookBits, rookMask, rookAttacksSlow);
     initMagics(BishopMagics, BishopTable, BishopMagicNumbers, BishopBits, bishopMask,
                bishopAttacksSlow);

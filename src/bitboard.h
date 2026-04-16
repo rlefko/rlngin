@@ -59,6 +59,18 @@ extern Bitboard ForwardFileBB[2][64];
 extern Bitboard PassedPawnMask[2][64];
 extern Bitboard PawnSpanMask[2][64];
 
+// Piece-activity masks:
+//   OutpostRanks[c] -- squares on relative ranks 4-6 where knights/bishops
+//       can plant themselves beyond easy pawn challenge.
+//   SpaceMask[c]    -- the central c-f files on relative ranks 2-4 where
+//       unchallenged squares grant a middlegame space bonus.
+//   KingSideBB / QueenSideBB -- flank file unions used by the trapped-rook
+//       detection.
+extern Bitboard OutpostRanks[2];
+extern Bitboard SpaceMask[2];
+extern Bitboard KingSideBB;
+extern Bitboard QueenSideBB;
+
 // Non-sliding attack tables
 extern Bitboard KnightAttacks[64];
 extern Bitboard KingAttacks[64];

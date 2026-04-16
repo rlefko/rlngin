@@ -191,6 +191,39 @@ TEST_CASE("Pawn span mask", "[bitboard][pawn]") {
     CHECK(popcount(span) == 8);
 }
 
+TEST_CASE("Outpost ranks cover relative ranks 4-6", "[bitboard][outpost]") {
+    initBitboards();
+
+    CHECK(OutpostRanks[White] == (Rank4BB | Rank5BB | Rank6BB));
+    CHECK(OutpostRanks[Black] == (Rank3BB | Rank4BB | Rank5BB));
+    CHECK((OutpostRanks[White] & Rank1BB) == 0);
+    CHECK((OutpostRanks[White] & Rank7BB) == 0);
+    CHECK((OutpostRanks[Black] & Rank8BB) == 0);
+    CHECK((OutpostRanks[Black] & Rank2BB) == 0);
+}
+
+TEST_CASE("Space mask covers central files on own half", "[bitboard][space]") {
+    initBitboards();
+
+    Bitboard centerFiles = FileCBB | FileDBB | FileEBB | FileFBB;
+    CHECK(SpaceMask[White] == (centerFiles & (Rank2BB | Rank3BB | Rank4BB)));
+    CHECK(SpaceMask[Black] == (centerFiles & (Rank5BB | Rank6BB | Rank7BB)));
+    CHECK(popcount(SpaceMask[White]) == 12);
+    CHECK(popcount(SpaceMask[Black]) == 12);
+    CHECK((SpaceMask[White] & FileABB) == 0);
+    CHECK((SpaceMask[White] & FileHBB) == 0);
+}
+
+TEST_CASE("Flank file unions", "[bitboard][flank]") {
+    initBitboards();
+
+    CHECK(KingSideBB == (FileFBB | FileGBB | FileHBB));
+    CHECK(QueenSideBB == (FileABB | FileBBB | FileCBB));
+    CHECK((KingSideBB & QueenSideBB) == 0);
+    CHECK(popcount(KingSideBB) == 24);
+    CHECK(popcount(QueenSideBB) == 24);
+}
+
 TEST_CASE("Board occupancy", "[bitboard]") {
     initBitboards();
 
