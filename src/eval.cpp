@@ -250,10 +250,11 @@ static const int RookSemiOpenFileBonus[2] = {20, 7};
 static const int KnightOutpostBonus[2] = {30, 20};
 static const int BishopOutpostBonus[2] = {18, 8};
 
-// Penalty applied to a rook that is shut behind its own king after castling
-// rights on that flank have been lost. Pure middlegame concern; the endgame
-// usually defuses the trap via king activation. Doubled when both castling
-// rights on that side are gone, since the rook has no quick escape either.
+// Penalty for a rook shut in on the same side of the board as its own king
+// when the rook has little room to breathe. Pure middlegame concern; in the
+// endgame the king activates and the rook typically walks free. Doubled
+// when all castling rights are gone, since O-O / O-O-O cannot relocate the
+// rook to an active square.
 static const int TrappedRookByKingPenalty = -52;
 
 // Space evaluation: count safe central squares on our own side of the board.
@@ -477,7 +478,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];
         int kingSq = kingBB ? lsb(kingBB) : -1;
         int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
-        bool kingOnStartRank = (kingSq >= 0) && (squareRank(kingSq) == (c == White ? 0 : 7));
         bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
         bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
 
@@ -499,12 +499,15 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
                 eg[c] += RookSemiOpenFileBonus[1];
             }
 
-            int rookFile = squareFile(sq);
-            bool rookOnStartRank = squareRank(sq) == (c == White ? 0 : 7);
-            if (rookOnStartRank && kingOnStartRank) {
-                bool trappedKingSide = lostShortCastle && kingFile >= 4 && rookFile > kingFile;
-                bool trappedQueenSide = lostLongCastle && kingFile <= 3 && rookFile < kingFile;
-                if (trappedKingSide || trappedQueenSide) {
+            // Trapped rook: little room to move and our king is on the same
+            // side of the board, so the rook cannot swing across. Gating on
+            // mobility rather than piece-square heuristics avoids the old
+            // loophole where stepping the king off the back rank silenced
+            // the penalty without actually freeing the rook.
+            if (count <= 3 && kingSq >= 0) {
+                int rookFile = squareFile(sq);
+                bool sameSide = (kingFile < 4) == (rookFile < kingFile);
+                if (sameSide) {
                     int penalty = TrappedRookByKingPenalty;
                     if (lostShortCastle && lostLongCastle) penalty *= 2;
                     mg[c] += penalty;
