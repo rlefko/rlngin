@@ -1,5 +1,7 @@
 #include "eval.h"
 
+#include "bitboard.h"
+
 #include <algorithm>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
@@ -171,6 +173,173 @@ static const int *EgPST[] = {
     EgKingTable    // King
 };
 
+// --- King safety constants ---
+
+// clang-format off
+
+// Pawn shield bonus per shield-file pawn by relative rank: {MG, EG}
+// Index 0 = pawn on 2nd rank (unmoved, strongest), index 1 = pawn on 3rd rank
+static const int PawnShieldBonus[2][2] = {
+    {35, 5},  // 2nd rank
+    {20, 3},  // 3rd rank
+};
+
+// Penalty when no friendly pawn exists on a shield file
+static const int MissingShieldPenalty[2] = {-10, 0};
+
+// Pawn storm penalty indexed by rank distance from our king: {MG, EG}
+// Index 0 = 4+ ranks away, index 4 = on the same rank (blocked)
+static const int PawnStormPenalty[5][2] = {
+    { 0, 0},  // 4+ ranks away
+    {10, 0},  // 3 ranks away
+    {25, 0},  // 2 ranks away
+    {40, 0},  // 1 rank away
+    {10, 0},  // same rank (blocked, less dangerous)
+};
+
+// Per-file penalty when our pawns or all pawns are missing near the king
+static const int SemiOpenFileNearKing[2] = {-15, 0};
+static const int OpenFileNearKing[2]     = {-25, 0};
+
+// Attack units per piece type when it attacks the king zone
+static const int KingAttackUnits[] = {
+    0,   // None
+    0,   // Pawn (handled via pawn storm)
+    2,   // Knight
+    2,   // Bishop
+    3,   // Rook
+    4,   // Queen
+    0    // King
+};
+
+// Modest king-zone penalties indexed by attack units, capped at 12.
+// These stay intentionally small because this engine does not yet score
+// richer mating features like safe checks, attack-square multiplicity,
+// or defender saturation.
+static const int KingAttackPenalty[13] = {
+    0,   0,   0,   12,  32,  60,  96,
+    140, 192, 252, 320, 396, 480,
+};
+
+// clang-format on
+
+static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
+    Bitboard occ = board.occupied;
+
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Color them = static_cast<Color>(c ^ 1);
+
+        Bitboard kingBB = board.byPiece[King] & board.byColor[us];
+        if (!kingBB) continue;
+        int kingSq = lsb(kingBB);
+        int kingFile = squareFile(kingSq);
+        int kingRank = squareRank(kingSq);
+
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
+        Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[them];
+
+        int shieldFileMin = std::max(0, kingFile - 1);
+        int shieldFileMax = std::min(7, kingFile + 1);
+
+        // Pawn shield, pawn storm, and open file evaluation per shield file
+        for (int f = shieldFileMin; f <= shieldFileMax; f++) {
+            Bitboard fileMask = FileBB[f];
+            Bitboard ourPawnsOnFile = ourPawns & fileMask;
+            Bitboard theirPawnsOnFile = theirPawns & fileMask;
+
+            // Pawn shield: find the closest friendly pawn to our back rank
+            if (ourPawnsOnFile) {
+                int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
+                int relativeRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+
+                if (relativeRank == 1) {
+                    mg[us] += PawnShieldBonus[0][0];
+                    eg[us] += PawnShieldBonus[0][1];
+                } else if (relativeRank == 2) {
+                    mg[us] += PawnShieldBonus[1][0];
+                    eg[us] += PawnShieldBonus[1][1];
+                }
+            } else {
+                mg[us] += MissingShieldPenalty[0];
+                eg[us] += MissingShieldPenalty[1];
+            }
+
+            // Pawn storm: find the most-advanced enemy pawn on this file
+            if (theirPawnsOnFile) {
+                int stormSq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
+                int distance = std::abs(squareRank(stormSq) - kingRank);
+                int idx = std::max(0, 4 - std::min(4, distance));
+                mg[us] -= PawnStormPenalty[idx][0];
+                eg[us] -= PawnStormPenalty[idx][1];
+            }
+
+            // Open and semi-open file penalties
+            if (!ourPawnsOnFile && !theirPawnsOnFile) {
+                mg[us] += OpenFileNearKing[0];
+                eg[us] += OpenFileNearKing[1];
+            } else if (!ourPawnsOnFile) {
+                mg[us] += SemiOpenFileNearKing[0];
+                eg[us] += SemiOpenFileNearKing[1];
+            }
+        }
+
+        // King zone attack evaluation
+        Bitboard kZone = kingZoneBB(kingSq, us);
+        int attackerCount = 0;
+        int attackUnits = 0;
+        bool attackingQueenPresent = false;
+
+        Bitboard theirKnights = board.byPiece[Knight] & board.byColor[them];
+        while (theirKnights) {
+            int sq = popLsb(theirKnights);
+            if (KnightAttacks[sq] & kZone) {
+                attackerCount++;
+                attackUnits += KingAttackUnits[Knight];
+            }
+        }
+
+        Bitboard theirBishops = board.byPiece[Bishop] & board.byColor[them];
+        while (theirBishops) {
+            int sq = popLsb(theirBishops);
+            if (bishopAttacks(sq, occ) & kZone) {
+                attackerCount++;
+                attackUnits += KingAttackUnits[Bishop];
+            }
+        }
+
+        Bitboard theirRooks = board.byPiece[Rook] & board.byColor[them];
+        while (theirRooks) {
+            int sq = popLsb(theirRooks);
+            if (rookAttacks(sq, occ) & kZone) {
+                attackerCount++;
+                attackUnits += KingAttackUnits[Rook];
+            }
+        }
+
+        Bitboard theirQueens = board.byPiece[Queen] & board.byColor[them];
+        while (theirQueens) {
+            int sq = popLsb(theirQueens);
+            if (queenAttacks(sq, occ) & kZone) {
+                attackerCount++;
+                attackUnits += KingAttackUnits[Queen];
+                attackingQueenPresent = true;
+            }
+        }
+
+        // Only penalize when at least 2 pieces attack the zone -- a single
+        // piece rarely creates a real mating threat on its own
+        if (attackerCount >= 2) {
+            int penalty = KingAttackPenalty[std::min(attackUnits, 12)];
+            if (!attackingQueenPresent) {
+                penalty /= 2;
+            }
+            mg[us] -= penalty;
+            eg[us] -= penalty / 8;
+        }
+    }
+}
+
 int evaluate(const Board &board) {
     int mg[2] = {0, 0};
     int eg[2] = {0, 0};
@@ -186,6 +355,8 @@ int evaluate(const Board &board) {
         eg[p.color] += EGPieceValue[p.type] + EgPST[p.type][idx];
         gamePhase += GamePhaseInc[p.type];
     }
+
+    evaluateKingSafety(board, mg, eg);
 
     int mgResult = mg[White] - mg[Black];
     int egResult = eg[White] - eg[Black];
