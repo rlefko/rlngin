@@ -126,8 +126,9 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
     bool inCheck = isInCheck(board);
 
+    int standPat = -INF_SCORE;
     if (!inCheck) {
-        int standPat = evaluate(board);
+        standPat = evaluate(board);
         if (standPat >= beta) return beta;
         if (standPat > alpha) alpha = standPat;
     }
@@ -145,8 +146,18 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     });
 
     for (const Move &m : moves) {
-        // Prune losing captures when not in check
-        if (!inCheck && isCapture(board, m) && see(board, m) < 0) continue;
+        if (!inCheck && isCapture(board, m)) {
+            // Prune losing captures
+            if (see(board, m) < 0) continue;
+            // Delta pruning: skip captures that cannot raise alpha even on a
+            // full recapture with a positional bonus. With a wider eval
+            // distribution, standPat often sits well below alpha, so qsearch
+            // fans out captures that have no chance of moving the score.
+            if (m.promotion == None &&
+                standPat + PieceValue[capturedType(board, m)] + 300 <= alpha) {
+                continue;
+            }
+        }
 
         UndoInfo undo = board.makeMove(m);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);

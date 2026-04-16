@@ -201,6 +201,70 @@ static const int PassedPawnBonus[8][2] = {
     {   0,   0},  // rank 8
 };
 
+// Piece mobility bonus indexed by PieceType and number of attacked
+// mobility-area squares. Squares occupied by our own pieces and squares
+// attacked by enemy pawns are excluded before counting. Values are derived
+// from Stockfish-style tuning and are intentionally nonlinear so the bonus
+// leans negative for trapped pieces and flattens once a piece is already
+// well developed. Pawn and King rows are unused; the extra dimensions let
+// us index by PieceType directly.
+static const int MobilityBonus[7][28][2] = {
+    {},  // None
+    {},  // Pawn
+    {    // Knight (0..8)
+        {-62, -81}, {-53, -56}, {-12, -30}, { -4, -14}, {  3,   8},
+        { 13,  15}, { 22,  23}, { 28,  27}, { 33,  33},
+    },
+    {    // Bishop (0..13)
+        {-48, -59}, {-20, -23}, { 16,  -3}, { 26,  13}, { 38,  24},
+        { 51,  42}, { 55,  54}, { 63,  57}, { 63,  65}, { 68,  73},
+        { 81,  78}, { 81,  86}, { 91,  88}, { 98,  97},
+    },
+    {    // Rook (0..14)
+        {-58, -76}, {-27, -18}, {-15,  28}, {-10,  55}, { -5,  69},
+        { -2,  82}, {  9, 112}, { 16, 118}, { 30, 132}, { 29, 142},
+        { 32, 155}, { 38, 165}, { 46, 166}, { 48, 169}, { 58, 171},
+    },
+    {    // Queen (0..27)
+        {-39, -36}, {-21, -15}, {  3,   8}, {  3,  18}, { 14,  34},
+        { 22,  54}, { 28,  61}, { 41,  73}, { 43,  79}, { 48,  92},
+        { 56,  94}, { 60, 104}, { 60, 113}, { 66, 120}, { 67, 123},
+        { 70, 126}, { 71, 133}, { 73, 136}, { 79, 140}, { 88, 143},
+        { 88, 148}, { 99, 166}, {102, 170}, {102, 175}, {106, 184},
+        {109, 191}, {113, 206}, {116, 212},
+    },
+    {},  // King
+};
+
+// Rook bonuses for open and semi-open files. An "open file" has no pawns of
+// either color; a "semi-open file" has no friendly pawns but at least one
+// enemy pawn. Both bonuses are larger in the middlegame where file control
+// translates into direct king pressure.
+static const int RookOpenFileBonus[2] = {45, 20};
+static const int RookSemiOpenFileBonus[2] = {20, 7};
+
+// Minor-piece outpost bonuses. A knight or bishop is on an outpost when it
+// sits on a relative rank 4-6 square that is defended by a friendly pawn
+// and can no longer be challenged by an enemy pawn push. Knights benefit
+// more than bishops because bishops see through the square anyway.
+static const int KnightOutpostBonus[2] = {30, 20};
+static const int BishopOutpostBonus[2] = {18, 8};
+
+// Penalty for a rook shut in on the same side of the board as its own king
+// when the rook has little room to breathe. Pure middlegame concern; in the
+// endgame the king activates and the rook typically walks free. Doubled
+// when all castling rights are gone, since O-O / O-O-O cannot relocate the
+// rook to an active square.
+static const int TrappedRookByKingPenalty = -52;
+
+// Space evaluation: count safe central squares on our own side of the board.
+// Stockfish weights the result quadratically by non-pawn piece count so the
+// term fades in the endgame where space is no longer a trump. Gated on a
+// minimum piece count to keep the bonus from firing in thin positions where
+// it does not translate into a real plan.
+static const int SpaceWeightDivisor = 16;
+static const int SpaceMinPieceCount = 2;
+
 // Connected pawn bonus by rank index
 static const int ConnectedPawnBonus[8][2] = {
     //  MG,  EG
@@ -286,6 +350,20 @@ static const int IsolatedPawnPenalty[2] = {-15, -20}; // MG, EG
 static const int DoubledPawnPenalty[2] = {-10, -20};  // MG, EG
 static const int BackwardPawnPenalty[2] = {-10, -15}; // MG, EG
 
+// Per-evaluation derived context: enemy-pawn attack maps and mobility-area
+// bitboards reused by every piece-activity term.
+struct EvalContext {
+    Bitboard pawnAttacks[2];
+    Bitboard mobilityArea[2];
+};
+
+static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
+    if (c == White) {
+        return ((pawns & ~FileABB) << 7) | ((pawns & ~FileHBB) << 9);
+    }
+    return ((pawns & ~FileABB) >> 9) | ((pawns & ~FileHBB) >> 7);
+}
+
 static PawnHashTable pawnHashTable(2);
 
 static void evaluatePawns(const Board &board, int &mg, int &eg) {
@@ -354,6 +432,127 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
     }
 
     pawnHashTable.store(board.pawnKey, mg, eg);
+}
+
+// Accumulate piece-activity terms: mobility for every non-pawn non-king
+// piece, rook bonuses for open and semi-open files, and outpost bonuses
+// for knights and bishops. Mobility is intentionally pseudo-legal --
+// pinned pieces still get credit for the squares they attack because the
+// search resolves pin tactics on its own, which matches Stockfish's
+// choice here.
+static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2], int eg[2]) {
+    Bitboard occ = board.occupied;
+
+    for (int c = 0; c < 2; c++) {
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
+        Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[c ^ 1];
+
+        Bitboard knights = board.byPiece[Knight] & board.byColor[c];
+        while (knights) {
+            int sq = popLsb(knights);
+            int count = popcount(KnightAttacks[sq] & ctx.mobilityArea[c]);
+            mg[c] += MobilityBonus[Knight][count][0];
+            eg[c] += MobilityBonus[Knight][count][1];
+
+            if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
+                !(PawnSpanMask[c][sq] & theirPawns)) {
+                mg[c] += KnightOutpostBonus[0];
+                eg[c] += KnightOutpostBonus[1];
+            }
+        }
+
+        Bitboard bishops = board.byPiece[Bishop] & board.byColor[c];
+        while (bishops) {
+            int sq = popLsb(bishops);
+            int count = popcount(bishopAttacks(sq, occ) & ctx.mobilityArea[c]);
+            mg[c] += MobilityBonus[Bishop][count][0];
+            eg[c] += MobilityBonus[Bishop][count][1];
+
+            if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
+                !(PawnSpanMask[c][sq] & theirPawns)) {
+                mg[c] += BishopOutpostBonus[0];
+                eg[c] += BishopOutpostBonus[1];
+            }
+        }
+
+        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
+        int kingSq = kingBB ? lsb(kingBB) : -1;
+        int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
+        bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
+        bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
+
+        Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
+        while (rooks) {
+            int sq = popLsb(rooks);
+            int count = popcount(rookAttacks(sq, occ) & ctx.mobilityArea[c]);
+            mg[c] += MobilityBonus[Rook][count][0];
+            eg[c] += MobilityBonus[Rook][count][1];
+
+            Bitboard fileMask = FileBB[squareFile(sq)];
+            bool noOurPawns = !(fileMask & ourPawns);
+            bool noTheirPawns = !(fileMask & theirPawns);
+            if (noOurPawns && noTheirPawns) {
+                mg[c] += RookOpenFileBonus[0];
+                eg[c] += RookOpenFileBonus[1];
+            } else if (noOurPawns) {
+                mg[c] += RookSemiOpenFileBonus[0];
+                eg[c] += RookSemiOpenFileBonus[1];
+            }
+
+            // Trapped rook: little room to move and our king is on the same
+            // side of the board, so the rook cannot swing across. Gating on
+            // mobility rather than piece-square heuristics avoids the old
+            // loophole where stepping the king off the back rank silenced
+            // the penalty without actually freeing the rook.
+            if (count <= 3 && kingSq >= 0) {
+                int rookFile = squareFile(sq);
+                bool sameSide = (kingFile < 4) == (rookFile < kingFile);
+                if (sameSide) {
+                    int penalty = TrappedRookByKingPenalty;
+                    if (lostShortCastle && lostLongCastle) penalty *= 2;
+                    mg[c] += penalty;
+                }
+            }
+        }
+
+        Bitboard queens = board.byPiece[Queen] & board.byColor[c];
+        while (queens) {
+            int sq = popLsb(queens);
+            int count = popcount(queenAttacks(sq, occ) & ctx.mobilityArea[c]);
+            mg[c] += MobilityBonus[Queen][count][0];
+            eg[c] += MobilityBonus[Queen][count][1];
+        }
+    }
+}
+
+// Count central squares on our side of the board that are safe from enemy
+// pawn attacks and not occupied by our own pawns. Squares behind our own
+// pawn chain count double: they are already committed territory and
+// amplify the bonus Stockfish-style. Scaled quadratically by the number
+// of our non-pawn non-king pieces so the term only bites in middlegames
+// with enough material to exploit the extra space.
+static void evaluateSpace(const Board &board, const EvalContext &ctx, int mg[2], int eg[2]) {
+    (void)eg;
+    for (int c = 0; c < 2; c++) {
+        Bitboard ourPieces = board.byColor[c] & ~board.byPiece[Pawn] & ~board.byPiece[King];
+        int weight = popcount(ourPieces);
+        if (weight < SpaceMinPieceCount) continue;
+
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
+        Bitboard safe = SpaceMask[c] & ~ctx.pawnAttacks[c ^ 1] & ~ourPawns;
+
+        Bitboard behind = ourPawns;
+        if (c == White) {
+            behind |= behind >> 8;
+            behind |= behind >> 16;
+        } else {
+            behind |= behind << 8;
+            behind |= behind << 16;
+        }
+
+        int bonus = popcount(safe) + popcount(safe & behind);
+        mg[c] += bonus * weight * weight / SpaceWeightDivisor;
+    }
 }
 
 static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
@@ -552,6 +751,16 @@ int evaluate(const Board &board) {
     int pawnMg = 0, pawnEg = 0;
     evaluatePawns(board, pawnMg, pawnEg);
 
+    EvalContext ctx;
+    Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
+    Bitboard blackPawnsCtx = board.byPiece[Pawn] & board.byColor[Black];
+    ctx.pawnAttacks[White] = pawnAttacksBB(whitePawnsCtx, White);
+    ctx.pawnAttacks[Black] = pawnAttacksBB(blackPawnsCtx, Black);
+    ctx.mobilityArea[White] = ~board.byColor[White] & ~ctx.pawnAttacks[Black];
+    ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
+
+    evaluatePieces(board, ctx, mg, eg);
+    evaluateSpace(board, ctx, mg, eg);
     evaluateKingSafety(board, mg, eg);
 
     int mgResult = mg[White] - mg[Black] + pawnMg;

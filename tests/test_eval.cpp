@@ -2,6 +2,8 @@
 #include "catch_amalgamated.hpp"
 #include "eval.h"
 
+#include <cstdlib>
+
 TEST_CASE("Eval: starting position is 0", "[eval]") {
     Board board;
     CHECK(evaluate(board) == 0);
@@ -16,7 +18,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 989);
+    CHECK(evaluate(board) == 1185);
 }
 
 TEST_CASE("Eval: score flips with side to move", "[eval]") {
@@ -38,22 +40,25 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
     CHECK(evaluate(board) == 97);
 
-    // Knight on a1 (sq 0): phase 1, tapered: (232*1 + 252*23) / 24 = 251
+    // Knight on a1: material and PSQT plus mobility bonus for its two legal
+    // moves from the corner
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 251);
+    CHECK(evaluate(board) == 221);
 
-    // Bishop on a1 (sq 0): phase 1, tapered plus square control terms
+    // Bishop on a1: material, PSQT, square control, and bishop mobility
+    // along the long diagonal
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 277);
+    CHECK(evaluate(board) == 334);
 
-    // Rook on a1 (sq 0): phase 2, tapered: (458*2 + 503*22) / 24 = 499
+    // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
+    // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 499);
+    CHECK(evaluate(board) == 666);
 
-    // Queen on d5 (sq 35): phase 4, tapered plus the undefended-zone term
-    // that fires when a single enemy piece attacks the opposing king zone
+    // Queen on d5: material, PSQT, the undefended-zone term, and mobility
+    // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 989);
+    CHECK(evaluate(board) == 1185);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -367,4 +372,197 @@ TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
 
     // Scores should be equal and opposite
     CHECK(whitePassed == -blackPassed);
+}
+
+TEST_CASE("Eval: central rook has more mobility than cornered rook", "[eval][mobility]") {
+    Board board;
+
+    board.setFen("4k3/8/8/8/3R4/8/8/4K3 w - - 0 1");
+    int centralRook = evaluate(board);
+
+    board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+    int cornerRook = evaluate(board);
+
+    CHECK(centralRook > cornerRook);
+}
+
+TEST_CASE("Eval: bishop blocked by own pawn scores lower than open bishop", "[eval][mobility]") {
+    Board board;
+
+    // Bishop on a1 with an own pawn on b2 shuts down the long diagonal
+    board.setFen("4k3/8/8/8/8/8/1P6/B3K3 w - - 0 1");
+    int blocked = evaluate(board);
+
+    // Same material but the pawn sits on a3 and leaves the diagonal open
+    board.setFen("4k3/8/8/8/8/P7/8/B3K3 w - - 0 1");
+    int open = evaluate(board);
+
+    CHECK(blocked < open);
+}
+
+TEST_CASE("Eval: queen mobility excludes squares attacked by enemy pawns", "[eval][mobility]") {
+    Board board;
+
+    // White queen on e4 with enemy pawns on d5 and f5 attacking c4, d4, e4,
+    // f4, g4. Mobility area excludes squares covered by enemy pawn attacks.
+    board.setFen("4k3/8/8/3p1p2/4Q3/8/8/4K3 w - - 0 1");
+    int queenVsPawns = evaluate(board);
+
+    board.setFen("4k3/8/8/8/4Q3/8/8/4K3 w - - 0 1");
+    int queenOpen = evaluate(board);
+
+    CHECK(queenVsPawns < queenOpen);
+}
+
+TEST_CASE("Eval: rook on open file beats rook on closed file", "[eval][rook]") {
+    Board board;
+
+    // Rook on file e with both an own pawn on e2 and an enemy pawn on e6
+    // sitting on the same file -- closed, no bonus
+    board.setFen("4k3/8/4p3/8/8/8/4P3/4K2R w K - 0 1");
+    int closed = evaluate(board);
+
+    // Same material shifted so the rook sits on file d with no pawns on its
+    // file of either color -- fully open
+    board.setFen("4k3/8/4p3/8/8/8/4P3/3RK3 w - - 0 1");
+    int open = evaluate(board);
+
+    CHECK(open > closed);
+}
+
+TEST_CASE("Eval: rook on semi-open file beats rook on closed file", "[eval][rook]") {
+    Board board;
+
+    // Closed: rook on a1 with own pawn a2 blocking, enemy pawn a7 capping.
+    board.setFen("4k3/p7/8/8/8/8/P7/R3K3 w - - 0 1");
+    int closed = evaluate(board);
+
+    // Semi-open: rook on a1 with only the enemy pawn on a7 on its file;
+    // the own pawn now sits on b2 so material matches.
+    board.setFen("4k3/p7/8/8/8/8/1P6/R3K3 w - - 0 1");
+    int semiOpen = evaluate(board);
+
+    CHECK(semiOpen > closed);
+}
+
+TEST_CASE("Eval: trapped rook with no mobility is penalized", "[eval][rook]") {
+    Board board;
+
+    // White king on g1 plus pawns on g2 and h2 shut the h1 rook in with
+    // zero safe squares. All castling rights gone, so the rook cannot be
+    // relocated via O-O / O-O-O and the doubled penalty should fire.
+    board.setFen("4k3/8/8/8/8/8/6PP/6KR w - - 0 1");
+    int trapped = evaluate(board);
+
+    // Same material with the king on b1 -- the rook sits on the opposite
+    // side of the board from its king, so the same-side gate fails and
+    // no trap penalty applies.
+    board.setFen("4k3/8/8/8/8/8/6PP/1K5R w - - 0 1");
+    int free = evaluate(board);
+
+    CHECK(trapped < free);
+}
+
+TEST_CASE("Eval: knight outpost beats unsupported knight on same square", "[eval][outpost]") {
+    Board board;
+
+    // Knight on d5 defended by own c4 pawn, enemy pawns on b6 and d6 leave
+    // no way to challenge it. The outpost condition should fire.
+    board.setFen("4k3/2p5/3pp3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int outpost = evaluate(board);
+
+    // Same layout but the own c4 pawn has been removed, so no friendly
+    // pawn defends d5 and the bonus should not apply.
+    board.setFen("4k3/2p5/3pp3/3N4/8/8/8/4K3 w - - 0 1");
+    int unsupported = evaluate(board);
+
+    CHECK(outpost > unsupported);
+}
+
+TEST_CASE("Eval: knight outpost requires no enemy pawn attackers", "[eval][outpost]") {
+    Board board;
+
+    // Defended knight on d5 but enemy c7 pawn can push to c6 and challenge
+    // it. Not a true outpost.
+    board.setFen("4k3/2p5/4p3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int contested = evaluate(board);
+
+    // Same layout with the enemy c7 pawn removed -- the outpost is secure
+    // and the bonus should apply.
+    board.setFen("4k3/8/4p3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int secure = evaluate(board);
+
+    CHECK(secure > contested);
+}
+
+TEST_CASE("Eval: bishop outpost smaller than knight outpost", "[eval][outpost]") {
+    Board board;
+
+    // Knight on outpost d5: bonus fires
+    board.setFen("4k3/8/3pp3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int knightOutpost = evaluate(board);
+
+    // Knight on d4 (same pawn cover, not on an outpost rank)
+    board.setFen("4k3/8/3pp3/8/2PN4/8/8/4K3 w - - 0 1");
+    int knightOff = evaluate(board);
+
+    // Bishop on outpost d5: smaller bonus fires
+    board.setFen("4k3/8/3pp3/3B4/2P5/8/8/4K3 w - - 0 1");
+    int bishopOutpost = evaluate(board);
+
+    // Bishop on d4 (same pawn cover, not on an outpost rank)
+    board.setFen("4k3/8/3pp3/8/2PB4/8/8/4K3 w - - 0 1");
+    int bishopOff = evaluate(board);
+
+    int knightDelta = knightOutpost - knightOff;
+    int bishopDelta = bishopOutpost - bishopOff;
+    CHECK(knightDelta > bishopDelta);
+}
+
+TEST_CASE("Eval: space bonus favors side with advanced center pawns", "[eval][space]") {
+    Board board;
+
+    // White has central pawns on c4/d4/e4 controlling squares on the White
+    // side of the board. Heavy minor/major material means the space weight
+    // fires and scales quadratically.
+    board.setFen("rnbqkbnr/pppppppp/8/8/2PPP3/8/PP3PPP/RNBQKBNR w KQkq - 0 1");
+    int advanced = evaluate(board);
+
+    // Same material with the center pawns held back on their starting
+    // squares -- fewer safe central squares, so a smaller space bonus.
+    board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    int starting = evaluate(board);
+
+    CHECK(advanced > starting);
+}
+
+TEST_CASE("Eval: space bonus vanishes in thin endgames", "[eval][space]") {
+    Board board;
+
+    // Two kings plus White's central pawn on e4. No minor or major pieces
+    // remain, so the SpaceMinPieceCount gate should suppress the bonus.
+    board.setFen("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
+    int withEndgamePawn = evaluate(board);
+
+    // Compute expected material+PST+pawn-structure contribution without the
+    // space term by moving the pawn outside the SpaceMask (file a is not
+    // central, so no space credit possible) -- same position shape.
+    board.setFen("4k3/8/8/8/P7/8/8/4K3 w - - 0 1");
+    int withEdgePawn = evaluate(board);
+
+    // Neither case should produce a space bonus, so the two scores differ
+    // only by PST and pawn-structure deltas, not by the space term.
+    CHECK(std::abs(withEndgamePawn - withEdgePawn) < 100);
+}
+
+TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
+    Board board;
+
+    board.setFen("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1");
+    int whiteKnight = evaluate(board);
+
+    board.setFen("4k3/8/8/3n4/8/8/8/4K3 w - - 0 1");
+    int blackKnight = evaluate(board);
+
+    CHECK(whiteKnight == -blackKnight);
 }
