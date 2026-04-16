@@ -243,6 +243,13 @@ static const int MobilityBonus[7][28][2] = {
 static const int RookOpenFileBonus[2] = {45, 20};
 static const int RookSemiOpenFileBonus[2] = {20, 7};
 
+// Minor-piece outpost bonuses. A knight or bishop is on an outpost when it
+// sits on a relative rank 4-6 square that is defended by a friendly pawn
+// and can no longer be challenged by an enemy pawn push. Knights benefit
+// more than bishops because bishops see through the square anyway.
+static const int KnightOutpostBonus[2] = {30, 20};
+static const int BishopOutpostBonus[2] = {18, 8};
+
 // Connected pawn bonus by rank index
 static const int ConnectedPawnBonus[8][2] = {
     //  MG,  EG
@@ -413,10 +420,11 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
 }
 
 // Accumulate piece-activity terms: mobility for every non-pawn non-king
-// piece, and rook bonuses for open and semi-open files. Mobility is
-// intentionally pseudo-legal -- pinned pieces still get credit for the
-// squares they attack because the search resolves pin tactics on its own,
-// which matches Stockfish's choice here.
+// piece, rook bonuses for open and semi-open files, and outpost bonuses
+// for knights and bishops. Mobility is intentionally pseudo-legal --
+// pinned pieces still get credit for the squares they attack because the
+// search resolves pin tactics on its own, which matches Stockfish's
+// choice here.
 static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2], int eg[2]) {
     Bitboard occ = board.occupied;
 
@@ -430,6 +438,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
             int count = popcount(KnightAttacks[sq] & ctx.mobilityArea[c]);
             mg[c] += MobilityBonus[Knight][count][0];
             eg[c] += MobilityBonus[Knight][count][1];
+
+            if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
+                !(PawnSpanMask[c][sq] & theirPawns)) {
+                mg[c] += KnightOutpostBonus[0];
+                eg[c] += KnightOutpostBonus[1];
+            }
         }
 
         Bitboard bishops = board.byPiece[Bishop] & board.byColor[c];
@@ -438,6 +452,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
             int count = popcount(bishopAttacks(sq, occ) & ctx.mobilityArea[c]);
             mg[c] += MobilityBonus[Bishop][count][0];
             eg[c] += MobilityBonus[Bishop][count][1];
+
+            if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
+                !(PawnSpanMask[c][sq] & theirPawns)) {
+                mg[c] += BishopOutpostBonus[0];
+                eg[c] += BishopOutpostBonus[1];
+            }
         }
 
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];

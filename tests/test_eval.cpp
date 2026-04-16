@@ -443,6 +443,62 @@ TEST_CASE("Eval: rook on semi-open file beats rook on closed file", "[eval][rook
     CHECK(semiOpen > closed);
 }
 
+TEST_CASE("Eval: knight outpost beats unsupported knight on same square", "[eval][outpost]") {
+    Board board;
+
+    // Knight on d5 defended by own c4 pawn, enemy pawns on b6 and d6 leave
+    // no way to challenge it. The outpost condition should fire.
+    board.setFen("4k3/2p5/3pp3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int outpost = evaluate(board);
+
+    // Same layout but the own c4 pawn has been removed, so no friendly
+    // pawn defends d5 and the bonus should not apply.
+    board.setFen("4k3/2p5/3pp3/3N4/8/8/8/4K3 w - - 0 1");
+    int unsupported = evaluate(board);
+
+    CHECK(outpost > unsupported);
+}
+
+TEST_CASE("Eval: knight outpost requires no enemy pawn attackers", "[eval][outpost]") {
+    Board board;
+
+    // Defended knight on d5 but enemy c7 pawn can push to c6 and challenge
+    // it. Not a true outpost.
+    board.setFen("4k3/2p5/4p3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int contested = evaluate(board);
+
+    // Same layout with the enemy c7 pawn removed -- the outpost is secure
+    // and the bonus should apply.
+    board.setFen("4k3/8/4p3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int secure = evaluate(board);
+
+    CHECK(secure > contested);
+}
+
+TEST_CASE("Eval: bishop outpost smaller than knight outpost", "[eval][outpost]") {
+    Board board;
+
+    // Knight on outpost d5: bonus fires
+    board.setFen("4k3/8/3pp3/3N4/2P5/8/8/4K3 w - - 0 1");
+    int knightOutpost = evaluate(board);
+
+    // Knight on d4 (same pawn cover, not on an outpost rank)
+    board.setFen("4k3/8/3pp3/8/2PN4/8/8/4K3 w - - 0 1");
+    int knightOff = evaluate(board);
+
+    // Bishop on outpost d5: smaller bonus fires
+    board.setFen("4k3/8/3pp3/3B4/2P5/8/8/4K3 w - - 0 1");
+    int bishopOutpost = evaluate(board);
+
+    // Bishop on d4 (same pawn cover, not on an outpost rank)
+    board.setFen("4k3/8/3pp3/8/2PB4/8/8/4K3 w - - 0 1");
+    int bishopOff = evaluate(board);
+
+    int knightDelta = knightOutpost - knightOff;
+    int bishopDelta = bishopOutpost - bishopOff;
+    CHECK(knightDelta > bishopDelta);
+}
+
 TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
     Board board;
 
