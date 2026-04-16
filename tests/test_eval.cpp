@@ -443,6 +443,22 @@ TEST_CASE("Eval: rook on semi-open file beats rook on closed file", "[eval][rook
     CHECK(semiOpen > closed);
 }
 
+TEST_CASE("Eval: trapped rook by uncastled king is penalized", "[eval][rook]") {
+    Board board;
+
+    // White king on g1 blocks the h1 rook, and with short castling lost the
+    // rook has no escape. The trapped-rook penalty should fire.
+    board.setFen("4k3/8/8/8/8/8/8/6KR w - - 0 1");
+    int trapped = evaluate(board);
+
+    // Same material with the king on e1 (still on the start rank but not
+    // shut behind the rook) -- no penalty.
+    board.setFen("4k3/8/8/8/8/8/8/4K2R w K - 0 1");
+    int free = evaluate(board);
+
+    CHECK(trapped < free);
+}
+
 TEST_CASE("Eval: knight outpost beats unsupported knight on same square", "[eval][outpost]") {
     Board board;
 

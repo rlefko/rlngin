@@ -250,6 +250,12 @@ static const int RookSemiOpenFileBonus[2] = {20, 7};
 static const int KnightOutpostBonus[2] = {30, 20};
 static const int BishopOutpostBonus[2] = {18, 8};
 
+// Penalty applied to a rook that is shut behind its own king after castling
+// rights on that flank have been lost. Pure middlegame concern; the endgame
+// usually defuses the trap via king activation. Doubled when both castling
+// rights on that side are gone, since the rook has no quick escape either.
+static const int TrappedRookByKingPenalty = -52;
+
 // Connected pawn bonus by rank index
 static const int ConnectedPawnBonus[8][2] = {
     //  MG,  EG
@@ -460,6 +466,13 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
             }
         }
 
+        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
+        int kingSq = kingBB ? lsb(kingBB) : -1;
+        int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
+        bool kingOnStartRank = (kingSq >= 0) && (squareRank(kingSq) == (c == White ? 0 : 7));
+        bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
+        bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
+
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
         while (rooks) {
             int sq = popLsb(rooks);
@@ -476,6 +489,18 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
             } else if (noOurPawns) {
                 mg[c] += RookSemiOpenFileBonus[0];
                 eg[c] += RookSemiOpenFileBonus[1];
+            }
+
+            int rookFile = squareFile(sq);
+            bool rookOnStartRank = squareRank(sq) == (c == White ? 0 : 7);
+            if (rookOnStartRank && kingOnStartRank) {
+                bool trappedKingSide = lostShortCastle && kingFile >= 4 && rookFile > kingFile;
+                bool trappedQueenSide = lostLongCastle && kingFile <= 3 && rookFile < kingFile;
+                if (trappedKingSide || trappedQueenSide) {
+                    int penalty = TrappedRookByKingPenalty;
+                    if (lostShortCastle && lostLongCastle) penalty *= 2;
+                    mg[c] += penalty;
+                }
             }
         }
 
