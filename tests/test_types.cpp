@@ -88,3 +88,44 @@ TEST_CASE("moveToString and stringToMove roundtrip", "[types]") {
     Move m5 = {stringToSquare("b7"), stringToSquare("b8"), Bishop};
     CHECK(moveToString(m5) == "b7b8b");
 }
+
+TEST_CASE("packed Score round-trips mg and eg halves", "[types][score]") {
+    CHECK(mg_value(S(0, 0)) == 0);
+    CHECK(eg_value(S(0, 0)) == 0);
+
+    CHECK(mg_value(S(100, 200)) == 100);
+    CHECK(eg_value(S(100, 200)) == 200);
+
+    // Negative middlegame must not corrupt the endgame half.
+    CHECK(mg_value(S(-50, 75)) == -50);
+    CHECK(eg_value(S(-50, 75)) == 75);
+
+    // Negative endgame must not corrupt the middlegame half.
+    CHECK(mg_value(S(60, -90)) == 60);
+    CHECK(eg_value(S(60, -90)) == -90);
+
+    // Both halves negative.
+    CHECK(mg_value(S(-120, -240)) == -120);
+    CHECK(eg_value(S(-120, -240)) == -240);
+
+    // Extremes near the 16-bit range.
+    CHECK(mg_value(S(32000, -32000)) == 32000);
+    CHECK(eg_value(S(32000, -32000)) == -32000);
+}
+
+TEST_CASE("packed Score adds componentwise", "[types][score]") {
+    Score a = S(100, 200);
+    Score b = S(-40, 55);
+    Score c = a + b;
+    CHECK(mg_value(c) == 60);
+    CHECK(eg_value(c) == 255);
+
+    Score d = a - b;
+    CHECK(mg_value(d) == 140);
+    CHECK(eg_value(d) == 145);
+
+    // Scaling by an integer multiplier also works componentwise.
+    Score e = S(30, 40) * 3;
+    CHECK(mg_value(e) == 90);
+    CHECK(eg_value(e) == 120);
+}
