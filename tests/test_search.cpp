@@ -523,3 +523,33 @@ TEST_CASE("Search: improving heuristic keeps node count bounded", "[search][impr
     // The improving heuristic should not cause node explosion at depth 8
     CHECK(state.nodes < 20000000);
 }
+
+TEST_CASE("Search: IIR reduces nodes without TT information", "[search][iir]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Middlegame with plenty of material; many positions will lack TT entries
+    // on the first search, so IIR should reduce total work
+    board.setFen("r1bqkb1r/pppppppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    // IIR should help keep node count bounded
+    CHECK(state.nodes < 15000000);
+}
+
+TEST_CASE("Search: IIR preserves tactical correctness", "[search][iir]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White knight captures undefended black queen: IIR must not hide this
+    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("e4"));
+    CHECK(best.to == stringToSquare("d6"));
+}

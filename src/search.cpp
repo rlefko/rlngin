@@ -244,6 +244,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     bool inCheck = isInCheck(board);
 
+    // Internal Iterative Reduction: reduce depth at expected cut-nodes when
+    // no TT move is available, since these positions lack prior search
+    // information and are less likely to be critical
+    if (depth >= 5 && !pvNode && !inCheck && ttMove.from == 0 && !hasExcludedMove) {
+        depth--;
+    }
+
     // Static eval for pruning decisions (unreliable when in check)
     int staticEval = inCheck ? -INF_SCORE : evaluate(board);
     state.staticEvals[ply] = staticEval;
