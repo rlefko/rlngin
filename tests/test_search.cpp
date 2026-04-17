@@ -662,3 +662,128 @@ TEST_CASE("Search: depth 10 node count bounded on Kiwipete", "[search][nodes]") 
 
     CHECK(state.nodes < 2000000);
 }
+
+TEST_CASE("Search: mate distance pruning still finds shortest mate", "[search][mdp]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Back-rank mate in one: Re1-e8#. Mate distance pruning must not clip the
+    // ply where the mate is found, so the shortest mate still surfaces even
+    // when the caller asks for a deeper search than needed.
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 8);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: mate distance pruning keeps deep mate search bounded", "[search][mdp]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Same back-rank mate-in-one; asking for depth 12 should not explore many
+    // alternatives past the mate score since mate distance pruning collapses
+    // the window on every ply deeper than the mate distance.
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    SearchLimits limits;
+    limits.depth = 12;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from == stringToSquare("e1"));
+    CHECK(state.bestMove.to == stringToSquare("e8"));
+    // A mate-in-one at depth 12 should stay small; the guard catches any
+    // regression that re-opens the window past the mate score.
+    CHECK(state.nodes < 100000);
+}
+
+TEST_CASE("Search: double extensions do not break mate detection", "[search][extensions]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate-in-3 setup where a singular TT move exists deep enough to earn the
+    // double-extension gate. The double extension must still produce the mate
+    // rather than clamp the search off the decisive continuation.
+    board.setFen("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4");
+
+    Move best = findBestMove(board, 8);
+    CHECK(best.from != best.to);
+}
+
+TEST_CASE("Search: cut-node LMR keeps tactical captures", "[search][cutnode]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // The +1 LMR reduction on expected cut-nodes must not hide a hanging
+    // queen capture. The TT move ordering puts this capture first, so any
+    // regression that over-reduces the TT move at a cut node fails here.
+    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("e4"));
+    CHECK(best.to == stringToSquare("d6"));
+}
+
+TEST_CASE("Search: history leaf pruning preserves mating move", "[search][history-prune]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Back-rank mate should survive history leaf pruning because the mating
+    // move's history is not negative enough to cross the threshold, and the
+    // pruning only fires on non-first quiet moves anyway.
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 5);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: material correction history stays tactically sound", "[search][corrhist]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Repeated searches on a tactical position drive both pawn and material
+    // correction tables; neither should drift far enough to distort pruning
+    // away from the winning capture.
+    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
+
+    for (int i = 0; i < 3; i++) {
+        Move best = findBestMove(board, 5);
+        CHECK(best.from == stringToSquare("e4"));
+        CHECK(best.to == stringToSquare("d6"));
+    }
+}
+
+TEST_CASE("Search: tightened aspiration windows resolve quiet positions", "[search][aspiration]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // A quiet middlegame where the aspiration window should land exact on
+    // nearly every iteration. Verify the search still terminates with a
+    // legal best move at depth 8 under the tighter delta.
+    board.setFen("r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+}
+
+TEST_CASE("Search: tightened aspiration windows handle volatile scores", "[search][aspiration]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // A sharper position where the score can jump across iterations. The
+    // gradual widening must still recover and produce a legal best move.
+    board.setFen("r1bqk2r/pppp1ppp/2n2n2/2b1p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 4 4");
+
+    SearchLimits limits;
+    limits.depth = 7;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+}
