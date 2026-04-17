@@ -1,11 +1,55 @@
 CXX := g++
 
-# Release flags: aggressive inlining, LTO across TUs, and assertion removal.
-# Exceptions and RTTI are unused in this codebase, so disabling them shrinks
-# code size and gives the optimizer more headroom.
+# Target architecture. Pick ``native`` for a local-machine build (picks up every
+# extension the host CPU supports, including BMI2/PEXT when present) or select
+# a specific tier for reproducible distributable binaries.
+#
+#   native         -- tune for the build host (default)
+#   x86-64-v3      -- modern x86-64 baseline (Haswell/Zen2+): AVX2, BMI2, POPCNT
+#   x86-64         -- portable x86-64 with POPCNT and SSSE3 bolted on
+#   armv8          -- generic ARMv8-A (NEON is baseline)
+#   apple-silicon  -- tuned for Apple M-series cores
+ARCH ?= native
+
+ifeq ($(ARCH),native)
+ARCH_FLAGS := -march=native -mtune=native
+else ifeq ($(ARCH),x86-64-v3)
+ARCH_FLAGS := -march=x86-64-v3 -mtune=generic
+else ifeq ($(ARCH),x86-64)
+ARCH_FLAGS := -mpopcnt -mssse3
+else ifeq ($(ARCH),armv8)
+ARCH_FLAGS := -march=armv8-a
+else ifeq ($(ARCH),apple-silicon)
+ARCH_FLAGS := -mcpu=apple-m1
+else
+$(error Unknown ARCH '$(ARCH)'. Valid values: native, x86-64-v3, x86-64, armv8, apple-silicon)
+endif
+
+# Force the scalar magic-bitboard path even on a BMI2 host. Useful on Zen1/Zen2
+# where PEXT is microcoded and runs slower than the magic multiply-shift lookup.
+ifeq ($(NO_PEXT),1)
+ARCH_FLAGS += -DNO_PEXT
+endif
+
+# LTO across TUs (default on). Override with ``LTO=off`` if a toolchain objects.
+LTO ?= on
+ifeq ($(LTO),on)
+LTO_FLAGS := -flto
+else
+LTO_FLAGS :=
+endif
+
+# DEBUG swaps release flags for -O0 -g and keeps asserts live. NDEBUG and the
+# exception/RTTI suppressions only belong in the release flavor.
+DEBUG ?= off
+ifeq ($(DEBUG),on)
+CXXFLAGS := -std=c++17 -Wall -Wextra -O0 -g -pthread $(ARCH_FLAGS)
+LDFLAGS :=
+else
 CXXFLAGS := -std=c++17 -Wall -Wextra -O3 -DNDEBUG -fno-exceptions -fno-rtti \
-            -flto -pthread
-LDFLAGS := -flto
+            -pthread $(ARCH_FLAGS) $(LTO_FLAGS)
+LDFLAGS := $(LTO_FLAGS)
+endif
 
 SRCDIR := src
 BUILDDIR := build
