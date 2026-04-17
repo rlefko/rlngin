@@ -288,6 +288,29 @@ static const Score BackwardPawnPenalty = S(-24, -41);
 // position once material dwindles and zugzwang starts to matter.
 static const Score Tempo = S(28, 0);
 
+// --- Threat constants ---
+//
+// Threats reward attacks from a less valuable piece onto a more valuable
+// one. Indexed by the victim's piece type so a minor cannot claim a
+// "threat on minor" and a rook cannot claim a "threat on rook". The
+// ThreatByKing, Hanging, WeakQueen, and SafePawnPush terms are flat per
+// affected piece / occurrence.
+
+static const Score ThreatByPawn = S(82, 126);
+
+static const Score ThreatByMinor[7] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(41, 55), S(87, 110), S(0, 0),
+};
+
+static const Score ThreatByRook[7] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(87, 82), S(0, 0),
+};
+
+static const Score ThreatByKing   = S(55, 60);
+static const Score Hanging        = S(48, 30);
+static const Score WeakQueen      = S(41, 14);
+static const Score SafePawnPush   = S(32, 22);
+
 // Two bishops together control complementary diagonals that no other piece
 // combination can cover, so the pair is worth noticeably more than the sum
 // of its parts. Slightly larger in the endgame where open diagonals matter
@@ -751,6 +774,77 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
     }
 }
 
+// Reward pieces we attack with a less-valuable attacker, hanging pieces,
+// weak queens, and enemy pieces hit by a safe pawn push. Threat types are
+// indexed by the victim piece so lower-value attackers never double-count
+// against equally-valued victims. All terms consume the shared attack
+// maps precomputed in buildAttackMaps.
+static void evaluateThreats(const Board &board, const EvalContext &ctx, Score scores[2]) {
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Color them = static_cast<Color>(c ^ 1);
+
+        Bitboard theirPieces = board.byColor[them];
+        Bitboard theirNonPawnNonKing = theirPieces & ~board.byPiece[Pawn] & ~board.byPiece[King];
+
+        // Threat by pawn: every enemy non-pawn/non-king attacked by one of
+        // our pawns contributes a flat bonus. Pawn attacks cannot be
+        // reciprocated by a lower-value attacker, so this is strictly
+        // additive and cannot be double counted with the minor/rook blocks.
+        Bitboard pawnThreats = ctx.pawnAttacks[us] & theirNonPawnNonKing;
+        scores[us] += ThreatByPawn * popcount(pawnThreats);
+
+        // Threat by minor: our knights or bishops attacking an enemy rook
+        // or queen. Index by the victim so the table naturally zeroes out
+        // same-value targets and we never credit minor-on-minor threats.
+        Bitboard minorAttacks = ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop];
+        Bitboard victims = minorAttacks & theirPieces;
+        Bitboard minorVsRook = victims & board.byPiece[Rook];
+        Bitboard minorVsQueen = victims & board.byPiece[Queen];
+        scores[us] += ThreatByMinor[Rook] * popcount(minorVsRook);
+        scores[us] += ThreatByMinor[Queen] * popcount(minorVsQueen);
+
+        // Threat by rook: our rooks attacking an enemy queen.
+        Bitboard rookVsQueen = ctx.attackedBy[us][Rook] & theirPieces & board.byPiece[Queen];
+        scores[us] += ThreatByRook[Queen] * popcount(rookVsQueen);
+
+        // Threat by king: enemy pieces sitting on a square our king attacks
+        // and which the enemy does not defend. Pawns and kings are excluded
+        // from the set of victims.
+        Bitboard kingVictims =
+            ctx.attackedBy[us][King] & theirNonPawnNonKing & ~ctx.allAttacks[them];
+        scores[us] += ThreatByKing * popcount(kingVictims);
+
+        // Hanging pieces: enemy non-pawn pieces attacked by any of our
+        // pieces and not defended by theirs. Kings excluded (they cannot
+        // hang in a legal position).
+        Bitboard hanging = theirNonPawnNonKing & ctx.allAttacks[us] & ~ctx.allAttacks[them];
+        scores[us] += Hanging * popcount(hanging);
+
+        // Weak queen: enemy queen attacked by two or more of our pieces.
+        Bitboard weakQueen = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
+        if (weakQueen) scores[us] += WeakQueen;
+
+        // Safe pawn push threat: single- or double-push targets that are
+        // empty, not attacked by enemy pawns, and either not attacked by
+        // the enemy at all or defended by our own pieces. From those
+        // safe landing squares, compute the pawn attack footprint and
+        // bonus every enemy non-pawn/non-king piece that falls under it.
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
+        Bitboard empty = ~board.occupied;
+        Bitboard singlePush = (us == White) ? (ourPawns << 8) : (ourPawns >> 8);
+        singlePush &= empty;
+        Bitboard doublePush = (us == White) ? ((singlePush & Rank3BB) << 8)
+                                            : ((singlePush & Rank6BB) >> 8);
+        doublePush &= empty;
+        Bitboard pushes = singlePush | doublePush;
+        Bitboard safePushes =
+            pushes & ~ctx.pawnAttacks[them] & (~ctx.allAttacks[them] | ctx.allAttacks[us]);
+        Bitboard pushVictims = pawnAttacksBB(safePushes, us) & theirNonPawnNonKing;
+        scores[us] += SafePawnPush * popcount(pushVictims);
+    }
+}
+
 int evaluate(const Board &board) {
     ensureEvalInit();
 
@@ -785,6 +879,7 @@ int evaluate(const Board &board) {
     buildAttackMaps(board, ctx);
 
     evaluatePieces(board, ctx, scores);
+    evaluateThreats(board, ctx, scores);
     evaluateSpace(board, ctx, scores);
     evaluateKingSafety(board, ctx, scores);
 

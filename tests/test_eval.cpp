@@ -639,3 +639,57 @@ TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
     CHECK((whiteKnight + blackKnight) > 0);
     CHECK((whiteKnight - blackKnight) > 0);
 }
+
+// --- Threats tests ---
+
+TEST_CASE("Eval: pawn attacking enemy minor is a threat", "[eval][threats]") {
+    Board board;
+
+    // White pawn on d5 with a black knight on c6 right in its attack mask.
+    // The threat-by-pawn bonus should favor White noticeably beyond the
+    // bare material and PST deltas.
+    board.setFen("4k3/8/2n5/3P4/8/8/8/4K3 w - - 0 1");
+    int withPawnThreat = evaluate(board);
+
+    // Same material, same side to move, but the pawn sits on h5 so it no
+    // longer attacks the knight. Any remaining delta between the two
+    // positions comes from PST and mobility, not from a pawn threat.
+    board.setFen("4k3/8/2n5/7P/8/8/8/4K3 w - - 0 1");
+    int withoutPawnThreat = evaluate(board);
+
+    CHECK(withPawnThreat > withoutPawnThreat);
+}
+
+TEST_CASE("Eval: hanging piece penalizes the side whose piece hangs", "[eval][threats]") {
+    Board board;
+
+    // Black knight on e5, undefended, attacked by a White bishop on b2.
+    // White should be happy about the hanging knight.
+    board.setFen("4k3/8/8/4n3/8/8/1B6/4K3 w - - 0 1");
+    int knightHangs = evaluate(board);
+
+    // Same knight, now defended by a black pawn on d6 so it no longer
+    // hangs. White's score should be lower.
+    board.setFen("4k3/8/3p4/4n3/8/8/1B6/4K3 w - - 0 1");
+    int knightDefended = evaluate(board);
+
+    CHECK(knightHangs > knightDefended);
+}
+
+TEST_CASE("Eval: rook attacking enemy queen earns a threat bonus", "[eval][threats]") {
+    Board board;
+
+    // White rook on d1 and black queen on d5 with a clear file between
+    // them: the rook attacks the queen and should score positively for
+    // the attacking side.
+    board.setFen("4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1");
+    int rookThreatensQueen = evaluate(board);
+
+    // Same material but the rook sits on a1 and no longer attacks the
+    // queen. Threat-by-rook on the queen is gone and the eval relative
+    // delta drops.
+    board.setFen("4k3/8/8/3q4/8/8/8/R3K3 w - - 0 1");
+    int rookIdle = evaluate(board);
+
+    CHECK(rookThreatensQueen > rookIdle);
+}
