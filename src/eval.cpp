@@ -989,7 +989,20 @@ static int scaleFactor(const Board &board) {
     if (ocb) {
         int nonBishopPieces = popcount(board.occupied) - popcount(board.byPiece[Pawn]) -
                               popcount(board.byPiece[King]) - popcount(board.byPiece[Bishop]);
-        return (nonBishopPieces == 0) ? 22 : 36;
+        int strongPawns = std::max(board.pieceCount[White][Pawn], board.pieceCount[Black][Pawn]);
+        if (nonBishopPieces == 0) {
+            // Pure OCB: drawishness depends on whether the strong side has
+            // enough pawns to build winning chances. Very few pawns is a
+            // near-certain draw; a full pawn chain can still break through.
+            if (strongPawns <= 1) return 10;
+            if (strongPawns <= 3) return 26;
+            return 38;
+        }
+        // OCB with rooks, knights, or queens still on the board keeps
+        // tactical chances alive, so only apply a mild haircut rather than
+        // the aggressive flat scale that would otherwise smother middlegame
+        // positions that happen to have opposite-colored bishops.
+        return 54;
     }
 
     // Pawnless minor-only endings reduce to draws unless one side has a
@@ -1051,10 +1064,15 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
             ctx.attackedBy[us][King] & theirNonPawnNonKing & ~ctx.allAttacks[them];
         scores[us] += ThreatByKing * popcount(kingVictims);
 
-        // Hanging pieces: enemy non-pawn pieces attacked by any of our
-        // pieces and not defended by theirs. Kings excluded (they cannot
-        // hang in a legal position).
-        Bitboard hanging = theirNonPawnNonKing & ctx.allAttacks[us] & ~ctx.allAttacks[them];
+        // Hanging pieces: enemy non-pawn pieces undefended and reachable
+        // by a capture we would willingly make. "Willingly" means either
+        // we have a less valuable attacker on the square (pawn attacks
+        // qualify directly) or two or more pieces converging on it so the
+        // capture-recapture sequence still wins material. This keeps
+        // queen-attacks-undefended-rook and similar trade-losing scenarios
+        // from falsely firing the hanging bonus.
+        Bitboard undefended = theirNonPawnNonKing & ctx.allAttacks[us] & ~ctx.allAttacks[them];
+        Bitboard hanging = undefended & (ctx.attackedBy2[us] | ctx.pawnAttacks[us]);
         scores[us] += Hanging * popcount(hanging);
 
         // Weak queen: enemy queen attacked by two or more of our pieces.
