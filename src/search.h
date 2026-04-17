@@ -39,6 +39,10 @@ struct SearchState {
         // contHistory[tier][prevPt][prevTo][currPt][currTo] where tier 0 is
         // 1-ply back, tier 1 is 2-ply back, tier 2 is 4-ply back.
         int16_t contHistory[3][7][64][7][64] = {};
+        // Pawn-keyed static eval correction: `[color][pawnKey % N]`. The signal
+        // here is that for a given pawn structure, the search score tends to
+        // diverge from the static eval in a particular direction.
+        int16_t pawnCorrHist[2][16384] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 

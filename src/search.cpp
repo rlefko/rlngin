@@ -12,6 +12,11 @@
 
 static constexpr int MAX_HISTORY = 16384;
 static constexpr int MAX_CONT_HISTORY = 16384;
+static constexpr int MAX_PAWN_CORR = 16384;
+static constexpr int PAWN_CORR_SIZE = 16384;
+// Internal eval divisor; with the rescaled material units (~228 per pawn) a
+// saturated entry contributes ~56 cp, well inside the ~60 cp design cap.
+static constexpr int PAWN_CORR_SCALE = 128;
 static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
@@ -48,6 +53,36 @@ static int contHistoryScore(const SearchState &state, int ply, PieceType currPt,
         }
     }
     return score;
+}
+
+// Adjust a raw static eval by the pawn-structure correction for the side to
+// move. Mate-range scores are returned untouched so the correction cannot
+// accidentally push a non-mate eval into mate territory.
+static int correctedEval(int staticEval, const Board &board, const SearchState &state) {
+    if (staticEval <= -MATE_SCORE + MAX_PLY || staticEval >= MATE_SCORE - MAX_PLY) {
+        return staticEval;
+    }
+    int idx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
+    int correction = state.historyTables->pawnCorrHist[board.sideToMove][idx] / PAWN_CORR_SCALE;
+    return staticEval + correction;
+}
+
+// Fold the gap between the node's search result and its raw static eval into
+// the correction table, scaled by depth. Gated by the caller to fire only on
+// quiet bestMove cutoffs/exact bounds outside singular exclusion.
+static void updatePawnCorrHist(const Board &board, SearchState &state, int staticEval,
+                               int bestValue, int depth) {
+    if (staticEval == -INF_SCORE) return;
+    int idx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
+    int diff = bestValue - staticEval;
+    int bonus = diff * depth / 8;
+    int cap = MAX_PAWN_CORR / 4;
+    if (bonus > cap)
+        bonus = cap;
+    else if (bonus < -cap)
+        bonus = -cap;
+    applyHistoryBonus(state.historyTables->pawnCorrHist[board.sideToMove][idx], bonus,
+                      MAX_PAWN_CORR);
 }
 
 // Apply the same bonus to every tier of continuation history for this move.
@@ -173,7 +208,11 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
     int standPat = -INF_SCORE;
     if (!inCheck) {
-        standPat = evaluate(board);
+        int rawStandPat = evaluate(board);
+        // Read-only correction: qsearch consumes the corrected eval for its
+        // stand-pat and delta pruning decisions but does not update the table,
+        // since qsearch returns are the signal the correction is tracking.
+        standPat = correctedEval(rawStandPat, board, state);
         if (standPat >= beta) return beta;
         if (standPat > alpha) alpha = standPat;
     }
@@ -313,6 +352,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
     state.staticEvals[ply] = staticEval;
 
+    // Pawn-structure correction folded on top of the raw static eval. The raw
+    // value still drives improving detection and is what we store in TT.
+    int corrEval = inCheck ? -INF_SCORE : correctedEval(staticEval, board, state);
+
     // Determine if the position is improving (eval better than 2 plies ago)
     bool improving = false;
     if (inCheck) {
@@ -329,8 +372,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // assume this node will fail high
     if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
         int rfpMargin = (290 - 145 * improving) * depth;
-        if (staticEval - rfpMargin >= beta) {
-            return staticEval - rfpMargin;
+        if (corrEval - rfpMargin >= beta) {
+            return corrEval - rfpMargin;
         }
     }
 
@@ -342,7 +385,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         Bitboard nonPawnMaterial = board.byColor[us] & ~board.byPiece[Pawn] & ~board.byPiece[King];
         if (nonPawnMaterial) {
             // Dynamic reduction: base depth component + eval-based bonus
-            int R = 3 + depth / 3 + std::clamp((staticEval - beta) / 483, 0, 3);
+            int R = 3 + depth / 3 + std::clamp((corrEval - beta) / 483, 0, 3);
             R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
@@ -377,7 +420,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         });
 
         for (const Move &pcMove : pcMoves) {
-            if (!seeGE(board, pcMove, probcutBeta - staticEval)) continue;
+            if (!seeGE(board, pcMove, probcutBeta - corrEval)) continue;
 
             state.moveStack[ply] = pcMove;
             state.movedPiece[ply] = board.squares[pcMove.from].type;
@@ -484,7 +527,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
             alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
             int fpMargin = 241 + 193 * depth;
-            if (staticEval + fpMargin <= alpha) {
+            if (corrEval + fpMargin <= alpha) {
                 board.unmakeMove(m, undo);
                 continue;
             }
@@ -628,6 +671,20 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
         int storedEval = inCheck ? TT_NO_EVAL : staticEval;
         tt.store(board.key, bestScore, storedEval, depth, flag, bestMove, ply);
+
+        // Fold the search result into the pawn correction table whenever we have
+        // a quiet best move and a bound that actually informs the correction:
+        // exact, a passing lower bound, or a failing upper bound. Captures and
+        // promotions skew the correction target so we omit them.
+        if (!inCheck && depth >= 2 && bestMove.from != bestMove.to && !isCapture(board, bestMove) &&
+            bestMove.promotion == None) {
+            bool boundUseful = (flag == TT_EXACT) ||
+                               (flag == TT_LOWER_BOUND && bestScore >= beta) ||
+                               (flag == TT_UPPER_BOUND && bestScore <= origAlpha);
+            if (boundUseful) {
+                updatePawnCorrHist(board, state, staticEval, bestScore, depth);
+            }
+        }
     }
 
     return bestScore;
