@@ -20,12 +20,16 @@ static TranspositionTable tt(16);
 
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
-static void updateHistory(int &entry, int bonus) {
-    entry += bonus - entry * std::abs(bonus) / MAX_HISTORY;
-}
-
-static void updateContHistory(int16_t &entry, int bonus) {
-    entry += static_cast<int16_t>(bonus - entry * std::abs(bonus) / MAX_CONT_HISTORY);
+// Saturating gravity update used by every history table. The gravity term
+// pulls `entry` toward zero in proportion to its current magnitude; clamping
+// into `[-max, max]` prevents transient overshoot from runaway bonuses.
+template <typename T> static void applyHistoryBonus(T &entry, int bonus, int max) {
+    int updated = static_cast<int>(entry) + bonus - static_cast<int>(entry) * std::abs(bonus) / max;
+    if (updated > max)
+        updated = max;
+    else if (updated < -max)
+        updated = -max;
+    entry = static_cast<T>(updated);
 }
 
 // Tier offsets for multi-ply continuation history: 1-ply, 2-ply, and 4-ply back.
@@ -54,8 +58,8 @@ static void updateContHistoryAll(SearchState &state, int ply, PieceType currPt, 
         if (ply >= off) {
             PieceType prevPt = state.movedPiece[ply - off];
             int prevTo = state.moveStack[ply - off].to;
-            updateContHistory(state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo],
-                              bonus);
+            applyHistoryBonus(state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo],
+                              bonus, MAX_CONT_HISTORY);
         }
     }
 }
@@ -551,13 +555,14 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // Reward the capture that caused the cutoff
                 PieceType pt = board.squares[m.from].type;
                 PieceType ct = capturedType(board, m);
-                updateHistory(state.captureHistory[pt][m.to][ct], bonus);
+                applyHistoryBonus(state.captureHistory[pt][m.to][ct], bonus, MAX_HISTORY);
                 // Penalize previously searched captures
                 for (int i = 0; i < numSearchedCaptures; i++) {
                     const Move &prev = searchedCaptures[i];
                     PieceType prevPt = board.squares[prev.from].type;
                     PieceType prevCt = capturedType(board, prev);
-                    updateHistory(state.captureHistory[prevPt][prev.to][prevCt], -bonus);
+                    applyHistoryBonus(state.captureHistory[prevPt][prev.to][prevCt], -bonus,
+                                      MAX_HISTORY);
                 }
             } else {
                 // Killer move update
@@ -565,10 +570,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 state.killers[ply][0] = m;
                 // Butterfly history reward and continuation history reward
                 Color us = board.sideToMove;
-                updateHistory(state.historyTables->mainHistory[us][m.from][m.to], bonus);
+                applyHistoryBonus(state.historyTables->mainHistory[us][m.from][m.to], bonus,
+                                  MAX_HISTORY);
                 for (int i = 0; i < numSearchedQuiets; i++) {
                     const Move &prev = searchedQuiets[i];
-                    updateHistory(state.historyTables->mainHistory[us][prev.from][prev.to], -bonus);
+                    applyHistoryBonus(state.historyTables->mainHistory[us][prev.from][prev.to],
+                                      -bonus, MAX_HISTORY);
                 }
                 if (ply >= 1) {
                     PieceType prevPt = state.movedPiece[ply - 1];
