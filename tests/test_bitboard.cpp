@@ -1,6 +1,53 @@
 #include "bitboard.h"
 #include "catch_amalgamated.hpp"
 
+#include <random>
+
+namespace {
+
+// Straight-line reference attacks used to validate whichever indexing path
+// the runtime was compiled with (PEXT or magic multiply). A mismatch here
+// means the initialization populated the table at the wrong slot.
+Bitboard referenceRookAttacks(int sq, Bitboard occ) {
+    Bitboard attacks = 0;
+    int rank = squareRank(sq);
+    int file = squareFile(sq);
+    auto trace = [&](int dr, int df) {
+        for (int r = rank + dr, f = file + df; r >= 0 && r < 8 && f >= 0 && f < 8;
+             r += dr, f += df) {
+            Bitboard bb = squareBB(r * 8 + f);
+            attacks |= bb;
+            if (occ & bb) break;
+        }
+    };
+    trace(1, 0);
+    trace(-1, 0);
+    trace(0, 1);
+    trace(0, -1);
+    return attacks;
+}
+
+Bitboard referenceBishopAttacks(int sq, Bitboard occ) {
+    Bitboard attacks = 0;
+    int rank = squareRank(sq);
+    int file = squareFile(sq);
+    auto trace = [&](int dr, int df) {
+        for (int r = rank + dr, f = file + df; r >= 0 && r < 8 && f >= 0 && f < 8;
+             r += dr, f += df) {
+            Bitboard bb = squareBB(r * 8 + f);
+            attacks |= bb;
+            if (occ & bb) break;
+        }
+    };
+    trace(1, 1);
+    trace(1, -1);
+    trace(-1, 1);
+    trace(-1, -1);
+    return attacks;
+}
+
+} // namespace
+
 TEST_CASE("Knight attacks from center", "[bitboard][knight]") {
     initBitboards();
 
@@ -237,4 +284,27 @@ TEST_CASE("Board occupancy", "[bitboard]") {
     CHECK(popcount(black) == 16);
     CHECK((white & black) == 0);
     CHECK((white | black) == occ);
+}
+
+TEST_CASE("Sliding attack parity vs reference", "[bitboard][sliding]") {
+    initBitboards();
+
+    // Seeded so a failure on one worker reproduces on another. 256 random
+    // occupancies per square covers the blocker space densely enough to catch
+    // any off-by-one in the table init while keeping the run fast.
+    std::mt19937_64 rng(0xC0FFEEBABE1234ULL);
+    constexpr int kOccupanciesPerSquare = 256;
+
+    for (int sq = 0; sq < 64; sq++) {
+        for (int i = 0; i < kOccupanciesPerSquare; i++) {
+            Bitboard occ = rng();
+            CHECK(rookAttacks(sq, occ) == referenceRookAttacks(sq, occ));
+            CHECK(bishopAttacks(sq, occ) == referenceBishopAttacks(sq, occ));
+        }
+
+        // Also probe the empty-board case explicitly so regressions in the
+        // empty-index slot can't hide behind random noise.
+        CHECK(rookAttacks(sq, 0) == referenceRookAttacks(sq, 0));
+        CHECK(bishopAttacks(sq, 0) == referenceBishopAttacks(sq, 0));
+    }
 }

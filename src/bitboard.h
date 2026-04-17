@@ -4,6 +4,16 @@
 #include "board.h"
 #include <cstdint>
 
+// Use PEXT for sliding-attack indexing whenever the compiler target exposes
+// BMI2. ``NO_PEXT=1`` forces the scalar magic path even on a BMI2 host, which
+// matters on Zen1/Zen2 where PEXT is microcoded and slower than the multiply.
+#if defined(__BMI2__) && !defined(NO_PEXT)
+#define USE_PEXT 1
+#include <immintrin.h>
+#else
+#define USE_PEXT 0
+#endif
+
 using Bitboard = uint64_t;
 
 // File masks
@@ -88,11 +98,14 @@ inline Bitboard kingZoneBB(int kingSq, Color side) {
     return zone;
 }
 
-// Magic bitboard structures
+// Sliding-attack indexing metadata. Under PEXT we drop the magic multiplier
+// and the shift, leaving a 16-byte record that packs four-to-a-cache-line.
 struct Magic {
     Bitboard mask;
+#if !USE_PEXT
     Bitboard magic;
     int shift;
+#endif
     Bitboard *attacks;
 };
 
@@ -105,12 +118,20 @@ extern Bitboard BishopTable[5248];
 
 inline Bitboard rookAttacks(int sq, Bitboard occ) {
     const Magic &m = RookMagics[sq];
+#if USE_PEXT
+    return m.attacks[_pext_u64(occ, m.mask)];
+#else
     return m.attacks[((occ & m.mask) * m.magic) >> m.shift];
+#endif
 }
 
 inline Bitboard bishopAttacks(int sq, Bitboard occ) {
     const Magic &m = BishopMagics[sq];
+#if USE_PEXT
+    return m.attacks[_pext_u64(occ, m.mask)];
+#else
     return m.attacks[((occ & m.mask) * m.magic) >> m.shift];
+#endif
 }
 
 inline Bitboard queenAttacks(int sq, Bitboard occ) {

@@ -270,14 +270,22 @@ static void initMagics(Magic magics[], Bitboard table[], const Bitboard magicNum
     for (int sq = 0; sq < 64; sq++) {
         Magic &m = magics[sq];
         m.mask = maskFn(sq);
+#if !USE_PEXT
         m.magic = magicNumbers[sq];
         m.shift = 64 - bits[sq];
+#else
+        (void)magicNumbers; // unused under PEXT indexing
+#endif
         m.attacks = tablePtr;
 
         int numEntries = 1 << bits[sq];
         for (int i = 0; i < numEntries; i++) {
             Bitboard occ = indexToOccupancy(i, m.mask);
-            int index = static_cast<int>((occ * m.magic) >> m.shift);
+#if USE_PEXT
+            auto index = static_cast<size_t>(_pext_u64(occ, m.mask));
+#else
+            auto index = static_cast<size_t>((occ * m.magic) >> m.shift);
+#endif
             m.attacks[index] = attacksFn(sq, occ);
         }
 
