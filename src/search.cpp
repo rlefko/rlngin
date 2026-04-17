@@ -285,6 +285,7 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
         }
 
         UndoInfo undo = board.makeMove(m);
+        tt.prefetch(board.key);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
         if (state.stopped) return 0;
@@ -624,6 +625,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
 
         UndoInfo undo = board.makeMove(m);
+        tt.prefetch(board.key);
         bool givesCheck = isInCheck(board);
 
         // Check extension: extend checking PV moves. Take the max rather than
@@ -859,6 +861,10 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     state.bestMove = {0, 0, None};
     memset(state.killers, 0, sizeof(state.killers));
     state.positionHistory = positionHistory;
+
+    // Tag every store from this root search with a fresh generation so the
+    // aging replacement rule can discount entries from prior searches.
+    tt.new_search();
     state.searchKeys[0] = board.key;
     state.staticEvals[0] = evaluate(board);
     state.startTime = std::chrono::steady_clock::now();
