@@ -47,15 +47,17 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
     CHECK(evaluate(board) == 268);
 
-    // Knight on a1: material and PSQT plus mobility bonus for its two legal
-    // moves from the corner
+    // Knight on a1 versus a bare king is a textbook draw, so the endgame
+    // scale factor zeroes the eg half. Only the tapered middlegame
+    // contribution survives, which is small with phase=1 and no pieces
+    // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 675);
+    CHECK(evaluate(board) == 23);
 
-    // Bishop on a1: material, PSQT, square control, and bishop mobility
-    // along the long diagonal
+    // Bishop on a1 versus a bare king is likewise drawn, so the eg half
+    // is scaled to zero. The mg half still reflects material and PSTs.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 952);
+    CHECK(evaluate(board) == 39);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
@@ -691,6 +693,26 @@ TEST_CASE("Eval: blockaded passer scores worse than free passer", "[eval][passed
     int free = evaluate(board);
 
     CHECK(free > blocked);
+}
+
+TEST_CASE("Eval: opposite-colored bishops scale the endgame toward a draw",
+          "[eval][scale]") {
+    Board board;
+
+    // White has an extra pawn and both sides keep one bishop of opposite
+    // colors. The OCB scale factor should reduce the endgame component of
+    // White's advantage compared to the same material with same-color
+    // bishops (which would not scale).
+    board.setFen("4k3/8/5b2/4p3/4P3/5B2/4P3/4K3 w - - 0 1");
+    int ocbEval = evaluate(board);
+
+    // Same material profile with same-color bishops: both bishops sit on
+    // light squares so scaleFactor returns the default 64 and the eg
+    // component passes through unchanged.
+    board.setFen("4k3/8/b7/4p3/4P3/5B2/4P3/4K3 w - - 0 1");
+    int sameColorEval = evaluate(board);
+
+    CHECK(sameColorEval > ocbEval);
 }
 
 TEST_CASE("Eval: bishop blocked by same-color pawns is penalized", "[eval][bishop]") {

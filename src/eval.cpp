@@ -919,6 +919,48 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
     }
 }
 
+// Endgame scale factor in [0, 64]. Applied to the eg half of the tapered
+// score before blending with mg: at 64 the eg value passes through
+// unchanged, at 0 the eg contribution disappears entirely. Used to push
+// drawish endings (opposite-colored bishops, pawnless single minors)
+// toward zero so the engine does not chase illusory winning lines.
+static int scaleFactor(const Board &board) {
+    // Opposite-colored bishops: each side has exactly one bishop, on
+    // squares of opposite colors. Without other pieces they are a textbook
+    // draw; with rooks or minors they are still visibly drawish.
+    bool ocb = false;
+    if (board.pieceCount[White][Bishop] == 1 && board.pieceCount[Black][Bishop] == 1) {
+        Bitboard whiteBishop = board.byPiece[Bishop] & board.byColor[White];
+        Bitboard blackBishop = board.byPiece[Bishop] & board.byColor[Black];
+        bool whiteOnLight = (whiteBishop & LightSquaresBB) != 0;
+        bool blackOnLight = (blackBishop & LightSquaresBB) != 0;
+        ocb = (whiteOnLight != blackOnLight);
+    }
+
+    if (ocb) {
+        int nonBishopPieces = popcount(board.occupied) - popcount(board.byPiece[Pawn]) -
+                              popcount(board.byPiece[King]) - popcount(board.byPiece[Bishop]);
+        return (nonBishopPieces == 0) ? 22 : 36;
+    }
+
+    // Pawnless minor-only endings reduce to draws unless one side has a
+    // material excess of a rook or more. Kings-only positions fall through
+    // to the default scale because the PST ordering of king activity is
+    // still useful to the search even if the outcome is a formal draw.
+    if (!board.byPiece[Pawn]) {
+        int wMinors = board.pieceCount[White][Knight] + board.pieceCount[White][Bishop];
+        int bMinors = board.pieceCount[Black][Knight] + board.pieceCount[Black][Bishop];
+        int wMajors = board.pieceCount[White][Rook] + board.pieceCount[White][Queen];
+        int bMajors = board.pieceCount[Black][Rook] + board.pieceCount[Black][Queen];
+        bool onlyMinorsEachSide = wMajors == 0 && bMajors == 0;
+        if (onlyMinorsEachSide && wMinors <= 1 && bMinors <= 1 && (wMinors + bMinors) >= 1) {
+            return 0;
+        }
+    }
+
+    return 64;
+}
+
 // Reward pieces we attack with a less-valuable attacker, hanging pieces,
 // weak queens, and enemy pieces hit by a safe pawn push. Threat types are
 // indexed by the victim piece so lower-value attackers never double-count
@@ -1034,6 +1076,12 @@ int evaluate(const Board &board) {
 
     int mg = mg_value(total);
     int eg = eg_value(total);
+
+    // Drawish endings scale the endgame half toward zero before blending.
+    // This does not touch the middlegame side because the term is a pure
+    // endgame-drawishness correction; a 64/64 scale is a no-op.
+    int scale = scaleFactor(board);
+    eg = eg * scale / 64;
 
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
