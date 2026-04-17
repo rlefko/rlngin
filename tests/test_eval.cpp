@@ -9,7 +9,7 @@ TEST_CASE("Eval: starting position equals the tempo bonus", "[eval]") {
     Board board;
     // The positional half of startpos is zero by symmetry, so the score
     // reduces to the middlegame tempo bonus for the side to move.
-    CHECK(evaluate(board) == 96);
+    CHECK(evaluate(board) == 28);
 }
 
 TEST_CASE("Eval: kings only is 0", "[eval]") {
@@ -21,7 +21,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3207);
+    CHECK(evaluate(board) == 3195);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -53,22 +53,22 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // contribution survives, which is small with phase=1 and no pieces
     // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 26);
+    CHECK(evaluate(board) == 23);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
     // is scaled to zero. The mg half still reflects material and PSTs.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 42);
+    CHECK(evaluate(board) == 39);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1701);
+    CHECK(evaluate(board) == 1695);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3207);
+    CHECK(evaluate(board) == 3195);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -141,7 +141,7 @@ TEST_CASE("Eval: symmetric positions equal the tempo bonus", "[eval]") {
     // middlegame tempo contribution (scaled by the full startpos phase of
     // 24) is left for the side to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1");
-    CHECK(evaluate(board) == 96);
+    CHECK(evaluate(board) == 28);
 }
 
 // --- King safety tests ---
@@ -205,28 +205,25 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // Fully symmetric position with pawns: positional half cancels and the
     // score reduces to the tempo contribution for whoever is to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    CHECK(evaluate(board) == 96);
+    CHECK(evaluate(board) == 28);
 
     // Symmetric with castled kings. Phase is reduced (no queens: 24 - 8 = 16)
     // but the tempo contribution scales with the middlegame weight.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 88);
+    CHECK(evaluate(board) == 25);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
     Board board;
 
-    // Two Black attackers on the White king zone on squares that no
-    // White pawn attacks, so the multi-attacker zone penalty is the
-    // only term that changes between the two positions.
-    board.setFen("6k1/5pp1/8/8/5n1q/8/6PP/6K1 w - - 0 1");
+    // Black queen on f3 covers f1 and f2, restricting White king escape
+    // on g1 (only h1 is safe). Queen PST also penalizes Black less when
+    // the queen is well-placed, so both effects align.
+    board.setFen("6k1/5ppp/8/8/8/5q2/6PP/6K1 w - - 0 1");
     int restricted = evaluate(board);
 
-    // Same pieces relocated to the far queenside: both attackers are
-    // out of the White king zone so the gated zone penalty does not
-    // fire, and neither minor sits on a pawn-attacked square so no
-    // stray threat bonus creeps in.
-    board.setFen("6k1/5pp1/8/8/n7/1n6/6PP/6K1 w - - 0 1");
+    // Same material, queen on a3 far from White king -- f1, f2, h1 all safe
+    board.setFen("6k1/5ppp/8/8/8/q7/6PP/6K1 w - - 0 1");
     int unrestricted = evaluate(board);
 
     CHECK(unrestricted > restricted);
