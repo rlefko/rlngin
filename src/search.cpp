@@ -333,6 +333,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     if (depth <= 0) return quiescence(board, alpha, beta, ply, state);
 
+    // Internal iterative reduction: if we lack a TT move at a node deep enough
+    // to justify it, spend one ply less so the sibling search produces a TT
+    // move for the eventual re-visit. Applies at both PV and non-PV nodes.
+    if (depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
+        depth -= 1;
+    }
+
     // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
     std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
         return scoreMove(a, board, ttMove, ply, state) > scoreMove(b, board, ttMove, ply, state);
