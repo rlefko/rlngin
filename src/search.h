@@ -30,14 +30,14 @@ struct SearchState {
     int pvLength[MAX_PLY] = {};
     Move killers[MAX_PLY][2] = {};
     int captureHistory[7][64][7] = {};
-    int mainHistory[2][64][64] = {};
 
-    // Continuation history: [prev_piece][prev_to][curr_piece][curr_to]
-    // Heap-allocated to avoid stack overflow (~400KB)
-    struct ContHistoryTable {
-        int16_t data[7][64][7][64] = {};
+    // Heap-allocated history tables. Grouping the large tables keeps
+    // SearchState's stack footprint small and centralizes the clear path.
+    struct HistoryTables {
+        int mainHistory[2][64][64] = {};
+        int16_t contHistory[7][64][7][64] = {};
     };
-    std::unique_ptr<ContHistoryTable> contHistory = std::make_unique<ContHistoryTable>();
+    std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 
     Move moveStack[MAX_PLY] = {};
     PieceType movedPiece[MAX_PLY] = {};

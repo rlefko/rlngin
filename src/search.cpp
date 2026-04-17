@@ -86,11 +86,11 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
     }
 
     // Quiet moves: butterfly history plus continuation history
-    int score = state.mainHistory[board.sideToMove][m.from][m.to];
+    int score = state.historyTables->mainHistory[board.sideToMove][m.from][m.to];
     if (ply >= 1) {
         PieceType prevPt = state.movedPiece[ply - 1];
         int prevTo = state.moveStack[ply - 1].to;
-        score += state.contHistory->data[prevPt][prevTo][pt][m.to];
+        score += state.historyTables->contHistory[prevPt][prevTo][pt][m.to];
     }
 
     return score;
@@ -463,12 +463,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // board.sideToMove is the opponent here (the move has been played),
                 // so invert it to index the mover's butterfly slot.
                 Color mover = (board.sideToMove == White) ? Black : White;
-                int histScore = state.mainHistory[mover][m.from][m.to];
+                int histScore = state.historyTables->mainHistory[mover][m.from][m.to];
                 if (ply >= 1) {
                     PieceType prevPt = state.movedPiece[ply - 1];
                     int prevTo = state.moveStack[ply - 1].to;
                     PieceType currPt = state.movedPiece[ply];
-                    histScore += state.contHistory->data[prevPt][prevTo][currPt][m.to];
+                    histScore += state.historyTables->contHistory[prevPt][prevTo][currPt][m.to];
                 }
                 reduction -= histScore / 8192;
 
@@ -527,22 +527,23 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 state.killers[ply][0] = m;
                 // Butterfly history reward and continuation history reward
                 Color us = board.sideToMove;
-                updateHistory(state.mainHistory[us][m.from][m.to], bonus);
+                updateHistory(state.historyTables->mainHistory[us][m.from][m.to], bonus);
                 for (int i = 0; i < numSearchedQuiets; i++) {
                     const Move &prev = searchedQuiets[i];
-                    updateHistory(state.mainHistory[us][prev.from][prev.to], -bonus);
+                    updateHistory(state.historyTables->mainHistory[us][prev.from][prev.to], -bonus);
                 }
                 if (ply >= 1) {
                     PieceType prevPt = state.movedPiece[ply - 1];
                     int prevTo = state.moveStack[ply - 1].to;
                     PieceType currPt = board.squares[m.from].type;
-                    updateContHistory(state.contHistory->data[prevPt][prevTo][currPt][m.to], bonus);
+                    updateContHistory(
+                        state.historyTables->contHistory[prevPt][prevTo][currPt][m.to], bonus);
                     // Penalize previously searched quiets
                     for (int i = 0; i < numSearchedQuiets; i++) {
                         const Move &prev = searchedQuiets[i];
                         PieceType qPt = board.squares[prev.from].type;
-                        updateContHistory(state.contHistory->data[prevPt][prevTo][qPt][prev.to],
-                                          -bonus);
+                        updateContHistory(
+                            state.historyTables->contHistory[prevPt][prevTo][qPt][prev.to], -bonus);
                     }
                 }
             }
@@ -799,8 +800,9 @@ int getHashfull() {
 
 void clearHistory(SearchState &state) {
     memset(state.captureHistory, 0, sizeof(state.captureHistory));
-    memset(state.mainHistory, 0, sizeof(state.mainHistory));
-    memset(state.contHistory->data, 0, sizeof(state.contHistory->data));
+    if (state.historyTables) {
+        std::memset(state.historyTables.get(), 0, sizeof(SearchState::HistoryTables));
+    }
 }
 
 void initSearch() {
