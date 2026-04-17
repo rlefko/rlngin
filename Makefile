@@ -1,5 +1,12 @@
 CXX := g++
-CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -pthread
+
+# Release flags: aggressive inlining, LTO across TUs, and assertion removal.
+# Exceptions and RTTI are unused in this codebase, so disabling them shrinks
+# code size and gives the optimizer more headroom.
+CXXFLAGS := -std=c++17 -Wall -Wextra -O3 -DNDEBUG -fno-exceptions -fno-rtti \
+            -flto -pthread
+LDFLAGS := -flto
+
 SRCDIR := src
 BUILDDIR := build
 TARGET := $(BUILDDIR)/rlngin
@@ -36,7 +43,7 @@ build: $(TARGET)
 
 $(TARGET): $(OBJS)
 	@mkdir -p $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^
 
 $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
 	@mkdir -p $(BUILDDIR)
@@ -53,7 +60,7 @@ test: $(TEST_TARGET)
 
 $(TEST_TARGET): $(TEST_OBJS) $(CATCH2_OBJ) $(LIB_OBJS)
 	@mkdir -p $(BUILDDIR)
-	$(CXX) $(CXXFLAGS) -o $@ $^
+	$(CXX) $(CXXFLAGS) $(LDFLAGS) -o $@ $^
 
 $(BUILDDIR)/test_%.o: $(TESTDIR)/test_%.cpp $(CATCH2DIR)/catch_amalgamated.hpp
 	@mkdir -p $(BUILDDIR)
