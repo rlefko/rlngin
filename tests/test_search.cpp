@@ -3,6 +3,7 @@
 #include "catch_amalgamated.hpp"
 #include "movegen.h"
 #include "search.h"
+#include "search_params.h"
 
 static void ensureInit() {
     static bool done = false;
@@ -112,6 +113,41 @@ TEST_CASE("Search: qsearch prevents blundering into recapture", "[search][qsearc
     if (best.from == stringToSquare("e5") && best.to == stringToSquare("e6")) {
         CHECK(false);
     }
+}
+
+TEST_CASE("Search: NmpBase mutation changes node count", "[search][tunable]") {
+    ensureInit();
+    clearTT();
+
+    // Tactical midgame position deep enough for NMP to fire repeatedly.
+    // Without NMP actually reading searchParams.NmpBase, these two runs
+    // would be bit-identical, which is the regression this test guards.
+    const std::string fen = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4";
+
+    clearTT();
+    resetSearchParams();
+
+    Board boardA;
+    boardA.setFen(fen);
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState stateA;
+    startSearch(boardA, limits, stateA);
+    int64_t nodesDefault = stateA.nodes;
+
+    clearTT();
+    searchParams.NmpBase = 5;
+
+    Board boardB;
+    boardB.setFen(fen);
+    SearchState stateB;
+    startSearch(boardB, limits, stateB);
+    int64_t nodesTuned = stateB.nodes;
+
+    resetSearchParams();
+    clearTT();
+
+    CHECK(nodesDefault != nodesTuned);
 }
 
 TEST_CASE("Search: avoids unforced king walk from overstated king danger", "[search][kingsafety]") {
