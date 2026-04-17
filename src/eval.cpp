@@ -311,6 +311,43 @@ static const Score Hanging        = S(48, 30);
 static const Score WeakQueen      = S(41, 14);
 static const Score SafePawnPush   = S(32, 22);
 
+// --- Passed pawn refinements ---
+//
+// Applied on top of the rank-based PassedPawnBonus only for passers on
+// relative rank 4 or higher. These terms depend on king and piece squares
+// and so cannot be cached in the pawn hash; they run on the passer
+// bitboards the pawn hash returns. All four tables concentrate their
+// weight in the endgame because passed-pawn dynamics dominate endings.
+
+// Per rank distance bonus: scaled by the stop-square distance to each
+// king. Our king close to the stop square helps escort the pawn; the
+// enemy king close to it stops the push, so the sign is negated on that
+// half of the evaluation.
+static const Score PassedKingProxBonus[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 3), S(0, 5), S(0, 9), S(0, 14), S(0, 0),
+};
+static const Score PassedEnemyKingProxPenalty[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 4), S(0, 8), S(0, 13), S(0, 21), S(0, 0),
+};
+
+// Flat penalty per rank when an enemy piece sits on the stop square.
+static const Score PassedBlockedPenalty[8] = {
+    S(0, 0),    S(0, 0),    S(0, 0),     S(-5, -11), S(-11, -24),
+    S(-22, -48), S(-47, -97), S(0, 0),
+};
+
+// Flat bonus per rank when the stop square is empty and defended by one
+// of our non-pawn pieces so the push has real support behind it.
+static const Score PassedSupportedBonus[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(8, 16), S(16, 32), S(36, 70), S(72, 140), S(0, 0),
+};
+
+// Connected passers: two of our passers on adjacent files and adjacent
+// ranks. Counted once per pair by iterating from lower to higher file.
+static const Score ConnectedPassersBonus[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(5, 8), S(11, 22), S(24, 48), S(48, 97), S(0, 0),
+};
+
 // Two bishops together control complementary diagonals that no other piece
 // combination can cover, so the pair is worth noticeably more than the sum
 // of its parts. Slightly larger in the endgame where open diagonals matter
@@ -472,14 +509,19 @@ static void evaluateMaterial(const Board &board, Score outScores[2], int &outPha
     outPhase = phase;
 }
 
-static void evaluatePawns(const Board &board, Score &out) {
+static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
     int mgCached = 0, egCached = 0;
-    if (pawnHashTable.probe(board.pawnKey, mgCached, egCached)) {
+    Bitboard cachedWhitePassers = 0, cachedBlackPassers = 0;
+    if (pawnHashTable.probe(board.pawnKey, mgCached, egCached, cachedWhitePassers,
+                            cachedBlackPassers)) {
         out = S(mgCached, egCached);
+        passers[White] = cachedWhitePassers;
+        passers[Black] = cachedBlackPassers;
         return;
     }
 
     Score score = 0;
+    Bitboard whitePassers = 0, blackPassers = 0;
 
     Bitboard whitePawns = board.byPiece[Pawn] & board.byColor[White];
     Bitboard blackPawns = board.byPiece[Pawn] & board.byColor[Black];
@@ -494,7 +536,7 @@ static void evaluatePawns(const Board &board, Score &out) {
             int sq = popLsb(pawns);
             int r = squareRank(sq);
             int f = squareFile(sq);
-            int relativeRank = (c == White) ? r : (7 - r);
+            int relRank = (c == White) ? r : (7 - r);
 
             // Doubled pawn: another friendly pawn ahead on the same file
             bool isDoubled = (ForwardFileBB[c][sq] & ourPawns) != 0;
@@ -506,7 +548,9 @@ static void evaluatePawns(const Board &board, Score &out) {
             // and no friendly pawn ahead on the same file (rear doubled pawns
             // are not passed)
             if (!isDoubled && !(PassedPawnMask[c][sq] & theirPawns)) {
-                score += sign * PassedPawnBonus[relativeRank];
+                score += sign * PassedPawnBonus[relRank];
+                if (c == White) whitePassers |= squareBB(sq);
+                else blackPassers |= squareBB(sq);
             }
 
             // Isolated pawn: no friendly pawns on adjacent files
@@ -519,7 +563,7 @@ static void evaluatePawns(const Board &board, Score &out) {
             bool phalanx = (ourPawns & AdjacentFilesBB[f] & RankBB[r]) != 0;
             bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
             if (phalanx || defended) {
-                score += sign * ConnectedPawnBonus[relativeRank];
+                score += sign * ConnectedPawnBonus[relRank];
             }
 
             // Backward pawn: not connected, not isolated, all adjacent friendly pawns
@@ -536,7 +580,10 @@ static void evaluatePawns(const Board &board, Score &out) {
         }
     }
 
-    pawnHashTable.store(board.pawnKey, mg_value(score), eg_value(score));
+    pawnHashTable.store(board.pawnKey, mg_value(score), eg_value(score), whitePassers,
+                        blackPassers);
+    passers[White] = whitePassers;
+    passers[Black] = blackPassers;
     out = score;
 }
 
@@ -774,6 +821,76 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
     }
 }
 
+// Apply king-distance, blockade, support, and connected-passer bonuses
+// on top of the rank-based PassedPawnBonus. Iterates the cached passer
+// bitboards (which is why these terms live outside the pawn hash:
+// they depend on king and piece positions that are not part of the pawn
+// structure). Only passers on relative rank 4 or higher participate,
+// matching the entries in the bonus tables.
+static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
+                                     const Bitboard passers[2], Score scores[2]) {
+    Bitboard occ = board.occupied;
+
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Color them = static_cast<Color>(c ^ 1);
+
+        Bitboard ourPassers = passers[us];
+        if (!ourPassers) continue;
+
+        Bitboard ourKingBB = board.byPiece[King] & board.byColor[us];
+        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
+        int ourKingSq = ourKingBB ? lsb(ourKingBB) : -1;
+        int theirKingSq = theirKingBB ? lsb(theirKingBB) : -1;
+
+        Bitboard remaining = ourPassers;
+        while (remaining) {
+            int sq = popLsb(remaining);
+            int relRank = relativeRank(us, sq);
+            if (relRank < 3) continue;
+
+            int stopSq = (us == White) ? sq + 8 : sq - 8;
+            Bitboard stopBB = squareBB(stopSq);
+
+            if (ourKingSq >= 0) {
+                scores[us] += PassedKingProxBonus[relRank] * chebyshev(ourKingSq, stopSq);
+            }
+            if (theirKingSq >= 0) {
+                scores[us] -= PassedEnemyKingProxPenalty[relRank] * chebyshev(theirKingSq, stopSq);
+            }
+
+            bool stopEmpty = !(occ & stopBB);
+            if (!stopEmpty && (board.byColor[them] & stopBB)) {
+                scores[us] += PassedBlockedPenalty[relRank];
+            } else if (stopEmpty && (ctx.allAttacks[us] & stopBB)) {
+                scores[us] += PassedSupportedBonus[relRank];
+            }
+        }
+
+        // Connected passers: pair up passers on adjacent files and within
+        // one rank of each other. Count each pair once by requiring the
+        // partner to be on a higher file than the iterator.
+        Bitboard pairIter = ourPassers;
+        while (pairIter) {
+            int sq = popLsb(pairIter);
+            int f = squareFile(sq);
+            int r = squareRank(sq);
+            int relRank = relativeRank(us, sq);
+            if (relRank < 3) continue;
+            if (f >= 7) continue;
+
+            Bitboard neighborMask = FileBB[f + 1];
+            Bitboard partners = ourPassers & neighborMask;
+            for (int rr = std::max(0, r - 1); rr <= std::min(7, r + 1); rr++) {
+                if (partners & RankBB[rr]) {
+                    scores[us] += ConnectedPassersBonus[relRank];
+                    break;
+                }
+            }
+        }
+    }
+}
+
 // Reward pieces we attack with a less-valuable attacker, hanging pieces,
 // weak queens, and enemy pieces hit by a safe pawn push. Threat types are
 // indexed by the victim piece so lower-value attackers never double-count
@@ -867,7 +984,8 @@ int evaluate(const Board &board) {
     scores[Black] += matScores[Black];
 
     Score pawnScore = 0;
-    evaluatePawns(board, pawnScore);
+    Bitboard passers[2] = {0, 0};
+    evaluatePawns(board, pawnScore, passers);
 
     EvalContext ctx;
     Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
@@ -879,6 +997,7 @@ int evaluate(const Board &board) {
     buildAttackMaps(board, ctx);
 
     evaluatePieces(board, ctx, scores);
+    evaluatePassedPawnExtras(board, ctx, passers, scores);
     evaluateThreats(board, ctx, scores);
     evaluateSpace(board, ctx, scores);
     evaluateKingSafety(board, ctx, scores);

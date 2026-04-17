@@ -676,6 +676,38 @@ TEST_CASE("Eval: hanging piece penalizes the side whose piece hangs", "[eval][th
     CHECK(knightHangs > knightDefended);
 }
 
+// --- Passed pawn refinements ---
+
+TEST_CASE("Eval: blockaded passer scores worse than free passer", "[eval][passed]") {
+    Board board;
+
+    // White passed pawn on e6 with a black knight blockading on e7. The
+    // blockade penalty should make this worse for White than the same
+    // passer with the stop square clear.
+    board.setFen("4k3/4n3/4P3/8/8/8/8/4K3 w - - 0 1");
+    int blocked = evaluate(board);
+
+    board.setFen("3nk3/8/4P3/8/8/8/8/4K3 w - - 0 1");
+    int free = evaluate(board);
+
+    CHECK(free > blocked);
+}
+
+TEST_CASE("Eval: our king close to advanced passer is preferred", "[eval][passed]") {
+    Board board;
+
+    // White passer on e6 with our king nearby at e5 vs the same passer
+    // with our king stranded at a1. The endgame king-proximity term
+    // should favor the close king variant.
+    board.setFen("4k3/8/4P3/4K3/8/8/8/8 w - - 0 1");
+    int kingClose = evaluate(board);
+
+    board.setFen("4k3/8/4P3/8/8/8/8/K7 w - - 0 1");
+    int kingFar = evaluate(board);
+
+    CHECK(kingClose > kingFar);
+}
+
 TEST_CASE("Eval: rook attacking enemy queen earns a threat bonus", "[eval][threats]") {
     Board board;
 
