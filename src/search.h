@@ -35,6 +35,7 @@ struct SearchState {
     // SearchState's stack footprint small and centralizes the clear path.
     struct HistoryTables {
         int mainHistory[2][64][64] = {};
+        Move counterMoves[2][7][64] = {};
         int16_t contHistory[7][64][7][64] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();

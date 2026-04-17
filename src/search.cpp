@@ -85,6 +85,17 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         }
     }
 
+    // Counter-move: the quiet reply that previously refuted the prior move
+    if (ply >= 1) {
+        Color prevColor = (board.sideToMove == White) ? Black : White;
+        PieceType prevPt = state.movedPiece[ply - 1];
+        int prevTo = state.moveStack[ply - 1].to;
+        const Move &counter = state.historyTables->counterMoves[prevColor][prevPt][prevTo];
+        if (m.from == counter.from && m.to == counter.to && m.promotion == counter.promotion) {
+            return 3500000;
+        }
+    }
+
     // Quiet moves: butterfly history plus continuation history
     int score = state.historyTables->mainHistory[board.sideToMove][m.from][m.to];
     if (ply >= 1) {
@@ -536,6 +547,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     PieceType prevPt = state.movedPiece[ply - 1];
                     int prevTo = state.moveStack[ply - 1].to;
                     PieceType currPt = board.squares[m.from].type;
+                    Color prevColor = (us == White) ? Black : White;
+                    state.historyTables->counterMoves[prevColor][prevPt][prevTo] = m;
                     updateContHistory(
                         state.historyTables->contHistory[prevPt][prevTo][currPt][m.to], bonus);
                     // Penalize previously searched quiets
