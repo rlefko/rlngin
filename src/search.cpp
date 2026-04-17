@@ -549,7 +549,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     // Restricted singular extensions: if the TT move is much better than all
-    // alternatives, extend its search by one ply to resolve critical lines
+    // alternatives, extend its search by one ply to resolve critical lines.
+    // When it dominates them by a wide margin, trust the TT move even more and
+    // extend by two plies. The doubled extension is gated off the PV so the
+    // principal variation never compounds extensions past a per-path budget,
+    // and the margin is depth-scaled so deeper singular tests require a wider
+    // failure before earning the second ply.
     int singularExtension = 0;
     if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove && ttMove.from != 0 &&
         ttEntry.depth >= depth - 3 &&
@@ -564,6 +569,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
+            int doubleMargin = depth * 2;
+            if (!pvNode && singularScore < singularBeta - doubleMargin) {
+                singularExtension = 2;
+            }
         }
     }
 
