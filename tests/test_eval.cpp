@@ -768,12 +768,30 @@ TEST_CASE("Eval: rook on the seventh with pawns to chew earns a bonus", "[eval][
     CHECK(rookOn7th > rookOnBack);
 }
 
+TEST_CASE("Eval: enemy king far from passer is preferred", "[eval][passed]") {
+    Board board;
+
+    // White passer on e6 with both kings on the same rank. Our king
+    // position is held constant so its PST does not vary between
+    // positions; only the enemy king's distance to the e7 stop square
+    // changes. The buggy version of the king-proximity term rewarded
+    // the enemy king being close, so this test fails unless the sign
+    // is correct.
+    board.setFen("4k3/8/4P3/8/4K3/8/8/8 w - - 0 1");
+    int enemyClose = evaluate(board);
+
+    board.setFen("k7/8/4P3/8/4K3/8/8/8 w - - 0 1");
+    int enemyFar = evaluate(board);
+
+    CHECK(enemyFar > enemyClose);
+}
+
 TEST_CASE("Eval: our king close to advanced passer is preferred", "[eval][passed]") {
     Board board;
 
     // White passer on e6 with our king nearby at e5 vs the same passer
     // with our king stranded at a1. The endgame king-proximity term
-    // should favor the close king variant.
+    // combined with king PST should both favor the close king.
     board.setFen("4k3/8/4P3/4K3/8/8/8/8 w - - 0 1");
     int kingClose = evaluate(board);
 

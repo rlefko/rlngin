@@ -887,11 +887,18 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
             int stopSq = (us == White) ? sq + 8 : sq - 8;
             Bitboard stopBB = squareBB(stopSq);
 
+            // Our king close to the stop square helps escort the passer, so
+            // the bonus grows as chebyshev distance shrinks. Enemy king
+            // close threatens to blockade, so the penalty grows the same
+            // way. Use (7 - distance) so the tables read as "per step of
+            // closeness" rather than "per step of remoteness".
             if (ourKingSq >= 0) {
-                scores[us] += PassedKingProxBonus[relRank] * chebyshev(ourKingSq, stopSq);
+                int closeness = 7 - chebyshev(ourKingSq, stopSq);
+                scores[us] += PassedKingProxBonus[relRank] * closeness;
             }
             if (theirKingSq >= 0) {
-                scores[us] -= PassedEnemyKingProxPenalty[relRank] * chebyshev(theirKingSq, stopSq);
+                int closeness = 7 - chebyshev(theirKingSq, stopSq);
+                scores[us] -= PassedEnemyKingProxPenalty[relRank] * closeness;
             }
 
             bool stopEmpty = !(occ & stopBB);
@@ -903,22 +910,26 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
         }
 
         // Connected passers: pair up passers on adjacent files and within
-        // one rank of each other. Count each pair once by requiring the
-        // partner to be on a higher file than the iterator.
+        // one rank of each other. Iterate over every passer (even below
+        // the bonus-eligible rank) so pairs where one side is just under
+        // the threshold are still credited against the higher-ranked
+        // member. Looking only at file+1 keeps each pair counted once.
         Bitboard pairIter = ourPassers;
         while (pairIter) {
             int sq = popLsb(pairIter);
             int f = squareFile(sq);
             int r = squareRank(sq);
-            int relRank = relativeRank(us, sq);
-            if (relRank < 3) continue;
             if (f >= 7) continue;
 
             Bitboard neighborMask = FileBB[f + 1];
             Bitboard partners = ourPassers & neighborMask;
             for (int rr = std::max(0, r - 1); rr <= std::min(7, r + 1); rr++) {
-                if (partners & RankBB[rr]) {
-                    scores[us] += ConnectedPassersBonus[relRank];
+                if (Bitboard hit = partners & RankBB[rr]) {
+                    int partnerSq = lsb(hit);
+                    int higherRelRank = std::max(relativeRank(us, sq), relativeRank(us, partnerSq));
+                    if (higherRelRank >= 3) {
+                        scores[us] += ConnectedPassersBonus[higherRelRank];
+                    }
                     break;
                 }
             }
