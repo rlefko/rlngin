@@ -31,17 +31,30 @@ struct SearchState {
     Move killers[MAX_PLY][2] = {};
     int captureHistory[7][64][7] = {};
 
-    // Continuation history: [prev_piece][prev_to][curr_piece][curr_to]
-    // Heap-allocated to avoid stack overflow (~400KB)
-    struct ContHistoryTable {
-        int16_t data[7][64][7][64] = {};
+    // Heap-allocated history tables. Grouping the large tables keeps
+    // SearchState's stack footprint small and centralizes the clear path.
+    struct HistoryTables {
+        int mainHistory[2][64][64] = {};
+        Move counterMoves[2][7][64] = {};
+        // contHistory[tier][prevPt][prevTo][currPt][currTo] where tier 0 is
+        // 1-ply back, tier 1 is 2-ply back, tier 2 is 4-ply back.
+        int16_t contHistory[3][7][64][7][64] = {};
+        // Pawn-keyed static eval correction: `[color][pawnKey % N]`. The signal
+        // here is that for a given pawn structure, the search score tends to
+        // diverge from the static eval in a particular direction.
+        int16_t pawnCorrHist[2][16384] = {};
     };
-    std::unique_ptr<ContHistoryTable> contHistory = std::make_unique<ContHistoryTable>();
+    std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 
     Move moveStack[MAX_PLY] = {};
     PieceType movedPiece[MAX_PLY] = {};
     int staticEvals[MAX_PLY] = {};
     uint64_t searchKeys[MAX_PLY] = {};
+    // Running count of extensions accumulated from root down to this ply.
+    // Used to cap total extensions per search path so forcing lines cannot
+    // indefinitely expand the tree.
+    int extensionsOnPath[MAX_PLY] = {};
+    int rootDepth = 0;
     std::vector<uint64_t> positionHistory;
     std::chrono::steady_clock::time_point startTime;
     int64_t allocatedTimeMs = 0;
