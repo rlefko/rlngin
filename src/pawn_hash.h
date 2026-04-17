@@ -6,6 +6,7 @@
 
 struct PawnHashEntry {
     uint64_t key = 0;
+    uint64_t passers[2] = {0, 0};
     int16_t mgScore = 0;
     int16_t egScore = 0;
 };
@@ -17,8 +18,9 @@ class PawnHashTable {
     void resize(size_t size_mb);
     void clear();
 
-    void store(uint64_t key, int mg, int eg);
-    bool probe(uint64_t key, int &mg, int &eg) const;
+    void store(uint64_t key, int mg, int eg, uint64_t whitePassers, uint64_t blackPassers);
+    bool probe(uint64_t key, int &mg, int &eg, uint64_t &whitePassers,
+               uint64_t &blackPassers) const;
 
   private:
     std::vector<PawnHashEntry> table_;

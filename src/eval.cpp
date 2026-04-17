@@ -6,6 +6,7 @@
 #include "zobrist.h"
 
 #include <algorithm>
+#include <iomanip>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
 const int PieceValue[] = {0, 198, 817, 836, 1270, 2521, 20000};
@@ -177,12 +178,23 @@ static const Score MobilityBonus[7][28] = {
 static const Score RookOpenFileBonus     = S(109, 55);
 static const Score RookSemiOpenFileBonus = S( 48, 19);
 
+// Rook on the seventh rank: awarded when the rook occupies relative rank
+// 7 and either the enemy king is trapped on its back rank or there are
+// enemy pawns on the seventh for the rook to gobble. The endgame value
+// is richer because a rook on the seventh usually wins pawns over time.
+static const Score RookOn7thBonus = S(29, 55);
+
 // Minor-piece outpost bonuses. A knight or bishop is on an outpost when it
 // sits on a relative rank 4-6 square that is defended by a friendly pawn
 // and can no longer be challenged by an enemy pawn push. Knights benefit
 // more than bishops because bishops see through the square anyway.
 static const Score KnightOutpostBonus = S(72, 55);
 static const Score BishopOutpostBonus = S(43, 22);
+
+// Bad bishop: every friendly pawn sharing the bishop's color blocks its
+// diagonals, so the bishop plays behind its own pawn chain. Penalty is
+// linear in the number of matching-color own pawns.
+static const Score BadBishopPenalty = S(-5, -7);
 
 // Penalty for a rook shut in on the same side of the board as its own king
 // when the rook has little room to breathe. Pure middlegame concern; in the
@@ -283,6 +295,74 @@ static const Score IsolatedPawnPenalty = S(-36, -55);
 static const Score DoubledPawnPenalty = S(-24, -55);
 static const Score BackwardPawnPenalty = S(-24, -41);
 
+// Side-to-move tempo bonus. Only the middlegame value is non-zero because
+// the endgame value of a free move is folded into the tempo-independent
+// position once material dwindles and zugzwang starts to matter.
+static const Score Tempo = S(28, 0);
+
+// --- Threat constants ---
+//
+// Threats reward attacks from a less valuable piece onto a more valuable
+// one. Indexed by the victim's piece type so a minor cannot claim a
+// "threat on minor" and a rook cannot claim a "threat on rook". The
+// ThreatByKing, Hanging, WeakQueen, and SafePawnPush terms are flat per
+// affected piece / occurrence.
+
+// Threat values trimmed roughly 20 percent below the initial Stockfish
+// transliteration so they do not overwhelm pre-tuned PST and mobility
+// signal. A full joint tune is a follow-up; these softer values keep
+// threats useful without dominating the evaluator.
+static const Score ThreatByPawn = S(65, 100);
+
+static const Score ThreatByMinor[7] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(33, 44), S(70, 88), S(0, 0),
+};
+
+static const Score ThreatByRook[7] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(70, 66), S(0, 0),
+};
+
+static const Score ThreatByKing = S(44, 48);
+static const Score Hanging = S(36, 22);
+static const Score WeakQueen = S(32, 11);
+static const Score SafePawnPush = S(26, 18);
+
+// --- Passed pawn refinements ---
+//
+// Applied on top of the rank-based PassedPawnBonus only for passers on
+// relative rank 4 or higher. These terms depend on king and piece squares
+// and so cannot be cached in the pawn hash; they run on the passer
+// bitboards the pawn hash returns. All four tables concentrate their
+// weight in the endgame because passed-pawn dynamics dominate endings.
+
+// Per rank distance bonus: scaled by the stop-square distance to each
+// king. Our king close to the stop square helps escort the pawn; the
+// enemy king close to it stops the push, so the sign is negated on that
+// half of the evaluation.
+static const Score PassedKingProxBonus[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 3), S(0, 5), S(0, 9), S(0, 14), S(0, 0),
+};
+static const Score PassedEnemyKingProxPenalty[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(0, 4), S(0, 8), S(0, 13), S(0, 21), S(0, 0),
+};
+
+// Flat penalty per rank when an enemy piece sits on the stop square.
+static const Score PassedBlockedPenalty[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(-5, -11), S(-11, -24), S(-22, -48), S(-47, -97), S(0, 0),
+};
+
+// Flat bonus per rank when the stop square is empty and defended by one
+// of our non-pawn pieces so the push has real support behind it.
+static const Score PassedSupportedBonus[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(8, 16), S(16, 32), S(36, 70), S(72, 140), S(0, 0),
+};
+
+// Connected passers: two of our passers on adjacent files and adjacent
+// ranks. Counted once per pair by iterating from lower to higher file.
+static const Score ConnectedPassersBonus[8] = {
+    S(0, 0), S(0, 0), S(0, 0), S(5, 8), S(11, 22), S(24, 48), S(48, 97), S(0, 0),
+};
+
 // Two bishops together control complementary diagonals that no other piece
 // combination can cover, so the pair is worth noticeably more than the sum
 // of its parts. Slightly larger in the endgame where open diagonals matter
@@ -338,11 +418,17 @@ static int imbalance(const int pc[2][6], int us) {
     return bonus / 16;
 }
 
-// Per-evaluation derived context: enemy-pawn attack maps and mobility-area
-// bitboards reused by every piece-activity term.
+// Per-evaluation derived context: precomputed attack maps and mobility
+// area bitboards shared across every piece-activity term. `attackedBy`
+// is indexed by [color][piece type] (King slot populated for completeness).
+// `attackedBy2` is the squares attacked by at least two of that color's
+// pieces, which threats and later king-safety terms consume directly.
 struct EvalContext {
     Bitboard pawnAttacks[2];
     Bitboard mobilityArea[2];
+    Bitboard attackedBy[2][7];
+    Bitboard attackedBy2[2];
+    Bitboard allAttacks[2];
 };
 
 static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
@@ -350,6 +436,81 @@ static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
         return ((pawns & ~FileABB) << 7) | ((pawns & ~FileHBB) << 9);
     }
     return ((pawns & ~FileABB) >> 9) | ((pawns & ~FileHBB) >> 7);
+}
+
+// Populate per-side attack maps by piece type plus the aggregate
+// allAttacks and attackedBy2 bitboards. attackedBy2 must track squares
+// hit by two or more distinct pieces of the same color -- including
+// two pieces of the same type (for example two rooks converging on
+// the enemy queen) -- so it is accumulated per individual piece
+// rather than per piece-type union.
+static void buildAttackMaps(const Board &board, EvalContext &ctx) {
+    Bitboard occ = board.occupied;
+    for (int c = 0; c < 2; c++) {
+        for (int pt = 0; pt < 7; pt++)
+            ctx.attackedBy[c][pt] = 0;
+
+        Bitboard all = 0;
+        Bitboard two = 0;
+
+        // Pawns: split the capture halves so squares hit by both
+        // diagonals land in attackedBy2 from the first step.
+        Bitboard pawns = board.byPiece[Pawn] & board.byColor[c];
+        Bitboard pawnLeft, pawnRight;
+        if (c == White) {
+            pawnLeft = (pawns & ~FileABB) << 7;
+            pawnRight = (pawns & ~FileHBB) << 9;
+        } else {
+            pawnLeft = (pawns & ~FileABB) >> 9;
+            pawnRight = (pawns & ~FileHBB) >> 7;
+        }
+        ctx.attackedBy[c][Pawn] = pawnLeft | pawnRight;
+        two |= pawnLeft & pawnRight;
+        all = ctx.attackedBy[c][Pawn];
+
+        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
+        if (kingBB) {
+            Bitboard ka = KingAttacks[lsb(kingBB)];
+            ctx.attackedBy[c][King] = ka;
+            two |= all & ka;
+            all |= ka;
+        }
+
+        Bitboard pieces = board.byPiece[Knight] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = KnightAttacks[popLsb(pieces)];
+            ctx.attackedBy[c][Knight] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
+        pieces = board.byPiece[Bishop] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = bishopAttacks(popLsb(pieces), occ);
+            ctx.attackedBy[c][Bishop] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
+        pieces = board.byPiece[Rook] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = rookAttacks(popLsb(pieces), occ);
+            ctx.attackedBy[c][Rook] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
+        pieces = board.byPiece[Queen] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = queenAttacks(popLsb(pieces), occ);
+            ctx.attackedBy[c][Queen] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
+        ctx.allAttacks[c] = all;
+        ctx.attackedBy2[c] = two;
+    }
 }
 
 static PawnHashTable pawnHashTable(2);
@@ -399,14 +560,19 @@ static void evaluateMaterial(const Board &board, Score outScores[2], int &outPha
     outPhase = phase;
 }
 
-static void evaluatePawns(const Board &board, Score &out) {
+static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
     int mgCached = 0, egCached = 0;
-    if (pawnHashTable.probe(board.pawnKey, mgCached, egCached)) {
+    Bitboard cachedWhitePassers = 0, cachedBlackPassers = 0;
+    if (pawnHashTable.probe(board.pawnKey, mgCached, egCached, cachedWhitePassers,
+                            cachedBlackPassers)) {
         out = S(mgCached, egCached);
+        passers[White] = cachedWhitePassers;
+        passers[Black] = cachedBlackPassers;
         return;
     }
 
     Score score = 0;
+    Bitboard whitePassers = 0, blackPassers = 0;
 
     Bitboard whitePawns = board.byPiece[Pawn] & board.byColor[White];
     Bitboard blackPawns = board.byPiece[Pawn] & board.byColor[Black];
@@ -421,7 +587,7 @@ static void evaluatePawns(const Board &board, Score &out) {
             int sq = popLsb(pawns);
             int r = squareRank(sq);
             int f = squareFile(sq);
-            int relativeRank = (c == White) ? r : (7 - r);
+            int relRank = (c == White) ? r : (7 - r);
 
             // Doubled pawn: another friendly pawn ahead on the same file
             bool isDoubled = (ForwardFileBB[c][sq] & ourPawns) != 0;
@@ -433,7 +599,11 @@ static void evaluatePawns(const Board &board, Score &out) {
             // and no friendly pawn ahead on the same file (rear doubled pawns
             // are not passed)
             if (!isDoubled && !(PassedPawnMask[c][sq] & theirPawns)) {
-                score += sign * PassedPawnBonus[relativeRank];
+                score += sign * PassedPawnBonus[relRank];
+                if (c == White)
+                    whitePassers |= squareBB(sq);
+                else
+                    blackPassers |= squareBB(sq);
             }
 
             // Isolated pawn: no friendly pawns on adjacent files
@@ -446,7 +616,7 @@ static void evaluatePawns(const Board &board, Score &out) {
             bool phalanx = (ourPawns & AdjacentFilesBB[f] & RankBB[r]) != 0;
             bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
             if (phalanx || defended) {
-                score += sign * ConnectedPawnBonus[relativeRank];
+                score += sign * ConnectedPawnBonus[relRank];
             }
 
             // Backward pawn: not connected, not isolated, all adjacent friendly pawns
@@ -463,7 +633,10 @@ static void evaluatePawns(const Board &board, Score &out) {
         }
     }
 
-    pawnHashTable.store(board.pawnKey, mg_value(score), eg_value(score));
+    pawnHashTable.store(board.pawnKey, mg_value(score), eg_value(score), whitePassers,
+                        blackPassers);
+    passers[White] = whitePassers;
+    passers[Black] = blackPassers;
     out = score;
 }
 
@@ -502,6 +675,11 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 !(PawnSpanMask[c][sq] & theirPawns)) {
                 scores[c] += BishopOutpostBonus;
             }
+
+            Bitboard sameColorSquares =
+                (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
+            int blockingPawns = popcount(ourPawns & sameColorSquares);
+            scores[c] += BadBishopPenalty * blockingPawns;
         }
 
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];
@@ -523,6 +701,18 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += RookOpenFileBonus;
             } else if (noOurPawns) {
                 scores[c] += RookSemiOpenFileBonus;
+            }
+
+            // Rook on the seventh: either targets enemy pawns on the 7th
+            // or pins the enemy king on the 8th. Both conditions generate
+            // most of the classical "pig on the seventh" pressure.
+            if (relativeRank(c, sq) == 6) {
+                Bitboard seventhRankMask = (c == White) ? Rank7BB : Rank2BB;
+                Bitboard eighthRankMask = (c == White) ? Rank8BB : Rank1BB;
+                Bitboard theirKingBB = board.byPiece[King] & board.byColor[c ^ 1];
+                if ((theirKingBB & eighthRankMask) || (theirPawns & seventhRankMask)) {
+                    scores[c] += RookOn7thBonus;
+                }
             }
 
             // Trapped rook: little room to move and our king is on the same
@@ -579,7 +769,7 @@ static void evaluateSpace(const Board &board, const EvalContext &ctx, Score scor
     }
 }
 
-static void evaluateKingSafety(const Board &board, Score scores[2]) {
+static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score scores[2]) {
     Bitboard occ = board.occupied;
 
     for (int c = 0; c < 2; c++) {
@@ -610,11 +800,11 @@ static void evaluateKingSafety(const Board &board, Score scores[2]) {
             // no separate penalty is applied here.
             if (ourPawnsOnFile) {
                 int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
-                int relativeRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
 
-                if (relativeRank == 1) {
+                if (relRank == 1) {
                     scores[us] += PawnShieldBonus[0];
-                } else if (relativeRank == 2) {
+                } else if (relRank == 2) {
                     scores[us] += PawnShieldBonus[1];
                 }
             }
@@ -635,91 +825,46 @@ static void evaluateKingSafety(const Board &board, Score scores[2]) {
             }
         }
 
-        // King zone attack evaluation
+        // King zone attack evaluation. Enemy attacks are precomputed in
+        // ctx.allAttacks[them]; we still iterate enemy pieces to count how
+        // many distinct attackers reach the zone and sum their attack units.
         Bitboard kZone = kingZoneBB(kingSq, us);
         int attackerCount = 0;
         int attackUnits = 0;
         bool attackingQueenPresent = false;
 
-        // Accumulate all enemy attacks for square control evaluation
-        Bitboard enemyAttacks = 0;
-
-        // Enemy pawn attacks
-        if (them == White) {
-            enemyAttacks |= ((theirPawns & ~FileHBB) << 9) | ((theirPawns & ~FileABB) << 7);
-        } else {
-            enemyAttacks |= ((theirPawns & ~FileABB) >> 9) | ((theirPawns & ~FileHBB) >> 7);
-        }
-
-        // Enemy king attacks
-        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
-        if (theirKingBB) enemyAttacks |= KingAttacks[lsb(theirKingBB)];
-
         Bitboard theirKnights = board.byPiece[Knight] & board.byColor[them];
         while (theirKnights) {
-            int sq = popLsb(theirKnights);
-            Bitboard atk = KnightAttacks[sq];
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (KnightAttacks[popLsb(theirKnights)] & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Knight];
             }
         }
-
         Bitboard theirBishops = board.byPiece[Bishop] & board.byColor[them];
         while (theirBishops) {
-            int sq = popLsb(theirBishops);
-            Bitboard atk = bishopAttacks(sq, occ);
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (bishopAttacks(popLsb(theirBishops), occ) & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Bishop];
             }
         }
-
         Bitboard theirRooks = board.byPiece[Rook] & board.byColor[them];
         while (theirRooks) {
-            int sq = popLsb(theirRooks);
-            Bitboard atk = rookAttacks(sq, occ);
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (rookAttacks(popLsb(theirRooks), occ) & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Rook];
             }
         }
-
         Bitboard theirQueens = board.byPiece[Queen] & board.byColor[them];
         while (theirQueens) {
-            int sq = popLsb(theirQueens);
-            Bitboard atk = queenAttacks(sq, occ);
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (queenAttacks(popLsb(theirQueens), occ) & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Queen];
                 attackingQueenPresent = true;
             }
         }
 
-        // Build friendly defense map from all our pieces -- reused by both
-        // the undefended-square term and the gated safe-square term
-        Bitboard friendlyDefense = KingAttacks[kingSq];
-        if (us == White) {
-            friendlyDefense |= ((ourPawns & ~FileHBB) << 9) | ((ourPawns & ~FileABB) << 7);
-        } else {
-            friendlyDefense |= ((ourPawns & ~FileABB) >> 9) | ((ourPawns & ~FileHBB) >> 7);
-        }
-        Bitboard ourKnights = board.byPiece[Knight] & board.byColor[us];
-        while (ourKnights)
-            friendlyDefense |= KnightAttacks[popLsb(ourKnights)];
-        Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
-        while (ourBishops)
-            friendlyDefense |= bishopAttacks(popLsb(ourBishops), occ);
-        Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
-        while (ourRooks)
-            friendlyDefense |= rookAttacks(popLsb(ourRooks), occ);
-        Bitboard ourQueens = board.byPiece[Queen] & board.byColor[us];
-        while (ourQueens)
-            friendlyDefense |= queenAttacks(popLsb(ourQueens), occ);
+        Bitboard enemyAttacks = ctx.allAttacks[them];
+        Bitboard friendlyDefense = ctx.allAttacks[us];
 
         // Undefended zone squares -- self-regulating: with no enemy piece
         // attacking the zone this contributes zero, so no gate is needed
@@ -746,6 +891,222 @@ static void evaluateKingSafety(const Board &board, Score scores[2]) {
     }
 }
 
+// Apply king-distance, blockade, support, and connected-passer bonuses
+// on top of the rank-based PassedPawnBonus. Iterates the cached passer
+// bitboards (which is why these terms live outside the pawn hash:
+// they depend on king and piece positions that are not part of the pawn
+// structure). Only passers on relative rank 4 or higher participate,
+// matching the entries in the bonus tables.
+static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
+                                     const Bitboard passers[2], Score scores[2]) {
+    Bitboard occ = board.occupied;
+
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Color them = static_cast<Color>(c ^ 1);
+
+        Bitboard ourPassers = passers[us];
+        if (!ourPassers) continue;
+
+        Bitboard ourKingBB = board.byPiece[King] & board.byColor[us];
+        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
+        int ourKingSq = ourKingBB ? lsb(ourKingBB) : -1;
+        int theirKingSq = theirKingBB ? lsb(theirKingBB) : -1;
+
+        Bitboard remaining = ourPassers;
+        while (remaining) {
+            int sq = popLsb(remaining);
+            int relRank = relativeRank(us, sq);
+            if (relRank < 3) continue;
+
+            int stopSq = (us == White) ? sq + 8 : sq - 8;
+            Bitboard stopBB = squareBB(stopSq);
+
+            // Our king close to the stop square helps escort the passer, so
+            // the bonus grows as chebyshev distance shrinks. Enemy king
+            // close threatens to blockade, so the penalty grows the same
+            // way. Use (7 - distance) so the tables read as "per step of
+            // closeness" rather than "per step of remoteness".
+            if (ourKingSq >= 0) {
+                int closeness = 7 - chebyshev(ourKingSq, stopSq);
+                scores[us] += PassedKingProxBonus[relRank] * closeness;
+            }
+            if (theirKingSq >= 0) {
+                int closeness = 7 - chebyshev(theirKingSq, stopSq);
+                scores[us] -= PassedEnemyKingProxPenalty[relRank] * closeness;
+            }
+
+            bool stopEmpty = !(occ & stopBB);
+            if (!stopEmpty && (board.byColor[them] & stopBB)) {
+                scores[us] += PassedBlockedPenalty[relRank];
+            } else if (stopEmpty && (ctx.allAttacks[us] & stopBB) &&
+                       !(ctx.allAttacks[them] & stopBB)) {
+                // Only a truly safe stop square counts as supported -- if
+                // the enemy attacks it too, the push loses the pawn.
+                scores[us] += PassedSupportedBonus[relRank];
+            }
+        }
+
+        // Connected passers: pair up passers on adjacent files and within
+        // one rank of each other. Iterate over every passer (even below
+        // the bonus-eligible rank) so pairs where one side is just under
+        // the threshold are still credited against the higher-ranked
+        // member. Looking only at file+1 keeps each pair counted once.
+        Bitboard pairIter = ourPassers;
+        while (pairIter) {
+            int sq = popLsb(pairIter);
+            int f = squareFile(sq);
+            int r = squareRank(sq);
+            if (f >= 7) continue;
+
+            Bitboard neighborMask = FileBB[f + 1];
+            Bitboard partners = ourPassers & neighborMask;
+            for (int rr = std::max(0, r - 1); rr <= std::min(7, r + 1); rr++) {
+                if (Bitboard hit = partners & RankBB[rr]) {
+                    int partnerSq = lsb(hit);
+                    int higherRelRank = std::max(relativeRank(us, sq), relativeRank(us, partnerSq));
+                    if (higherRelRank >= 3) {
+                        scores[us] += ConnectedPassersBonus[higherRelRank];
+                    }
+                    break;
+                }
+            }
+        }
+    }
+}
+
+// Endgame scale factor in [0, 64]. Applied to the eg half of the tapered
+// score before blending with mg: at 64 the eg value passes through
+// unchanged, at 0 the eg contribution disappears entirely. Used to push
+// drawish endings (opposite-colored bishops, pawnless single minors)
+// toward zero so the engine does not chase illusory winning lines.
+static int scaleFactor(const Board &board) {
+    // Opposite-colored bishops: each side has exactly one bishop, on
+    // squares of opposite colors. Without other pieces they are a textbook
+    // draw; with rooks or minors they are still visibly drawish.
+    bool ocb = false;
+    if (board.pieceCount[White][Bishop] == 1 && board.pieceCount[Black][Bishop] == 1) {
+        Bitboard whiteBishop = board.byPiece[Bishop] & board.byColor[White];
+        Bitboard blackBishop = board.byPiece[Bishop] & board.byColor[Black];
+        bool whiteOnLight = (whiteBishop & LightSquaresBB) != 0;
+        bool blackOnLight = (blackBishop & LightSquaresBB) != 0;
+        ocb = (whiteOnLight != blackOnLight);
+    }
+
+    if (ocb) {
+        int nonBishopPieces = popcount(board.occupied) - popcount(board.byPiece[Pawn]) -
+                              popcount(board.byPiece[King]) - popcount(board.byPiece[Bishop]);
+        if (nonBishopPieces > 0) {
+            // OCB alongside rooks, knights, or queens is not reliably
+            // drawish, and scaling it down distorts middlegame positions
+            // that transiently feature opposite-colored bishops. Leave
+            // those untouched and only correct genuine bishops-and-pawns
+            // OCB endings below.
+            return 64;
+        }
+        int strongPawns = std::max(board.pieceCount[White][Pawn], board.pieceCount[Black][Pawn]);
+        if (strongPawns <= 1) return 10;
+        if (strongPawns <= 3) return 26;
+        return 38;
+    }
+
+    // Pawnless minor-only endings reduce to draws unless one side has a
+    // material excess of a rook or more. Kings-only positions fall through
+    // to the default scale because the PST ordering of king activity is
+    // still useful to the search even if the outcome is a formal draw.
+    if (!board.byPiece[Pawn]) {
+        int wMinors = board.pieceCount[White][Knight] + board.pieceCount[White][Bishop];
+        int bMinors = board.pieceCount[Black][Knight] + board.pieceCount[Black][Bishop];
+        int wMajors = board.pieceCount[White][Rook] + board.pieceCount[White][Queen];
+        int bMajors = board.pieceCount[Black][Rook] + board.pieceCount[Black][Queen];
+        bool onlyMinorsEachSide = wMajors == 0 && bMajors == 0;
+        if (onlyMinorsEachSide && wMinors <= 1 && bMinors <= 1 && (wMinors + bMinors) >= 1) {
+            return 0;
+        }
+    }
+
+    return 64;
+}
+
+// Reward pieces we attack with a less-valuable attacker, hanging pieces,
+// weak queens, and enemy pieces hit by a safe pawn push. Threat types are
+// indexed by the victim piece so lower-value attackers never double-count
+// against equally-valued victims. All terms consume the shared attack
+// maps precomputed in buildAttackMaps.
+static void evaluateThreats(const Board &board, const EvalContext &ctx, Score scores[2]) {
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Color them = static_cast<Color>(c ^ 1);
+
+        Bitboard theirPieces = board.byColor[them];
+        Bitboard theirNonPawnNonKing = theirPieces & ~board.byPiece[Pawn] & ~board.byPiece[King];
+
+        // Threat by pawn: every enemy non-pawn/non-king attacked by one of
+        // our pawns contributes a flat bonus. Pawn attacks cannot be
+        // reciprocated by a lower-value attacker, so this is strictly
+        // additive and cannot be double counted with the minor/rook blocks.
+        Bitboard pawnThreats = ctx.pawnAttacks[us] & theirNonPawnNonKing;
+        scores[us] += ThreatByPawn * popcount(pawnThreats);
+
+        // Threat by minor: our knights or bishops attacking an enemy rook
+        // or queen. Index by the victim so the table naturally zeroes out
+        // same-value targets and we never credit minor-on-minor threats.
+        Bitboard minorAttacks = ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop];
+        Bitboard victims = minorAttacks & theirPieces;
+        Bitboard minorVsRook = victims & board.byPiece[Rook];
+        Bitboard minorVsQueen = victims & board.byPiece[Queen];
+        scores[us] += ThreatByMinor[Rook] * popcount(minorVsRook);
+        scores[us] += ThreatByMinor[Queen] * popcount(minorVsQueen);
+
+        // Threat by rook: our rooks attacking an enemy queen.
+        Bitboard rookVsQueen = ctx.attackedBy[us][Rook] & theirPieces & board.byPiece[Queen];
+        scores[us] += ThreatByRook[Queen] * popcount(rookVsQueen);
+
+        // Threat by king: enemy pieces sitting on a square our king attacks
+        // and which the enemy does not defend. Pawns and kings are excluded
+        // from the set of victims.
+        Bitboard kingVictims =
+            ctx.attackedBy[us][King] & theirNonPawnNonKing & ~ctx.allAttacks[them];
+        scores[us] += ThreatByKing * popcount(kingVictims);
+
+        // Hanging pieces: enemy non-pawn pieces undefended and reachable
+        // by a capture we would willingly make. "Willingly" means either
+        // we have a less valuable attacker on the square (pawn attacks
+        // qualify directly) or two or more pieces converging on it so the
+        // capture-recapture sequence still wins material. This keeps
+        // queen-attacks-undefended-rook and similar trade-losing scenarios
+        // from falsely firing the hanging bonus.
+        Bitboard undefended = theirNonPawnNonKing & ctx.allAttacks[us] & ~ctx.allAttacks[them];
+        Bitboard hanging = undefended & (ctx.attackedBy2[us] | ctx.pawnAttacks[us]);
+        scores[us] += Hanging * popcount(hanging);
+
+        // Weak queen: enemy queen attacked by two or more of our pieces.
+        Bitboard weakQueen = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
+        if (weakQueen) scores[us] += WeakQueen;
+
+        // Safe pawn push threat: single- or double-push targets that are
+        // empty, not attacked by enemy pawns, and either not attacked by
+        // the enemy at all or defended by our own pieces. From those
+        // safe landing squares, compute the pawn attack footprint and
+        // bonus every enemy non-pawn/non-king piece that falls under it.
+        // Exclude pieces already attacked by our pawns in place so the
+        // bonus is not double counted with ThreatByPawn.
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
+        Bitboard empty = ~board.occupied;
+        Bitboard singlePush = (us == White) ? (ourPawns << 8) : (ourPawns >> 8);
+        singlePush &= empty;
+        Bitboard doublePush =
+            (us == White) ? ((singlePush & Rank3BB) << 8) : ((singlePush & Rank6BB) >> 8);
+        doublePush &= empty;
+        Bitboard pushes = singlePush | doublePush;
+        Bitboard safePushes =
+            pushes & ~ctx.pawnAttacks[them] & (~ctx.allAttacks[them] | ctx.allAttacks[us]);
+        Bitboard pushVictims =
+            pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
+        scores[us] += SafePawnPush * popcount(pushVictims);
+    }
+}
+
 int evaluate(const Board &board) {
     ensureEvalInit();
 
@@ -768,7 +1129,8 @@ int evaluate(const Board &board) {
     scores[Black] += matScores[Black];
 
     Score pawnScore = 0;
-    evaluatePawns(board, pawnScore);
+    Bitboard passers[2] = {0, 0};
+    evaluatePawns(board, pawnScore, passers);
 
     EvalContext ctx;
     Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
@@ -777,10 +1139,13 @@ int evaluate(const Board &board) {
     ctx.pawnAttacks[Black] = pawnAttacksBB(blackPawnsCtx, Black);
     ctx.mobilityArea[White] = ~board.byColor[White] & ~ctx.pawnAttacks[Black];
     ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
+    buildAttackMaps(board, ctx);
 
     evaluatePieces(board, ctx, scores);
+    evaluatePassedPawnExtras(board, ctx, passers, scores);
+    evaluateThreats(board, ctx, scores);
     evaluateSpace(board, ctx, scores);
-    evaluateKingSafety(board, scores);
+    evaluateKingSafety(board, ctx, scores);
 
     Score total = scores[White] - scores[Black] + pawnScore;
 
@@ -789,6 +1154,17 @@ int evaluate(const Board &board) {
 
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
+
+    // Drawish endings scale the endgame half toward zero before blending.
+    // Gated on genuine endgame phase so transient opposite-colored-bishop
+    // configurations that pop up in the middlegame search tree do not
+    // have their eg half distorted; in a true endgame the term still
+    // correctly pushes drawish material toward a draw.
+    if (mgPhase <= 10) {
+        int scale = scaleFactor(board);
+        eg = eg * scale / 64;
+    }
+
     int result = (mg * mgPhase + eg * egPhase) / 24;
 
     // Scale evaluation toward 0 as the halfmove clock approaches 100 so the
@@ -801,7 +1177,129 @@ int evaluate(const Board &board) {
         result = result * (200 - board.halfmoveClock) / 200;
     }
 
+    // Tempo is applied after the halfmove scale so the side-to-move bonus
+    // does not decay with the fifty-move counter, then folded into the
+    // white-perspective total before the final flip.
+    int tempoContribution = mg_value(Tempo) * mgPhase / 24;
+    result += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
+
     return (board.sideToMove == White) ? result : -result;
+}
+
+void evaluateVerbose(const Board &board, std::ostream &os) {
+    ensureEvalInit();
+
+    // Replay the same computation as evaluate() but snapshot each term
+    // separately so the breakdown can be printed.
+    Score pstScore = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        Piece p = board.squares[sq];
+        if (p.type == None) continue;
+        int idx = (p.color == White) ? sq : (sq ^ 56);
+        Score contribution = PST[p.type][idx];
+        pstScore += (p.color == White) ? contribution : -contribution;
+    }
+
+    Score matScores[2];
+    int gamePhase = 0;
+    evaluateMaterial(board, matScores, gamePhase);
+    Score matScore = matScores[White] - matScores[Black];
+
+    Score pawnScore = 0;
+    Bitboard passers[2] = {0, 0};
+    evaluatePawns(board, pawnScore, passers);
+
+    EvalContext ctx;
+    Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
+    Bitboard blackPawnsCtx = board.byPiece[Pawn] & board.byColor[Black];
+    ctx.pawnAttacks[White] = pawnAttacksBB(whitePawnsCtx, White);
+    ctx.pawnAttacks[Black] = pawnAttacksBB(blackPawnsCtx, Black);
+    ctx.mobilityArea[White] = ~board.byColor[White] & ~ctx.pawnAttacks[Black];
+    ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
+    buildAttackMaps(board, ctx);
+
+    Score pieceScores[2] = {0, 0};
+    evaluatePieces(board, ctx, pieceScores);
+    Score pieceScore = pieceScores[White] - pieceScores[Black];
+
+    Score passerExtrasScores[2] = {0, 0};
+    evaluatePassedPawnExtras(board, ctx, passers, passerExtrasScores);
+    Score passerExtrasScore = passerExtrasScores[White] - passerExtrasScores[Black];
+
+    Score threatScores[2] = {0, 0};
+    evaluateThreats(board, ctx, threatScores);
+    Score threatScore = threatScores[White] - threatScores[Black];
+
+    Score spaceScores[2] = {0, 0};
+    evaluateSpace(board, ctx, spaceScores);
+    Score spaceScore = spaceScores[White] - spaceScores[Black];
+
+    Score kingSafetyScores[2] = {0, 0};
+    evaluateKingSafety(board, ctx, kingSafetyScores);
+    Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
+
+    Score total = pstScore + matScore + pieceScore + passerExtrasScore + threatScore + spaceScore +
+                  kingSafetyScore + pawnScore;
+    int mg = mg_value(total);
+    int eg = eg_value(total);
+
+    int mgPhase = std::min(gamePhase, 24);
+    int egPhase = 24 - mgPhase;
+
+    int scale = 64;
+    int scaledEg = eg;
+    if (mgPhase <= 10) {
+        scale = scaleFactor(board);
+        scaledEg = eg * scale / 64;
+    }
+    int blended = (mg * mgPhase + scaledEg * egPhase) / 24;
+
+    int halfmoveScaled = blended;
+    if (board.byPiece[Pawn]) {
+        halfmoveScaled = blended * (200 - board.halfmoveClock) / 200;
+    }
+
+    int tempoContribution = mg_value(Tempo) * mgPhase / 24;
+    int whitePovResult =
+        halfmoveScaled + ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
+    int stmResult = (board.sideToMove == White) ? whitePovResult : -whitePovResult;
+
+    auto formatTerm = [](std::ostream &out, const char *name, Score s) {
+        int tmg = mg_value(s);
+        int teg = eg_value(s);
+        out << "  " << std::left << std::setw(14) << name << " mg=" << std::setw(6) << std::right
+            << tmg << " eg=" << std::setw(6) << std::right << teg << '\n';
+    };
+
+    os << "rlngin eval breakdown (white perspective unless noted)\n";
+    formatTerm(os, "Material", matScore);
+    formatTerm(os, "PST", pstScore);
+    formatTerm(os, "Pawns", pawnScore);
+    formatTerm(os, "Pieces", pieceScore);
+    formatTerm(os, "Passed extras", passerExtrasScore);
+    formatTerm(os, "Threats", threatScore);
+    formatTerm(os, "Space", spaceScore);
+    formatTerm(os, "King safety", kingSafetyScore);
+    os << "  " << std::left << std::setw(14) << "Sum"
+       << " mg=" << std::setw(6) << std::right << mg << " eg=" << std::setw(6) << std::right << eg
+       << '\n';
+    os << "  " << std::left << std::setw(14) << "Phase"
+       << " " << mgPhase << "/24\n";
+    os << "  " << std::left << std::setw(14) << "Scale"
+       << " eg * " << scale << "/64 = " << scaledEg << '\n';
+    os << "  " << std::left << std::setw(14) << "Halfmove"
+       << " clock=" << board.halfmoveClock << " -> " << halfmoveScaled << '\n';
+    os << "  " << std::left << std::setw(14) << "Tempo"
+       << " " << ((board.sideToMove == White) ? "+" : "-") << tempoContribution << '\n';
+    os << "  " << std::left << std::setw(14) << "Total (stm)"
+       << " internal=" << stmResult << " cp=" << (stmResult * 100 / 228) << '\n';
+
+    // Safety check: the verbose path should never diverge from evaluate().
+    int expected = evaluate(board);
+    if (expected != stmResult) {
+        os << "  WARNING: verbose total " << stmResult << " differs from evaluate() " << expected
+           << '\n';
+    }
 }
 
 void clearPawnHash() {

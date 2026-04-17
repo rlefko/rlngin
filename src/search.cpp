@@ -943,9 +943,19 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             for (size_t mi = 0; mi < rootMoves.size(); mi++) {
                 const Move &m = rootMoves[mi];
 
+                // Only print per-move progress once the search has been
+                // running long enough for a GUI update to matter. Below
+                // the threshold, shallow iterations just show the PV in
+                // printSearchInfo so the output stays focused.
                 if (depth >= 2) {
-                    std::cout << "info depth " << depth << " currmove " << moveToString(m)
-                              << " currmovenumber " << (mi + 1) << std::endl;
+                    auto nowForInfo = std::chrono::steady_clock::now();
+                    int64_t elapsedMs = std::chrono::duration_cast<std::chrono::milliseconds>(
+                                            nowForInfo - state.startTime)
+                                            .count();
+                    if (elapsedMs >= 3000) {
+                        std::cout << "info depth " << depth << " currmove " << moveToString(m)
+                                  << " currmovenumber " << (mi + 1) << std::endl;
+                    }
                 }
 
                 state.moveStack[0] = m;

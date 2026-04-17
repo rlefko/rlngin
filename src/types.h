@@ -2,6 +2,7 @@
 #define TYPES_H
 
 #include <cstdint>
+#include <cstdlib>
 #include <string>
 
 enum Color { White, Black };
@@ -56,6 +57,21 @@ inline int squareFile(int sq) {
 }
 inline int makeSquare(int rank, int file) {
     return rank * 8 + file;
+}
+
+// Rank seen from the given side's perspective: White's rank 1 is relative
+// rank 0, Black's rank 8 is relative rank 0, and so on.
+inline int relativeRank(int color, int sq) {
+    int r = squareRank(sq);
+    return (color == White) ? r : (7 - r);
+}
+
+// Chebyshev (king) distance between two squares: the minimum number of
+// single-square king moves that would connect them.
+inline int chebyshev(int a, int b) {
+    int dx = std::abs(squareFile(a) - squareFile(b));
+    int dy = std::abs(squareRank(a) - squareRank(b));
+    return dx > dy ? dx : dy;
 }
 
 inline std::string squareToString(int sq) {
