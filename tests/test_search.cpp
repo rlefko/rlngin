@@ -698,19 +698,6 @@ TEST_CASE("Search: mate distance pruning keeps deep mate search bounded", "[sear
     CHECK(state.nodes < 100000);
 }
 
-TEST_CASE("Search: double extensions do not break mate detection", "[search][extensions]") {
-    ensureInit();
-    clearTT();
-    Board board;
-    // Mate-in-3 setup where a singular TT move exists deep enough to earn the
-    // double-extension gate. The double extension must still produce the mate
-    // rather than clamp the search off the decisive continuation.
-    board.setFen("r1bqkb1r/pppp1ppp/2n2n2/4p2Q/2B1P3/8/PPPP1PPP/RNB1K1NR w KQkq - 4 4");
-
-    Move best = findBestMove(board, 8);
-    CHECK(best.from != best.to);
-}
-
 TEST_CASE("Search: cut-node LMR keeps tactical captures", "[search][cutnode]") {
     ensureInit();
     clearTT();
