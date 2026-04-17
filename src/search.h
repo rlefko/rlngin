@@ -36,7 +36,9 @@ struct SearchState {
     struct HistoryTables {
         int mainHistory[2][64][64] = {};
         Move counterMoves[2][7][64] = {};
-        int16_t contHistory[7][64][7][64] = {};
+        // contHistory[tier][prevPt][prevTo][currPt][currTo] where tier 0 is
+        // 1-ply back, tier 1 is 2-ply back, tier 2 is 4-ply back.
+        int16_t contHistory[3][7][64][7][64] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 

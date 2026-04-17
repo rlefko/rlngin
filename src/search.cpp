@@ -28,6 +28,38 @@ static void updateContHistory(int16_t &entry, int bonus) {
     entry += static_cast<int16_t>(bonus - entry * std::abs(bonus) / MAX_CONT_HISTORY);
 }
 
+// Tier offsets for multi-ply continuation history: 1-ply, 2-ply, and 4-ply back.
+static constexpr int CONT_HIST_OFFSETS[3] = {1, 2, 4};
+
+// Sum the continuation-history contribution across all tiers for (currPt, currTo)
+// at the given ply. Tiers whose offset exceeds ply are skipped.
+static int contHistoryScore(const SearchState &state, int ply, PieceType currPt, int currTo) {
+    int score = 0;
+    for (int t = 0; t < 3; t++) {
+        int off = CONT_HIST_OFFSETS[t];
+        if (ply >= off) {
+            PieceType prevPt = state.movedPiece[ply - off];
+            int prevTo = state.moveStack[ply - off].to;
+            score += state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo];
+        }
+    }
+    return score;
+}
+
+// Apply the same bonus to every tier of continuation history for this move.
+static void updateContHistoryAll(SearchState &state, int ply, PieceType currPt, int currTo,
+                                 int bonus) {
+    for (int t = 0; t < 3; t++) {
+        int off = CONT_HIST_OFFSETS[t];
+        if (ply >= off) {
+            PieceType prevPt = state.movedPiece[ply - off];
+            int prevTo = state.moveStack[ply - off].to;
+            updateContHistory(state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo],
+                              bonus);
+        }
+    }
+}
+
 static bool isCapture(const Board &board, const Move &m) {
     if (board.squares[m.to].type != None) return true;
     if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
@@ -96,12 +128,10 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         }
     }
 
-    // Quiet moves: butterfly history plus continuation history
+    // Quiet moves: butterfly history plus multi-ply continuation history
     int score = state.historyTables->mainHistory[board.sideToMove][m.from][m.to];
-    if (ply >= 1) {
-        PieceType prevPt = state.movedPiece[ply - 1];
-        int prevTo = state.moveStack[ply - 1].to;
-        score += state.historyTables->contHistory[prevPt][prevTo][pt][m.to];
+    if (ply >= 0) {
+        score += contHistoryScore(state, ply, pt, m.to);
     }
 
     return score;
@@ -470,18 +500,15 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 reduction = lmrReductions[std::min(depth, MAX_PLY - 1)]
                                          [std::min(moveIndex, MAX_LMR_MOVES - 1)];
 
-                // Adjust reduction based on butterfly plus continuation history.
+                // Adjust reduction based on butterfly plus multi-ply continuation history.
                 // board.sideToMove is the opponent here (the move has been played),
                 // so invert it to index the mover's butterfly slot.
                 Color mover = (board.sideToMove == White) ? Black : White;
                 int histScore = state.historyTables->mainHistory[mover][m.from][m.to];
-                if (ply >= 1) {
-                    PieceType prevPt = state.movedPiece[ply - 1];
-                    int prevTo = state.moveStack[ply - 1].to;
-                    PieceType currPt = state.movedPiece[ply];
-                    histScore += state.historyTables->contHistory[prevPt][prevTo][currPt][m.to];
-                }
-                reduction -= histScore / 8192;
+                histScore += contHistoryScore(state, ply, state.movedPiece[ply], m.to);
+                // Divisor scales with the added tiers so the reduction magnitude
+                // stays comparable to the single-tier configuration.
+                reduction -= histScore / 24576;
 
                 // Reduce less when position is improving
                 reduction -= improving;
@@ -549,14 +576,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     PieceType currPt = board.squares[m.from].type;
                     Color prevColor = (us == White) ? Black : White;
                     state.historyTables->counterMoves[prevColor][prevPt][prevTo] = m;
-                    updateContHistory(
-                        state.historyTables->contHistory[prevPt][prevTo][currPt][m.to], bonus);
-                    // Penalize previously searched quiets
+                    updateContHistoryAll(state, ply, currPt, m.to, bonus);
+                    // Penalize previously searched quiets across every tier
                     for (int i = 0; i < numSearchedQuiets; i++) {
                         const Move &prev = searchedQuiets[i];
                         PieceType qPt = board.squares[prev.from].type;
-                        updateContHistory(
-                            state.historyTables->contHistory[prevPt][prevTo][qPt][prev.to], -bonus);
+                        updateContHistoryAll(state, ply, qPt, prev.to, -bonus);
                     }
                 }
             }
