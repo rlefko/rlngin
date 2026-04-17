@@ -739,22 +739,6 @@ TEST_CASE("Search: history leaf pruning preserves mating move", "[search][histor
     CHECK(best.to == stringToSquare("e8"));
 }
 
-TEST_CASE("Search: material correction history stays tactically sound", "[search][corrhist]") {
-    ensureInit();
-    clearTT();
-    Board board;
-    // Repeated searches on a tactical position drive both pawn and material
-    // correction tables; neither should drift far enough to distort pruning
-    // away from the winning capture.
-    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
-
-    for (int i = 0; i < 3; i++) {
-        Move best = findBestMove(board, 5);
-        CHECK(best.from == stringToSquare("e4"));
-        CHECK(best.to == stringToSquare("d6"));
-    }
-}
-
 TEST_CASE("Search: tightened aspiration windows resolve quiet positions", "[search][aspiration]") {
     ensureInit();
     clearTT();

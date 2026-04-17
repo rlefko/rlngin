@@ -17,13 +17,6 @@ static constexpr int PAWN_CORR_SIZE = 16384;
 // Internal eval divisor; with the rescaled material units (~228 per pawn) a
 // saturated entry contributes ~56 cp, well inside the ~60 cp design cap.
 static constexpr int PAWN_CORR_SCALE = 128;
-// Material correction mirrors the pawn-key correction in layout. The scale is
-// doubled relative to pawn correction so the summed influence of both tables
-// stays in the same per-node correction envelope as pawn-only correction; the
-// material signal tracks slower-moving positional drift.
-static constexpr int MAX_MAT_CORR = 16384;
-static constexpr int MAT_CORR_SIZE = 16384;
-static constexpr int MAT_CORR_SCALE = 256;
 static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
@@ -71,20 +64,16 @@ static int contHistoryScore(const SearchState &state, int ply, PieceType currPt,
     return score;
 }
 
-// Adjust a raw static eval by the pawn-structure and material-balance
-// corrections for the side to move. Mate-range scores are returned untouched
-// so the correction cannot accidentally push a non-mate eval into mate
-// territory. Summing two independent corrections lets the engine learn from
-// pawn-shape drift and material-imbalance drift in one pass.
+// Adjust a raw static eval by the pawn-structure correction for the side to
+// move. Mate-range scores are returned untouched so the correction cannot
+// accidentally push a non-mate eval into mate territory.
 static int correctedEval(int staticEval, const Board &board, const SearchState &state) {
     if (staticEval <= -MATE_SCORE + MAX_PLY || staticEval >= MATE_SCORE - MAX_PLY) {
         return staticEval;
     }
-    int pawnIdx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
-    int matIdx = static_cast<int>(board.materialKey % MAT_CORR_SIZE);
-    int pawnCorr = state.historyTables->pawnCorrHist[board.sideToMove][pawnIdx] / PAWN_CORR_SCALE;
-    int matCorr = state.historyTables->matCorrHist[board.sideToMove][matIdx] / MAT_CORR_SCALE;
-    return staticEval + pawnCorr + matCorr;
+    int idx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
+    int correction = state.historyTables->pawnCorrHist[board.sideToMove][idx] / PAWN_CORR_SCALE;
+    return staticEval + correction;
 }
 
 // Fold the gap between the node's search result and its raw static eval into
@@ -103,23 +92,6 @@ static void updatePawnCorrHist(const Board &board, SearchState &state, int stati
         bonus = -cap;
     applyHistoryBonus(state.historyTables->pawnCorrHist[board.sideToMove][idx], bonus,
                       MAX_PAWN_CORR);
-}
-
-// Material-keyed counterpart to updatePawnCorrHist. The two tables share the
-// same update gating path so a single call site feeds both from the same
-// bestValue/staticEval residual.
-static void updateMatCorrHist(const Board &board, SearchState &state, int staticEval, int bestValue,
-                              int depth) {
-    if (staticEval == -INF_SCORE) return;
-    int idx = static_cast<int>(board.materialKey % MAT_CORR_SIZE);
-    int diff = bestValue - staticEval;
-    int bonus = diff * depth / 8;
-    int cap = MAX_MAT_CORR / 4;
-    if (bonus > cap)
-        bonus = cap;
-    else if (bonus < -cap)
-        bonus = -cap;
-    applyHistoryBonus(state.historyTables->matCorrHist[board.sideToMove][idx], bonus, MAX_MAT_CORR);
 }
 
 // Apply the same bonus to every tier of continuation history for this move.
@@ -887,7 +859,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                                (flag == TT_UPPER_BOUND && bestScore <= origAlpha);
             if (boundUseful) {
                 updatePawnCorrHist(board, state, staticEval, bestScore, depth);
-                updateMatCorrHist(board, state, staticEval, bestScore, depth);
             }
         }
     }

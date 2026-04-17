@@ -43,10 +43,6 @@ struct SearchState {
         // here is that for a given pawn structure, the search score tends to
         // diverge from the static eval in a particular direction.
         int16_t pawnCorrHist[2][16384] = {};
-        // Material-keyed static eval correction: `[color][materialKey % N]`.
-        // Captures systematic eval drift that depends on the material balance
-        // rather than pawn shape, such as opposite-color bishops with pawns.
-        int16_t matCorrHist[2][16384] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 
