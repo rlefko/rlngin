@@ -25,6 +25,14 @@ static TranspositionTable tt(16);
 
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
+// Pairs a move with its ordering score so the sort comparator does not
+// re-evaluate scoreMove on every comparison. Sites that need sorted moves
+// build this once per node and iterate it directly.
+struct ScoredMove {
+    int score;
+    Move move;
+};
+
 // Saturating gravity update used by every history table. The gravity term
 // pulls `entry` toward zero in proportion to its current magnitude; clamping
 // into `[-max, max]` prevents transient overshoot from runaway bonuses.
@@ -242,13 +250,18 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
     // Ordering: promote the TT move when present, otherwise fall back to the
     // MVV-LVA + capture-history score used at leaves.
-    std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
-        return scoreMove(a, board, ttMove, -1, state) > scoreMove(b, board, ttMove, -1, state);
-    });
+    std::vector<ScoredMove> scored;
+    scored.reserve(moves.size());
+    for (const Move &m : moves) {
+        scored.push_back({scoreMove(m, board, ttMove, -1, state), m});
+    }
+    std::sort(scored.begin(), scored.end(),
+              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 
     Move bestMove = {0, 0, None};
 
-    for (const Move &m : moves) {
+    for (const ScoredMove &sm : scored) {
+        const Move &m = sm.move;
         if (!inCheck && isCapture(board, m)) {
             // Prune losing captures
             if (see(board, m) < 0) continue;
@@ -376,9 +389,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
-    std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
-        return scoreMove(a, board, ttMove, ply, state) > scoreMove(b, board, ttMove, ply, state);
-    });
+    std::vector<ScoredMove> scored;
+    scored.reserve(moves.size());
+    for (const Move &m : moves) {
+        scored.push_back({scoreMove(m, board, ttMove, ply, state), m});
+    }
+    std::sort(scored.begin(), scored.end(),
+              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 
     bool inCheck = isInCheck(board);
 
@@ -467,11 +484,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         std::vector<Move> pcMoves = generateLegalCaptures(board);
 
         Move noTT = {0, 0, None};
-        std::sort(pcMoves.begin(), pcMoves.end(), [&](const Move &a, const Move &b) {
-            return scoreMove(a, board, noTT, -1, state) > scoreMove(b, board, noTT, -1, state);
-        });
+        std::vector<ScoredMove> pcScored;
+        pcScored.reserve(pcMoves.size());
+        for (const Move &m : pcMoves) {
+            pcScored.push_back({scoreMove(m, board, noTT, -1, state), m});
+        }
+        std::sort(pcScored.begin(), pcScored.end(),
+                  [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 
-        for (const Move &pcMove : pcMoves) {
+        for (const ScoredMove &sm : pcScored) {
+            const Move &pcMove = sm.move;
             if (!seeGE(board, pcMove, probcutBeta - corrEval)) continue;
 
             state.moveStack[ply] = pcMove;
@@ -512,7 +534,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     int bestScore = -INF_SCORE;
-    Move bestMove = moves[0];
+    Move bestMove = scored[0].move;
 
     Move searchedCaptures[64];
     Move searchedQuiets[64];
@@ -521,8 +543,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int bonus = std::min(depth * depth, 400);
     int movesSearched = 0;
 
-    for (int moveIndex = 0; moveIndex < static_cast<int>(moves.size()); moveIndex++) {
-        const Move &m = moves[moveIndex];
+    for (int moveIndex = 0; moveIndex < static_cast<int>(scored.size()); moveIndex++) {
+        const Move &m = scored[moveIndex].move;
 
         // Skip the excluded move during singular extension searches
         if (hasExcludedMove && m.from == excludedMove.from && m.to == excludedMove.to &&
