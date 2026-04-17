@@ -619,3 +619,46 @@ TEST_CASE("Search: pawn correction history stays tactically sound", "[search][co
         CHECK(best.to == stringToSquare("d6"));
     }
 }
+
+TEST_CASE("Search: depth 10 node count bounded on startpos", "[search][nodes]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 10;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // Guardrail against future regressions in move ordering or pruning.
+    CHECK(state.nodes < 400000);
+}
+
+TEST_CASE("Search: depth 10 node count bounded on Italian", "[search][nodes]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setFen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+
+    SearchLimits limits;
+    limits.depth = 10;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.nodes < 500000);
+}
+
+TEST_CASE("Search: depth 10 node count bounded on Kiwipete", "[search][nodes]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setFen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    SearchLimits limits;
+    limits.depth = 10;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.nodes < 2000000);
+}
