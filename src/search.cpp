@@ -204,16 +204,33 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
 
+    int origAlpha = alpha;
+
+    // TT probe: qsearch entries are written at depth 0, so any entry provides a
+    // usable bound for the leaf-level search. A TT cut here is a free save.
+    TTEntry ttEntry;
+    Move ttMove = {0, 0, None};
+    bool ttHit = tt.probe(board.key, ttEntry, ply);
+    if (ttHit) {
+        ttMove = ttEntry.best_move;
+        if (ttEntry.flag == TT_EXACT) return ttEntry.score;
+        if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) return ttEntry.score;
+        if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) return ttEntry.score;
+    }
+
     bool inCheck = isInCheck(board);
 
+    int rawStandPat = -INF_SCORE;
     int standPat = -INF_SCORE;
+    int bestScore = -INF_SCORE;
     if (!inCheck) {
-        int rawStandPat = evaluate(board);
+        rawStandPat = (ttHit && ttEntry.eval != TT_NO_EVAL) ? ttEntry.eval : evaluate(board);
         // Read-only correction: qsearch consumes the corrected eval for its
         // stand-pat and delta pruning decisions but does not update the table,
         // since qsearch returns are the signal the correction is tracking.
         standPat = correctedEval(rawStandPat, board, state);
-        if (standPat >= beta) return beta;
+        bestScore = standPat;
+        if (standPat >= beta) return standPat;
         if (standPat > alpha) alpha = standPat;
     }
 
@@ -223,11 +240,13 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
 
     if (inCheck && moves.empty()) return -(MATE_SCORE - ply);
 
-    // MVV-LVA ordering for captures
-    Move noTTMove = {0, 0, None};
+    // Ordering: promote the TT move when present, otherwise fall back to the
+    // MVV-LVA + capture-history score used at leaves.
     std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
-        return scoreMove(a, board, noTTMove, -1, state) > scoreMove(b, board, noTTMove, -1, state);
+        return scoreMove(a, board, ttMove, -1, state) > scoreMove(b, board, ttMove, -1, state);
     });
+
+    Move bestMove = {0, 0, None};
 
     for (const Move &m : moves) {
         if (!inCheck && isCapture(board, m)) {
@@ -247,11 +266,27 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
         if (state.stopped) return 0;
-        if (score >= beta) return beta;
+        if (score > bestScore) {
+            bestScore = score;
+            bestMove = m;
+        }
         if (score > alpha) alpha = score;
+        if (alpha >= beta) break;
     }
 
-    return alpha;
+    // Store the leaf result so future visits can cut immediately.
+    TTFlag flag;
+    if (bestScore <= origAlpha) {
+        flag = TT_UPPER_BOUND;
+    } else if (bestScore >= beta) {
+        flag = TT_LOWER_BOUND;
+    } else {
+        flag = TT_EXACT;
+    }
+    int storedEval = inCheck ? TT_NO_EVAL : rawStandPat;
+    tt.store(board.key, bestScore, storedEval, 0, flag, bestMove, ply);
+
+    return bestScore;
 }
 
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {
