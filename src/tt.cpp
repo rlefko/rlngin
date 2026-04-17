@@ -1,5 +1,9 @@
 #include "tt.h"
 
+// Lock the TT entry layout: padding changes would silently alter the ratio of
+// entries per megabyte and invalidate hash-sizing assumptions.
+static_assert(sizeof(TTEntry) == 32, "TTEntry layout unexpectedly changed");
+
 TranspositionTable::TranspositionTable(size_t size_mb) {
     resize(size_mb);
 }
@@ -31,7 +35,7 @@ int TranspositionTable::scoreFromTT(int16_t score, int ply) {
     return score;
 }
 
-void TranspositionTable::store(uint64_t key, int score, int depth, TTFlag flag,
+void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTFlag flag,
                                const Move &best_move, int ply) {
     size_t i = index(key);
     // Depth-preferred replacement: only overwrite if the slot is empty or the
@@ -41,6 +45,7 @@ void TranspositionTable::store(uint64_t key, int score, int depth, TTFlag flag,
         table_[i].key = key;
         table_[i].score = scoreToTT(score, ply);
         table_[i].depth = static_cast<int16_t>(depth);
+        table_[i].eval = static_cast<int16_t>(eval);
         table_[i].flag = flag;
         table_[i].best_move = best_move;
     }

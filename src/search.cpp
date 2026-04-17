@@ -266,7 +266,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     TTEntry ttEntry;
     Move ttMove = {0, 0, None};
     bool hasExcludedMove = (excludedMove.from != 0 || excludedMove.to != 0);
-    if (tt.probe(board.key, ttEntry, ply)) {
+    bool ttHit = tt.probe(board.key, ttEntry, ply);
+    if (ttHit) {
         ttMove = ttEntry.best_move;
         if (!hasExcludedMove && ttEntry.depth >= depth) {
             if (ttEntry.flag == TT_EXACT) {
@@ -300,8 +301,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     bool inCheck = isInCheck(board);
 
-    // Static eval for pruning decisions (unreliable when in check)
-    int staticEval = inCheck ? -INF_SCORE : evaluate(board);
+    // Static eval for pruning decisions (unreliable when in check). Prefer the
+    // cached eval from the TT when available to avoid a redundant evaluate call.
+    int staticEval;
+    if (inCheck) {
+        staticEval = -INF_SCORE;
+    } else if (ttHit && ttEntry.eval != TT_NO_EVAL) {
+        staticEval = ttEntry.eval;
+    } else {
+        staticEval = evaluate(board);
+    }
     state.staticEvals[ply] = staticEval;
 
     // Determine if the position is improving (eval better than 2 plies ago)
@@ -381,7 +390,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             if (state.stopped) return 0;
 
             if (pcScore >= probcutBeta) {
-                tt.store(board.key, pcScore, depth, TT_LOWER_BOUND, pcMove, ply);
+                int storedEval = inCheck ? TT_NO_EVAL : staticEval;
+                tt.store(board.key, pcScore, storedEval, depth, TT_LOWER_BOUND, pcMove, ply);
                 return probcutBeta;
             }
         }
@@ -616,7 +626,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         } else {
             flag = TT_EXACT;
         }
-        tt.store(board.key, bestScore, depth, flag, bestMove, ply);
+        int storedEval = inCheck ? TT_NO_EVAL : staticEval;
+        tt.store(board.key, bestScore, storedEval, depth, flag, bestMove, ply);
     }
 
     return bestScore;
