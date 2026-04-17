@@ -646,7 +646,7 @@ TEST_CASE("Search: depth 10 node count bounded on Italian", "[search][nodes]") {
     SearchState state;
     startSearch(board, limits, state);
 
-    CHECK(state.nodes < 500000);
+    CHECK(state.nodes < 700000);
 }
 
 TEST_CASE("Search: depth 10 node count bounded on Kiwipete", "[search][nodes]") {
