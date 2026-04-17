@@ -50,6 +50,11 @@ struct SearchState {
     PieceType movedPiece[MAX_PLY] = {};
     int staticEvals[MAX_PLY] = {};
     uint64_t searchKeys[MAX_PLY] = {};
+    // Running count of extensions accumulated from root down to this ply.
+    // Used to cap total extensions per search path so forcing lines cannot
+    // indefinitely expand the tree.
+    int extensionsOnPath[MAX_PLY] = {};
+    int rootDepth = 0;
     std::vector<uint64_t> positionHistory;
     std::chrono::steady_clock::time_point startTime;
     int64_t allocatedTimeMs = 0;
