@@ -21,18 +21,24 @@ size_t PawnHashTable::index(uint64_t key) const {
     return static_cast<size_t>((static_cast<__uint128_t>(key) * numEntries_) >> 64);
 }
 
-void PawnHashTable::store(uint64_t key, int mg, int eg) {
+void PawnHashTable::store(uint64_t key, int mg, int eg, uint64_t whitePassers,
+                          uint64_t blackPassers) {
     size_t i = index(key);
     table_[i].key = key;
     table_[i].mgScore = static_cast<int16_t>(mg);
     table_[i].egScore = static_cast<int16_t>(eg);
+    table_[i].passers[0] = whitePassers;
+    table_[i].passers[1] = blackPassers;
 }
 
-bool PawnHashTable::probe(uint64_t key, int &mg, int &eg) const {
+bool PawnHashTable::probe(uint64_t key, int &mg, int &eg, uint64_t &whitePassers,
+                          uint64_t &blackPassers) const {
     size_t i = index(key);
     if (table_[i].key == key) {
         mg = table_[i].mgScore;
         eg = table_[i].egScore;
+        whitePassers = table_[i].passers[0];
+        blackPassers = table_[i].passers[1];
         return true;
     }
     return false;

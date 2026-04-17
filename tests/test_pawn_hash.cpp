@@ -8,21 +8,25 @@
 TEST_CASE("PawnHash: store and probe round-trip", "[pawn_hash]") {
     PawnHashTable table(1);
 
-    table.store(0xABCDEF, 42, -15);
+    table.store(0xABCDEF, 42, -15, 0xF00D, 0xBA11);
 
     int mg = 0, eg = 0;
-    bool hit = table.probe(0xABCDEF, mg, eg);
+    uint64_t whitePassers = 0, blackPassers = 0;
+    bool hit = table.probe(0xABCDEF, mg, eg, whitePassers, blackPassers);
 
     CHECK(hit);
     CHECK(mg == 42);
     CHECK(eg == -15);
+    CHECK(whitePassers == 0xF00D);
+    CHECK(blackPassers == 0xBA11);
 }
 
 TEST_CASE("PawnHash: probe miss returns false", "[pawn_hash]") {
     PawnHashTable table(1);
 
     int mg = 0, eg = 0;
-    bool hit = table.probe(0xDEADBEEF, mg, eg);
+    uint64_t whitePassers = 0, blackPassers = 0;
+    bool hit = table.probe(0xDEADBEEF, mg, eg, whitePassers, blackPassers);
 
     CHECK_FALSE(hit);
 }
@@ -30,25 +34,29 @@ TEST_CASE("PawnHash: probe miss returns false", "[pawn_hash]") {
 TEST_CASE("PawnHash: overwrite replaces values", "[pawn_hash]") {
     PawnHashTable table(1);
 
-    table.store(0xABC, 10, 20);
-    table.store(0xABC, 30, 40);
+    table.store(0xABC, 10, 20, 0, 0);
+    table.store(0xABC, 30, 40, 0x1, 0x2);
 
     int mg = 0, eg = 0;
-    bool hit = table.probe(0xABC, mg, eg);
+    uint64_t whitePassers = 0, blackPassers = 0;
+    bool hit = table.probe(0xABC, mg, eg, whitePassers, blackPassers);
 
     CHECK(hit);
     CHECK(mg == 30);
     CHECK(eg == 40);
+    CHECK(whitePassers == 0x1);
+    CHECK(blackPassers == 0x2);
 }
 
 TEST_CASE("PawnHash: clear removes entries", "[pawn_hash]") {
     PawnHashTable table(1);
 
-    table.store(0x123, 50, 60);
+    table.store(0x123, 50, 60, 0, 0);
     table.clear();
 
     int mg = 0, eg = 0;
-    CHECK_FALSE(table.probe(0x123, mg, eg));
+    uint64_t whitePassers = 0, blackPassers = 0;
+    CHECK_FALSE(table.probe(0x123, mg, eg, whitePassers, blackPassers));
 }
 
 // Pawn key correctness tests

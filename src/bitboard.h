@@ -26,6 +26,11 @@ constexpr Bitboard Rank6BB = 0x0000FF0000000000ULL;
 constexpr Bitboard Rank7BB = 0x00FF000000000000ULL;
 constexpr Bitboard Rank8BB = 0xFF00000000000000ULL;
 
+// Square-color masks. a1 is dark; the bit pattern below alternates along
+// ranks and flips on each new rank to match a physical board.
+constexpr Bitboard LightSquaresBB = 0x55AA55AA55AA55AAULL;
+constexpr Bitboard DarkSquaresBB = 0xAA55AA55AA55AA55ULL;
+
 inline int popcount(Bitboard b) {
     return __builtin_popcountll(b);
 }

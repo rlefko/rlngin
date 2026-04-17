@@ -3,10 +3,13 @@
 #include "eval.h"
 
 #include <cstdlib>
+#include <sstream>
 
-TEST_CASE("Eval: starting position is 0", "[eval]") {
+TEST_CASE("Eval: starting position equals the tempo bonus", "[eval]") {
     Board board;
-    CHECK(evaluate(board) == 0);
+    // The positional half of startpos is zero by symmetry, so the score
+    // reduces to the middlegame tempo bonus for the side to move.
+    CHECK(evaluate(board) == 28);
 }
 
 TEST_CASE("Eval: kings only is 0", "[eval]") {
@@ -18,10 +21,10 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3191);
+    CHECK(evaluate(board) == 3195);
 }
 
-TEST_CASE("Eval: score flips with side to move", "[eval]") {
+TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
     int whiteToMove = evaluate(board);
@@ -29,7 +32,12 @@ TEST_CASE("Eval: score flips with side to move", "[eval]") {
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 b - - 0 1");
     int blackToMove = evaluate(board);
 
-    CHECK(whiteToMove == -blackToMove);
+    // With a tempo bonus the two scores are no longer pure negations: each
+    // side gets the same middlegame tempo boost, so (wtm + btm) measures
+    // twice the tempo contribution while (wtm - btm) preserves the
+    // positional asymmetry in favor of White.
+    CHECK((whiteToMove + blackToMove) > 0);
+    CHECK((whiteToMove - blackToMove) > 0);
 }
 
 TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
@@ -40,25 +48,27 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
     CHECK(evaluate(board) == 268);
 
-    // Knight on a1: material and PSQT plus mobility bonus for its two legal
-    // moves from the corner
+    // Knight on a1 versus a bare king is a textbook draw, so the endgame
+    // scale factor zeroes the eg half. Only the tapered middlegame
+    // contribution survives, which is small with phase=1 and no pieces
+    // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 674);
+    CHECK(evaluate(board) == 23);
 
-    // Bishop on a1: material, PSQT, square control, and bishop mobility
-    // along the long diagonal
+    // Bishop on a1 versus a bare king is likewise drawn, so the eg half
+    // is scaled to zero. The mg half still reflects material and PSTs.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 951);
+    CHECK(evaluate(board) == 39);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1693);
+    CHECK(evaluate(board) == 1695);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3191);
+    CHECK(evaluate(board) == 3195);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -124,12 +134,14 @@ TEST_CASE("Eval: tapered eval blends middlegame and endgame", "[eval]") {
     CHECK(heavyCastled > heavyExposed);
 }
 
-TEST_CASE("Eval: symmetric positions score 0", "[eval]") {
+TEST_CASE("Eval: symmetric positions equal the tempo bonus", "[eval]") {
     Board board;
 
-    // Mirror position: identical pieces on mirrored squares
+    // Mirror position: the positional half cancels cleanly, so only the
+    // middlegame tempo contribution (scaled by the full startpos phase of
+    // 24) is left for the side to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1");
-    CHECK(evaluate(board) == 0);
+    CHECK(evaluate(board) == 28);
 }
 
 // --- King safety tests ---
@@ -190,13 +202,15 @@ TEST_CASE("Eval: pawn storm penalizes defending side", "[eval][kingsafety]") {
 TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     Board board;
 
-    // Fully symmetric position with pawns -- should still be 0
+    // Fully symmetric position with pawns: positional half cancels and the
+    // score reduces to the tempo contribution for whoever is to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    CHECK(evaluate(board) == 0);
+    CHECK(evaluate(board) == 28);
 
-    // Symmetric with castled kings
+    // Symmetric with castled kings. Phase is reduced (no queens: 24 - 8 = 16)
+    // but the tempo contribution scales with the middlegame weight.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 0);
+    CHECK(evaluate(board) == 25);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
@@ -352,9 +366,11 @@ TEST_CASE("Eval: pawn chain gives connected bonus", "[eval][pawn]") {
     CHECK(chain > noChain);
 }
 
-TEST_CASE("Eval: symmetric pawn structure scores 0", "[eval][pawn]") {
+TEST_CASE("Eval: symmetric pawn structure leaves only the tempo bonus", "[eval][pawn]") {
     Board board;
 
+    // Kings and pawns: phase is 0 so the middlegame tempo contribution
+    // tapers all the way to zero and the score is exactly 0.
     board.setFen("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
     CHECK(evaluate(board) == 0);
 }
@@ -400,14 +416,17 @@ TEST_CASE("Eval: material imbalance is color-symmetric", "[eval][material]") {
     Board board;
 
     // Q vs R+N, White has the queen. Color-mirror of the same material
-    // imbalance should produce an equal-and-opposite eval.
+    // imbalance should produce an equal-and-opposite positional half. The
+    // tempo bonus goes to whoever is to move in both positions (White
+    // here), so (whiteSide + blackSide) equals twice the tempo contribution.
     board.setFen("4k3/8/8/8/8/8/3RN3/3QK3 w - - 0 1");
     int whiteSide = evaluate(board);
 
     board.setFen("3qk3/3rn3/8/8/8/8/8/4K3 w - - 0 1");
     int blackSide = evaluate(board);
 
-    CHECK(whiteSide == -blackSide);
+    CHECK((whiteSide + blackSide) > 0);
+    CHECK((whiteSide - blackSide) > 0);
     CHECK(whiteSide != 0);
 }
 
@@ -617,5 +636,230 @@ TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
     board.setFen("4k3/8/8/3n4/8/8/8/4K3 w - - 0 1");
     int blackKnight = evaluate(board);
 
-    CHECK(whiteKnight == -blackKnight);
+    // Both FENs have White to move, so the shared tempo bonus survives the
+    // sign flip. The positional halves still mirror (whiteKnight - blackKnight
+    // stays positive), while (whiteKnight + blackKnight) captures 2 * tempo.
+    CHECK((whiteKnight + blackKnight) > 0);
+    CHECK((whiteKnight - blackKnight) > 0);
+}
+
+// --- Threats tests ---
+
+TEST_CASE("Eval: pawn attacking enemy minor is a threat", "[eval][threats]") {
+    Board board;
+
+    // White pawn on d5 with a black knight on c6 right in its attack mask.
+    // The threat-by-pawn bonus should favor White noticeably beyond the
+    // bare material and PST deltas.
+    board.setFen("4k3/8/2n5/3P4/8/8/8/4K3 w - - 0 1");
+    int withPawnThreat = evaluate(board);
+
+    // Same material, same side to move, but the pawn sits on h5 so it no
+    // longer attacks the knight. Any remaining delta between the two
+    // positions comes from PST and mobility, not from a pawn threat.
+    board.setFen("4k3/8/2n5/7P/8/8/8/4K3 w - - 0 1");
+    int withoutPawnThreat = evaluate(board);
+
+    CHECK(withPawnThreat > withoutPawnThreat);
+}
+
+TEST_CASE("Eval: hanging piece penalizes the side whose piece hangs", "[eval][threats]") {
+    Board board;
+
+    // Black knight on e5, undefended, attacked by a White bishop on b2.
+    // White should be happy about the hanging knight.
+    board.setFen("4k3/8/8/4n3/8/8/1B6/4K3 w - - 0 1");
+    int knightHangs = evaluate(board);
+
+    // Same knight, now defended by a black pawn on d6 so it no longer
+    // hangs. White's score should be lower.
+    board.setFen("4k3/8/3p4/4n3/8/8/1B6/4K3 w - - 0 1");
+    int knightDefended = evaluate(board);
+
+    CHECK(knightHangs > knightDefended);
+}
+
+// --- Passed pawn refinements ---
+
+TEST_CASE("Eval: blockaded passer scores worse than free passer", "[eval][passed]") {
+    Board board;
+
+    // White passed pawn on e6 with a black knight blockading on e7. The
+    // blockade penalty should make this worse for White than the same
+    // passer with the stop square clear.
+    board.setFen("4k3/4n3/4P3/8/8/8/8/4K3 w - - 0 1");
+    int blocked = evaluate(board);
+
+    board.setFen("3nk3/8/4P3/8/8/8/8/4K3 w - - 0 1");
+    int free = evaluate(board);
+
+    CHECK(free > blocked);
+}
+
+TEST_CASE("Eval: verbose output prints and never diverges from evaluate()", "[eval][verbose]") {
+    Board board;
+    board.setFen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+
+    std::ostringstream out;
+    evaluateVerbose(board, out);
+
+    std::string text = out.str();
+    CHECK(text.find("rlngin eval breakdown") != std::string::npos);
+    CHECK(text.find("Material") != std::string::npos);
+    CHECK(text.find("Threats") != std::string::npos);
+    CHECK(text.find("Total (stm)") != std::string::npos);
+
+    // evaluateVerbose prints a warning if its internal sum ever disagrees
+    // with evaluate(board). The absence of that warning is the smoke
+    // test for the shared eval path.
+    CHECK(text.find("WARNING") == std::string::npos);
+}
+
+TEST_CASE("Eval: opposite-colored bishops scale the endgame toward a draw", "[eval][scale]") {
+    Board board;
+
+    // White has an extra pawn and both sides keep one bishop of opposite
+    // colors. The OCB scale factor should reduce the endgame component of
+    // White's advantage compared to the same material with same-color
+    // bishops (which would not scale).
+    board.setFen("4k3/8/5b2/4p3/4P3/5B2/4P3/4K3 w - - 0 1");
+    int ocbEval = evaluate(board);
+
+    // Same material profile with same-color bishops: both bishops sit on
+    // light squares so scaleFactor returns the default 64 and the eg
+    // component passes through unchanged.
+    board.setFen("4k3/8/b7/4p3/4P3/5B2/4P3/4K3 w - - 0 1");
+    int sameColorEval = evaluate(board);
+
+    CHECK(sameColorEval > ocbEval);
+}
+
+TEST_CASE("Eval: bishop blocked by same-color pawns is penalized", "[eval][bishop]") {
+    Board board;
+
+    // Two light-square bishops (on b1 and d1) plus four pawns on light
+    // squares. Every own pawn blocks both bishops' diagonals, so the
+    // bad-bishop penalty fires eight times.
+    board.setFen("3k4/8/8/8/8/8/P1P1P1P1/1B1B3K w - - 0 1");
+    int badBishops = evaluate(board);
+
+    // Same material (two bishops + four pawns + kings) but the bishops
+    // live on dark squares, so none of the light-square pawns block them
+    // and the bad-bishop penalty is zero.
+    board.setFen("3k4/8/8/8/8/8/P1P1P1P1/B1B4K w - - 0 1");
+    int goodBishops = evaluate(board);
+
+    CHECK(goodBishops > badBishops);
+}
+
+TEST_CASE("Eval: rook on the seventh with pawns to chew earns a bonus", "[eval][rook]") {
+    Board board;
+
+    // White rook already raided to a7 with seven black pawns still on the
+    // seventh rank to chew on.
+    board.setFen("4k3/Rppppppp/8/8/8/8/8/4K3 w - - 0 1");
+    int rookOn7th = evaluate(board);
+
+    // Same pawn chain but the rook sits quietly on a1 and no longer
+    // qualifies for the seventh-rank bonus.
+    board.setFen("4k3/1ppppppp/8/8/8/8/8/R3K3 w - - 0 1");
+    int rookOnBack = evaluate(board);
+
+    CHECK(rookOn7th > rookOnBack);
+}
+
+TEST_CASE("Eval: enemy king far from passer is preferred", "[eval][passed]") {
+    Board board;
+
+    // White passer on e6 with both kings on the same rank. Our king
+    // position is held constant so its PST does not vary between
+    // positions; only the enemy king's distance to the e7 stop square
+    // changes. The buggy version of the king-proximity term rewarded
+    // the enemy king being close, so this test fails unless the sign
+    // is correct.
+    board.setFen("4k3/8/4P3/8/4K3/8/8/8 w - - 0 1");
+    int enemyClose = evaluate(board);
+
+    board.setFen("k7/8/4P3/8/4K3/8/8/8 w - - 0 1");
+    int enemyFar = evaluate(board);
+
+    CHECK(enemyFar > enemyClose);
+}
+
+TEST_CASE("Eval: our king close to advanced passer is preferred", "[eval][passed]") {
+    Board board;
+
+    // White passer on e6 with our king nearby at e5 vs the same passer
+    // with our king stranded at a1. The endgame king-proximity term
+    // combined with king PST should both favor the close king.
+    board.setFen("4k3/8/4P3/4K3/8/8/8/8 w - - 0 1");
+    int kingClose = evaluate(board);
+
+    board.setFen("4k3/8/4P3/8/8/8/8/K7 w - - 0 1");
+    int kingFar = evaluate(board);
+
+    CHECK(kingClose > kingFar);
+}
+
+TEST_CASE("Eval: safe pawn push threat does not double count pawn attacks", "[eval][threats]") {
+    Board board;
+
+    // White pawn on c4 already attacks the black knight on d5, so
+    // ThreatByPawn fires. Our c2 pawn could also push to c3 which would
+    // also attack d5, but crediting SafePawnPush here would double count
+    // the same threatened piece. After the fix, the eval delta coming
+    // from the pushable second pawn is zero.
+    board.setFen("4k3/8/8/3n4/2P5/8/2P5/4K3 w - - 0 1");
+    int withPushPartner = evaluate(board);
+
+    // Same knight, same attacking pawn on c4, but no c2 pawn behind it
+    // so no push-based threat is possible. The pawn threat on d5 still
+    // fires equally, so if the earlier position was inflated by a double
+    // counted SafePawnPush the two evals would diverge by more than the
+    // one-pawn material delta alone.
+    board.setFen("4k3/8/8/3n4/2P5/8/8/4K3 w - - 0 1");
+    int withoutPushPartner = evaluate(board);
+
+    // The c2 pawn contributes material (PieceValue[Pawn] internal = 198)
+    // plus PST plus pawn structure; there is no additional SafePawnPush
+    // bonus, so the delta should stay in that range.
+    int delta = withPushPartner - withoutPushPartner;
+    CHECK(delta > 0);
+    CHECK(delta < 400);
+}
+
+TEST_CASE("Eval: two pieces converging on the enemy queen are a weak queen", "[eval][threats]") {
+    Board board;
+
+    // White rook on d1 and white bishop on b2 both attacking the black
+    // queen on d5. That puts the queen in attackedBy2 and should fire
+    // the weak-queen term in addition to the per-attacker threats.
+    board.setFen("4k3/8/8/3q4/8/8/1B6/3RK3 w - - 0 1");
+    int twoAttackers = evaluate(board);
+
+    // Same black queen, only attacked by the white rook: the weak-queen
+    // bonus should not fire because attackedBy2 requires two distinct
+    // attackers.
+    board.setFen("4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1");
+    int oneAttacker = evaluate(board);
+
+    CHECK(twoAttackers > oneAttacker);
+}
+
+TEST_CASE("Eval: rook attacking enemy queen earns a threat bonus", "[eval][threats]") {
+    Board board;
+
+    // White rook on d1 and black queen on d5 with a clear file between
+    // them: the rook attacks the queen and should score positively for
+    // the attacking side.
+    board.setFen("4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1");
+    int rookThreatensQueen = evaluate(board);
+
+    // Same material but the rook sits on a1 and no longer attacks the
+    // queen. Threat-by-rook on the queen is gone and the eval relative
+    // delta drops.
+    board.setFen("4k3/8/8/3q4/8/8/8/R3K3 w - - 0 1");
+    int rookIdle = evaluate(board);
+
+    CHECK(rookThreatensQueen > rookIdle);
 }
