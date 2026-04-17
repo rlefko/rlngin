@@ -968,11 +968,17 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     for (int depth = 1; depth <= maxDepth; depth++) {
         state.rootDepth = depth;
         state.extensionsOnPath[0] = 0;
-        int delta = 60;
+        // Start tighter than the historical 60 so most iterations land inside
+        // the window on the first try; on fail we widen gradually rather than
+        // quadrupling, so a transient drift doesn't blow the window open and
+        // we recover by only as much as the signal warrants.
+        int delta = 25;
         int alpha, beta;
 
-        // Use aspiration windows at depth >= 4 when the previous score is not a mate score
-        if (depth >= 4 && std::abs(prevScore) < MATE_SCORE - 100) {
+        // Use aspiration windows at depth >= 3 when the previous score is not
+        // a mate score. Starting one ply earlier is safe once delta is this
+        // tight: the d2 score is already a reliable anchor for d3's search.
+        if (depth >= 3 && std::abs(prevScore) < MATE_SCORE - 100) {
             alpha = std::max(prevScore - delta, -INF_SCORE);
             beta = std::min(prevScore + delta, INF_SCORE);
         } else {
@@ -1046,8 +1052,9 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     .count();
 
             if (currentBestScore <= alpha) {
-                // Fail-low: score is below the window, widen downward
-                // Ensure the PV contains at least the best move for UCI output
+                // Fail-low: score is below the window. Re-center on the new
+                // score and widen gently; a halved upper bound keeps the
+                // window biased around the true score without abandoning it.
                 if (state.pvLength[0] == 0) {
                     state.pv[0][0] = currentBest;
                     state.pvLength[0] = 1;
@@ -1055,13 +1062,16 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_UPPER);
                 beta = (alpha + beta) / 2;
                 alpha = std::max(currentBestScore - delta, -INF_SCORE);
-                delta *= 4;
+                delta += delta / 2;
             } else if (currentBestScore >= beta) {
-                // Fail-high: score is above the window, widen upward
+                // Fail-high: score is above the window. Widen beta gently and
+                // keep alpha re-centered so a ricocheting score does not force
+                // a full-window rewind on the next iteration.
                 state.bestMove = currentBest;
                 printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER);
+                alpha = (alpha + beta) / 2;
                 beta = std::min(currentBestScore + delta, INF_SCORE);
-                delta *= 4;
+                delta += delta / 2;
             } else {
                 // Exact: score is within the aspiration window
                 break;
