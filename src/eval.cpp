@@ -343,11 +343,17 @@ static int imbalance(const int pc[2][6], int us) {
     return bonus / 16;
 }
 
-// Per-evaluation derived context: enemy-pawn attack maps and mobility-area
-// bitboards reused by every piece-activity term.
+// Per-evaluation derived context: precomputed attack maps and mobility
+// area bitboards shared across every piece-activity term. `attackedBy`
+// is indexed by [color][piece type] (King slot populated for completeness).
+// `attackedBy2` is the squares attacked by at least two of that color's
+// pieces, which threats and later king-safety terms consume directly.
 struct EvalContext {
     Bitboard pawnAttacks[2];
     Bitboard mobilityArea[2];
+    Bitboard attackedBy[2][7];
+    Bitboard attackedBy2[2];
+    Bitboard allAttacks[2];
 };
 
 static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
@@ -355,6 +361,45 @@ static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
         return ((pawns & ~FileABB) << 7) | ((pawns & ~FileHBB) << 9);
     }
     return ((pawns & ~FileABB) >> 9) | ((pawns & ~FileHBB) >> 7);
+}
+
+// Populate per-side attack maps by piece type plus the aggregate
+// allAttacks and attackedBy2 bitboards. Pawn and king attacks come from
+// their dedicated helpers; the sliding pieces pay one magic lookup per
+// occurrence. The caller is expected to have already filled in
+// ctx.pawnAttacks.
+static void buildAttackMaps(const Board &board, EvalContext &ctx) {
+    Bitboard occ = board.occupied;
+    for (int c = 0; c < 2; c++) {
+        for (int pt = 0; pt < 7; pt++) ctx.attackedBy[c][pt] = 0;
+        ctx.attackedBy[c][Pawn] = ctx.pawnAttacks[c];
+
+        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
+        if (kingBB) ctx.attackedBy[c][King] = KingAttacks[lsb(kingBB)];
+
+        Bitboard pieces = board.byPiece[Knight] & board.byColor[c];
+        while (pieces) ctx.attackedBy[c][Knight] |= KnightAttacks[popLsb(pieces)];
+
+        pieces = board.byPiece[Bishop] & board.byColor[c];
+        while (pieces) ctx.attackedBy[c][Bishop] |= bishopAttacks(popLsb(pieces), occ);
+
+        pieces = board.byPiece[Rook] & board.byColor[c];
+        while (pieces) ctx.attackedBy[c][Rook] |= rookAttacks(popLsb(pieces), occ);
+
+        pieces = board.byPiece[Queen] & board.byColor[c];
+        while (pieces) ctx.attackedBy[c][Queen] |= queenAttacks(popLsb(pieces), occ);
+
+        // Aggregate allAttacks and the two-attackers map. Each |= of a new
+        // type folds its overlaps into attackedBy2 before extending allAttacks.
+        Bitboard all = 0;
+        Bitboard two = 0;
+        for (int pt = Pawn; pt <= King; pt++) {
+            two |= all & ctx.attackedBy[c][pt];
+            all |= ctx.attackedBy[c][pt];
+        }
+        ctx.allAttacks[c] = all;
+        ctx.attackedBy2[c] = two;
+    }
 }
 
 static PawnHashTable pawnHashTable(2);
@@ -584,7 +629,7 @@ static void evaluateSpace(const Board &board, const EvalContext &ctx, Score scor
     }
 }
 
-static void evaluateKingSafety(const Board &board, Score scores[2]) {
+static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score scores[2]) {
     Bitboard occ = board.occupied;
 
     for (int c = 0; c < 2; c++) {
@@ -615,11 +660,11 @@ static void evaluateKingSafety(const Board &board, Score scores[2]) {
             // no separate penalty is applied here.
             if (ourPawnsOnFile) {
                 int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
-                int relativeRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
 
-                if (relativeRank == 1) {
+                if (relRank == 1) {
                     scores[us] += PawnShieldBonus[0];
-                } else if (relativeRank == 2) {
+                } else if (relRank == 2) {
                     scores[us] += PawnShieldBonus[1];
                 }
             }
@@ -640,91 +685,46 @@ static void evaluateKingSafety(const Board &board, Score scores[2]) {
             }
         }
 
-        // King zone attack evaluation
+        // King zone attack evaluation. Enemy attacks are precomputed in
+        // ctx.allAttacks[them]; we still iterate enemy pieces to count how
+        // many distinct attackers reach the zone and sum their attack units.
         Bitboard kZone = kingZoneBB(kingSq, us);
         int attackerCount = 0;
         int attackUnits = 0;
         bool attackingQueenPresent = false;
 
-        // Accumulate all enemy attacks for square control evaluation
-        Bitboard enemyAttacks = 0;
-
-        // Enemy pawn attacks
-        if (them == White) {
-            enemyAttacks |= ((theirPawns & ~FileHBB) << 9) | ((theirPawns & ~FileABB) << 7);
-        } else {
-            enemyAttacks |= ((theirPawns & ~FileABB) >> 9) | ((theirPawns & ~FileHBB) >> 7);
-        }
-
-        // Enemy king attacks
-        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
-        if (theirKingBB) enemyAttacks |= KingAttacks[lsb(theirKingBB)];
-
         Bitboard theirKnights = board.byPiece[Knight] & board.byColor[them];
         while (theirKnights) {
-            int sq = popLsb(theirKnights);
-            Bitboard atk = KnightAttacks[sq];
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (KnightAttacks[popLsb(theirKnights)] & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Knight];
             }
         }
-
         Bitboard theirBishops = board.byPiece[Bishop] & board.byColor[them];
         while (theirBishops) {
-            int sq = popLsb(theirBishops);
-            Bitboard atk = bishopAttacks(sq, occ);
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (bishopAttacks(popLsb(theirBishops), occ) & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Bishop];
             }
         }
-
         Bitboard theirRooks = board.byPiece[Rook] & board.byColor[them];
         while (theirRooks) {
-            int sq = popLsb(theirRooks);
-            Bitboard atk = rookAttacks(sq, occ);
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (rookAttacks(popLsb(theirRooks), occ) & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Rook];
             }
         }
-
         Bitboard theirQueens = board.byPiece[Queen] & board.byColor[them];
         while (theirQueens) {
-            int sq = popLsb(theirQueens);
-            Bitboard atk = queenAttacks(sq, occ);
-            enemyAttacks |= atk;
-            if (atk & kZone) {
+            if (queenAttacks(popLsb(theirQueens), occ) & kZone) {
                 attackerCount++;
                 attackUnits += KingAttackUnits[Queen];
                 attackingQueenPresent = true;
             }
         }
 
-        // Build friendly defense map from all our pieces -- reused by both
-        // the undefended-square term and the gated safe-square term
-        Bitboard friendlyDefense = KingAttacks[kingSq];
-        if (us == White) {
-            friendlyDefense |= ((ourPawns & ~FileHBB) << 9) | ((ourPawns & ~FileABB) << 7);
-        } else {
-            friendlyDefense |= ((ourPawns & ~FileABB) >> 9) | ((ourPawns & ~FileHBB) >> 7);
-        }
-        Bitboard ourKnights = board.byPiece[Knight] & board.byColor[us];
-        while (ourKnights)
-            friendlyDefense |= KnightAttacks[popLsb(ourKnights)];
-        Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
-        while (ourBishops)
-            friendlyDefense |= bishopAttacks(popLsb(ourBishops), occ);
-        Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
-        while (ourRooks)
-            friendlyDefense |= rookAttacks(popLsb(ourRooks), occ);
-        Bitboard ourQueens = board.byPiece[Queen] & board.byColor[us];
-        while (ourQueens)
-            friendlyDefense |= queenAttacks(popLsb(ourQueens), occ);
+        Bitboard enemyAttacks = ctx.allAttacks[them];
+        Bitboard friendlyDefense = ctx.allAttacks[us];
 
         // Undefended zone squares -- self-regulating: with no enemy piece
         // attacking the zone this contributes zero, so no gate is needed
@@ -782,10 +782,11 @@ int evaluate(const Board &board) {
     ctx.pawnAttacks[Black] = pawnAttacksBB(blackPawnsCtx, Black);
     ctx.mobilityArea[White] = ~board.byColor[White] & ~ctx.pawnAttacks[Black];
     ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
+    buildAttackMaps(board, ctx);
 
     evaluatePieces(board, ctx, scores);
     evaluateSpace(board, ctx, scores);
-    evaluateKingSafety(board, scores);
+    evaluateKingSafety(board, ctx, scores);
 
     Score total = scores[White] - scores[Black] + pawnScore;
 
