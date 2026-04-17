@@ -285,6 +285,7 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
         }
 
         UndoInfo undo = board.makeMove(m);
+        tt.prefetch(board.key);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
         if (state.stopped) return 0;
@@ -624,6 +625,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
 
         UndoInfo undo = board.makeMove(m);
+        tt.prefetch(board.key);
         bool givesCheck = isInCheck(board);
 
         // Check extension: extend checking PV moves. Take the max rather than

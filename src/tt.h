@@ -42,6 +42,7 @@ class TranspositionTable {
     void store(uint64_t key, int score, int eval, int depth, TTFlag flag, const Move &best_move,
                int ply);
     bool probe(uint64_t key, TTEntry &entry, int ply) const;
+    void prefetch(uint64_t key) const;
     int hashfull() const;
     uint8_t generation() const { return generation_; }
 

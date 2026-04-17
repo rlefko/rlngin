@@ -107,6 +107,14 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
     target->best_move = best_move;
 }
 
+void TranspositionTable::prefetch(uint64_t key) const {
+    // Issue a non-temporal L1 hint for the cluster a future probe would read.
+    // Call this right after a move is played so the child's probe finds the
+    // line hot, overlapping the DRAM fetch with work the caller still needs
+    // to do before recursing.
+    __builtin_prefetch(&table_[index(key)], 0, 0);
+}
+
 bool TranspositionTable::probe(uint64_t key, TTEntry &entry, int ply) const {
     const TTCluster &cluster = table_[index(key)];
     for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
