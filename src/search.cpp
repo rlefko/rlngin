@@ -26,10 +26,11 @@ static TranspositionTable tt(16);
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
 // Pairs a move with its ordering score so the sort comparator does not
-// re-evaluate scoreMove on every comparison. Sites that need sorted moves
-// build this once per node and iterate it directly.
+// re-evaluate scoreMove on every comparison. The quiet history portion is
+// captured alongside so the LMR reduction term can read it directly.
 struct ScoredMove {
     int score;
+    int historyScore;
     Move move;
 };
 
@@ -124,13 +125,26 @@ static PieceType capturedType(const Board &board, const Move &m) {
 }
 
 static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
-                     const SearchState &state) {
+                     const SearchState &state, int *outQuietHistory = nullptr) {
+    PieceType pt = board.squares[m.from].type;
+    bool capture = isCapture(board, m);
+    bool quietCandidate = !capture && m.promotion == None;
+
+    // Compute the quiet history once and expose it to the caller; LMR reads
+    // this instead of recomputing the same lookups after move ordering.
+    int quietHist = 0;
+    if (quietCandidate) {
+        quietHist = state.historyTables->mainHistory[board.sideToMove][m.from][m.to];
+        if (ply >= 0) {
+            quietHist += contHistoryScore(state, ply, pt, m.to);
+        }
+        if (outQuietHistory) *outQuietHistory = quietHist;
+    }
+
     // TT move gets highest priority
     if (m.from == ttMove.from && m.to == ttMove.to && m.promotion == ttMove.promotion) {
         return 10000000;
     }
-
-    PieceType pt = board.squares[m.from].type;
 
     // Promotions
     if (m.promotion != None) {
@@ -139,7 +153,7 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
     }
 
     // Captures: use SEE to separate good from bad (skip SEE in quiescence, ply == -1)
-    if (isCapture(board, m)) {
+    if (capture) {
         PieceType ct = capturedType(board, m);
         int capHist = state.captureHistory[pt][m.to][ct];
         if (ply < 0) {
@@ -175,13 +189,8 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         }
     }
 
-    // Quiet moves: butterfly history plus multi-ply continuation history
-    int score = state.historyTables->mainHistory[board.sideToMove][m.from][m.to];
-    if (ply >= 0) {
-        score += contHistoryScore(state, ply, pt, m.to);
-    }
-
-    return score;
+    // Plain quiet move: fall back to the precomputed history score.
+    return quietHist;
 }
 
 static void checkTime(SearchState &state) {
@@ -253,7 +262,7 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     std::vector<ScoredMove> scored;
     scored.reserve(moves.size());
     for (const Move &m : moves) {
-        scored.push_back({scoreMove(m, board, ttMove, -1, state), m});
+        scored.push_back({scoreMove(m, board, ttMove, -1, state), 0, m});
     }
     std::sort(scored.begin(), scored.end(),
               [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
@@ -388,11 +397,15 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         depth -= 1;
     }
 
-    // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves
+    // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves.
+    // Capture the quiet history for each move in the same pass so LMR does not
+    // repeat the lookup.
     std::vector<ScoredMove> scored;
     scored.reserve(moves.size());
     for (const Move &m : moves) {
-        scored.push_back({scoreMove(m, board, ttMove, ply, state), m});
+        int hist = 0;
+        int s = scoreMove(m, board, ttMove, ply, state, &hist);
+        scored.push_back({s, hist, m});
     }
     std::sort(scored.begin(), scored.end(),
               [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
@@ -487,7 +500,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         std::vector<ScoredMove> pcScored;
         pcScored.reserve(pcMoves.size());
         for (const Move &m : pcMoves) {
-            pcScored.push_back({scoreMove(m, board, noTT, -1, state), m});
+            pcScored.push_back({scoreMove(m, board, noTT, -1, state), 0, m});
         }
         std::sort(pcScored.begin(), pcScored.end(),
                   [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
@@ -650,15 +663,11 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 reduction = lmrReductions[std::min(depth, MAX_PLY - 1)]
                                          [std::min(moveIndex, MAX_LMR_MOVES - 1)];
 
-                // Adjust reduction based on butterfly plus multi-ply continuation history.
-                // board.sideToMove is the opponent here (the move has been played),
-                // so invert it to index the mover's butterfly slot.
-                Color mover = (board.sideToMove == White) ? Black : White;
-                int histScore = state.historyTables->mainHistory[mover][m.from][m.to];
-                histScore += contHistoryScore(state, ply, state.movedPiece[ply], m.to);
-                // Divisor scales with the added tiers so the reduction magnitude
-                // stays comparable to the single-tier configuration.
-                reduction -= histScore / 24576;
+                // Reuse the butterfly + multi-ply continuation history captured
+                // during move ordering. The divisor scales with the added tiers
+                // so the reduction magnitude stays comparable to the single-tier
+                // configuration.
+                reduction -= scored[moveIndex].historyScore / 24576;
 
                 // Reduce less when position is improving
                 reduction -= improving;
