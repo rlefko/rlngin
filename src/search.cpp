@@ -305,8 +305,14 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     } else {
         flag = TT_EXACT;
     }
-    int storedEval = inCheck ? TT_NO_EVAL : rawStandPat;
-    tt.store(board.key, bestScore, storedEval, 0, flag, bestMove, ply);
+    // Skip the store when nothing was learned beyond the stand-pat: no move
+    // improved on it and the resulting bound is exact. That entry would be
+    // redundant with a probe that recomputes stand-pat from the cached eval.
+    bool tried = bestMove.from != 0 || bestMove.to != 0;
+    if (tried || bestScore != standPat || flag != TT_EXACT) {
+        int storedEval = inCheck ? TT_NO_EVAL : rawStandPat;
+        tt.store(board.key, bestScore, storedEval, 0, flag, bestMove, ply);
+    }
 
     return bestScore;
 }
