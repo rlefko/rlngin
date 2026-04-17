@@ -345,8 +345,7 @@ static bool isRepetition(const Board &board, const SearchState &state, int ply) 
 }
 
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state,
-                   bool allowNullMove = true, Move excludedMove = {0, 0, None},
-                   bool cutNode = false) {
+                   bool allowNullMove = true, Move excludedMove = {0, 0, None}) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
@@ -493,15 +492,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
-            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state, true,
-                                     {0, 0, None}, !cutNode);
+            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
             board.unmakeNullMove(nullUndo);
             if (state.stopped) return 0;
             if (nullScore >= beta) {
                 // Verification search at high depths to guard against zugzwang
                 if (depth >= 8) {
-                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false,
-                                              {0, 0, None}, false);
+                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false);
                     if (state.stopped) return 0;
                     if (verifyScore >= beta) return beta;
                 } else {
@@ -537,8 +534,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             state.movedPiece[ply] = board.squares[pcMove.from].type;
             UndoInfo pcUndo = board.makeMove(pcMove);
 
-            int pcScore = -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1,
-                                   state, true, {0, 0, None}, !cutNode);
+            int pcScore =
+                -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1, state);
 
             board.unmakeMove(pcMove, pcUndo);
             if (state.stopped) return 0;
@@ -563,7 +560,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         int singularDepth = (depth - 1) / 2;
 
         int singularScore = negamax(board, singularDepth, ply, singularBeta - 1, singularBeta,
-                                    state, false, ttMove, cutNode);
+                                    state, false, ttMove);
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
@@ -699,17 +696,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         int newDepth = depth - 1 + moveExtension;
 
         int score;
-        // Cut-node semantics for the children: the PV child of a PV node is a
-        // PV node itself (cut-node does not apply, pass false). Every other
-        // child is searched with a null window, so we alternate expected
-        // node-type by parity: an expected cut-node's null-window child is an
-        // expected all-node, and vice versa. Non-first PV children are always
-        // expected cut-nodes since they are being tested against the PV move.
-        bool pvChild = pvNode && moveIndex == 0;
-        bool nullWindowCutNode = pvNode ? true : !cutNode;
         if (moveIndex == 0) {
-            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true, {0, 0, None},
-                             pvChild ? false : !cutNode);
+            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
         } else {
             // Late move reductions
             int reduction = 0;
@@ -727,29 +715,20 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // Reduce less when position is improving
                 reduction -= improving;
 
-                // Reduce harder at expected cut-nodes. These are nodes where
-                // the parent search is betting on a beta cutoff, so a late
-                // move that failed the earlier pruning checks is unlikely to
-                // overturn that bet; saving a ply here is almost free.
-                if (cutNode) reduction += 1;
-
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 
             // Reduced null-window search
-            score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state, true,
-                             {0, 0, None}, nullWindowCutNode);
+            score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state);
 
             // Re-search at full depth if reduced search beats alpha
             if (reduction > 0 && score > alpha) {
-                score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state, true,
-                                 {0, 0, None}, nullWindowCutNode);
+                score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state);
             }
 
             // PVS: re-search with full window if null-window search beats alpha
             if (score > alpha && score < beta) {
-                score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true, {0, 0, None},
-                                 false);
+                score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
             }
         }
 
@@ -976,18 +955,12 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
                 int score;
                 if (mi == 0) {
-                    // Root PV child: always a PV node.
-                    score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state, true,
-                                     {0, 0, None}, false);
+                    score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
                 } else {
-                    // PVS: null-window search for non-first moves. Non-first
-                    // root children are expected cut nodes; if they beat alpha
-                    // we re-search as a PV node.
-                    score = -negamax(pos, depth - 1, 1, -localAlpha - 1, -localAlpha, state, true,
-                                     {0, 0, None}, true);
+                    // PVS: null-window search for non-first moves
+                    score = -negamax(pos, depth - 1, 1, -localAlpha - 1, -localAlpha, state);
                     if (score > localAlpha && score < beta) {
-                        score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state, true,
-                                         {0, 0, None}, false);
+                        score = -negamax(pos, depth - 1, 1, -beta, -localAlpha, state);
                     }
                 }
 

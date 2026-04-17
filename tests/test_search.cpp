@@ -698,20 +698,6 @@ TEST_CASE("Search: mate distance pruning keeps deep mate search bounded", "[sear
     CHECK(state.nodes < 100000);
 }
 
-TEST_CASE("Search: cut-node LMR keeps tactical captures", "[search][cutnode]") {
-    ensureInit();
-    clearTT();
-    Board board;
-    // The +1 LMR reduction on expected cut-nodes must not hide a hanging
-    // queen capture. The TT move ordering puts this capture first, so any
-    // regression that over-reduces the TT move at a cut node fails here.
-    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
-
-    Move best = findBestMove(board, 6);
-    CHECK(best.from == stringToSquare("e4"));
-    CHECK(best.to == stringToSquare("d6"));
-}
-
 TEST_CASE("Search: history leaf pruning preserves mating move", "[search][history-prune]") {
     ensureInit();
     clearTT();
