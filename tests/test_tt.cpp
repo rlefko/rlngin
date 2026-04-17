@@ -106,6 +106,32 @@ TEST_CASE("TT: missing eval exposes sentinel", "[tt]") {
     CHECK(entry.eval == TT_NO_EVAL);
 }
 
+TEST_CASE("TT: cluster absorbs colliding keys", "[tt]") {
+    TranspositionTable table(1);
+    Move move1 = {1, 2, None};
+    Move move2 = {3, 4, None};
+
+    // Small keys always map to the first cluster under multiplicative hashing,
+    // so both stores should land in the same two-way cluster and both should
+    // probe back cleanly instead of one evicting the other.
+    table.store(1, 100, 10, 5, TT_EXACT, move1, 0);
+    table.store(2, 200, 20, 6, TT_LOWER_BOUND, move2, 0);
+
+    TTEntry e1;
+    REQUIRE(table.probe(1, e1, 0));
+    CHECK(e1.score == 100);
+    CHECK(e1.depth == 5);
+    CHECK(e1.flag == TT_EXACT);
+    CHECK(e1.best_move.from == 1);
+
+    TTEntry e2;
+    REQUIRE(table.probe(2, e2, 0));
+    CHECK(e2.score == 200);
+    CHECK(e2.depth == 6);
+    CHECK(e2.flag == TT_LOWER_BOUND);
+    CHECK(e2.best_move.from == 3);
+}
+
 TEST_CASE("TT: negative mate score adjusted for ply", "[tt]") {
     TranspositionTable table(1);
     Move move = {0, 0, None};

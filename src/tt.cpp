@@ -1,29 +1,32 @@
 #include "tt.h"
 
+#include <algorithm>
+
 // Lock the TT entry layout: padding changes would silently alter the ratio of
 // entries per megabyte and invalidate hash-sizing assumptions.
 static_assert(sizeof(TTEntry) == 32, "TTEntry layout unexpectedly changed");
+static_assert(sizeof(TTCluster) == 64, "TTCluster must fit in one cache line");
 
 TranspositionTable::TranspositionTable(size_t size_mb) {
     resize(size_mb);
 }
 
 void TranspositionTable::resize(size_t size_mb) {
-    num_entries_ = (size_mb * 1024 * 1024) / sizeof(TTEntry);
-    if (num_entries_ == 0) num_entries_ = 1;
-    table_.resize(num_entries_);
+    num_clusters_ = (size_mb * 1024 * 1024) / sizeof(TTCluster);
+    if (num_clusters_ == 0) num_clusters_ = 1;
+    table_.resize(num_clusters_);
     clear();
 }
 
 void TranspositionTable::clear() {
-    std::fill(table_.begin(), table_.end(), TTEntry{});
+    std::fill(table_.begin(), table_.end(), TTCluster{});
 }
 
 size_t TranspositionTable::index(uint64_t key) const {
-    // Multiplicative hashing: map key into [0, num_entries_) using the upper
+    // Multiplicative hashing: map key into [0, num_clusters_) using the upper
     // 64 bits of the 128-bit product. Avoids the DIV instruction that modulo
     // would emit and distributes well over arbitrary, non-power-of-two sizes.
-    return static_cast<size_t>((static_cast<__uint128_t>(key) * num_entries_) >> 64);
+    return static_cast<size_t>((static_cast<__uint128_t>(key) * num_clusters_) >> 64);
 }
 
 int16_t TranspositionTable::scoreToTT(int score, int ply) {
@@ -40,40 +43,73 @@ int TranspositionTable::scoreFromTT(int16_t score, int ply) {
 
 void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTFlag flag,
                                const Move &best_move, int ply) {
-    size_t i = index(key);
-    // Depth-preferred replacement: only overwrite if the slot is empty or the
-    // new search is at least as deep.  This prevents shallow searches (such as
-    // the singular extension subtree) from evicting valuable deep entries.
-    if (table_[i].flag == TT_NONE || depth >= table_[i].depth) {
-        table_[i].key = key;
-        table_[i].score = scoreToTT(score, ply);
-        table_[i].depth = static_cast<int16_t>(depth);
-        table_[i].eval = static_cast<int16_t>(eval);
-        table_[i].flag = flag;
-        table_[i].best_move = best_move;
+    TTCluster &cluster = table_[index(key)];
+
+    // Prefer three slots in priority order: the slot already holding this key
+    // (refresh in place so the newest info wins), then any empty slot, then
+    // the entry with the lowest depth as a classical depth-preferred eviction.
+    TTEntry *target = nullptr;
+    for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
+        if (cluster.entries[i].key == key && cluster.entries[i].flag != TT_NONE) {
+            target = &cluster.entries[i];
+            break;
+        }
     }
+    if (target == nullptr) {
+        for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
+            if (cluster.entries[i].flag == TT_NONE) {
+                target = &cluster.entries[i];
+                break;
+            }
+        }
+    }
+    if (target == nullptr) {
+        target = &cluster.entries[0];
+        for (int i = 1; i < TT_CLUSTER_SIZE; i++) {
+            if (cluster.entries[i].depth < target->depth) {
+                target = &cluster.entries[i];
+            }
+        }
+        // Do not evict a deeper entry belonging to a different key.  Keeping
+        // the deeper result preserves the work that earned that slot, the
+        // same invariant the single-slot depth-preferred policy enforced.
+        if (target->key != key && target->depth > depth) return;
+    }
+
+    target->key = key;
+    target->score = scoreToTT(score, ply);
+    target->depth = static_cast<int16_t>(depth);
+    target->eval = static_cast<int16_t>(eval);
+    target->flag = flag;
+    target->best_move = best_move;
 }
 
 bool TranspositionTable::probe(uint64_t key, TTEntry &entry, int ply) const {
-    size_t i = index(key);
-    if (table_[i].key == key && table_[i].flag != TT_NONE) {
-        entry = table_[i];
-        entry.score = static_cast<int16_t>(scoreFromTT(table_[i].score, ply));
-        return true;
+    const TTCluster &cluster = table_[index(key)];
+    for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
+        const TTEntry &candidate = cluster.entries[i];
+        if (candidate.key == key && candidate.flag != TT_NONE) {
+            entry = candidate;
+            entry.score = static_cast<int16_t>(scoreFromTT(candidate.score, ply));
+            return true;
+        }
     }
     return false;
 }
 
 int TranspositionTable::hashfull() const {
-    size_t sample = std::min(num_entries_, static_cast<size_t>(1000));
+    // Sample the first 1000 slots (500 clusters) so the reading is cheap and
+    // stable across table sizes. Scale down when the table itself is smaller.
+    const size_t total_slots = num_clusters_ * TT_CLUSTER_SIZE;
+    const size_t sample_slots = std::min(total_slots, static_cast<size_t>(1000));
+    const size_t sample_clusters = (sample_slots + TT_CLUSTER_SIZE - 1) / TT_CLUSTER_SIZE;
     int used = 0;
-    for (size_t i = 0; i < sample; i++) {
-        if (table_[i].flag != TT_NONE) {
-            used++;
+    for (size_t c = 0; c < sample_clusters; c++) {
+        for (int e = 0; e < TT_CLUSTER_SIZE; e++) {
+            const size_t slot = c * TT_CLUSTER_SIZE + e;
+            if (slot >= sample_slots) break;
+            if (table_[c].entries[e].flag != TT_NONE) used++;
         }
     }
-    if (sample < 1000) {
-        return static_cast<int>(used * 1000 / sample);
-    }
-    return used;
+    return static_cast<int>(used * 1000 / sample_slots);
 }
