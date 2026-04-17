@@ -20,7 +20,10 @@ void TranspositionTable::clear() {
 }
 
 size_t TranspositionTable::index(uint64_t key) const {
-    return key % num_entries_;
+    // Multiplicative hashing: map key into [0, num_entries_) using the upper
+    // 64 bits of the 128-bit product. Avoids the DIV instruction that modulo
+    // would emit and distributes well over arbitrary, non-power-of-two sizes.
+    return static_cast<size_t>((static_cast<__uint128_t>(key) * num_entries_) >> 64);
 }
 
 int16_t TranspositionTable::scoreToTT(int score, int ply) {

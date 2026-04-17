@@ -16,7 +16,9 @@ void PawnHashTable::clear() {
 }
 
 size_t PawnHashTable::index(uint64_t key) const {
-    return key % numEntries_;
+    // Multiplicative hashing: avoids the DIV instruction that modulo would
+    // emit and distributes keys evenly over arbitrary table sizes.
+    return static_cast<size_t>((static_cast<__uint128_t>(key) * numEntries_) >> 64);
 }
 
 void PawnHashTable::store(uint64_t key, int mg, int eg) {
