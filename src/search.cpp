@@ -721,11 +721,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // History leaf pruning: late in the quiet list at shallow depth, a
         // move with badly negative combined butterfly + continuation history
         // is almost certainly noise. The threshold scales with depth so deep
-        // searches tolerate more mediocre moves before pruning. Reuses the
-        // quiet history already captured at move-ordering time.
-        if (!pvNode && !inCheck && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
-            depth <= 6 && alpha > -MATE_SCORE + MAX_PLY) {
-            int histThreshold = -2048 * depth;
+        // searches tolerate more mediocre moves before pruning. Skipped near
+        // mate windows so a low-history mating move cannot be discarded, and
+        // gated past the first few quiets so a freshly-cleared history table
+        // does not prune the engine's best move out from under itself.
+        if (!pvNode && !inCheck && moveIndex >= 4 && !capture && !isPromotion && !givesCheck &&
+            depth <= 5 && alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
+            int histThreshold = -3000 * depth;
             if (scored[moveIndex].historyScore < histThreshold) {
                 board.unmakeMove(m, undo);
                 continue;
