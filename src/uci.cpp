@@ -104,6 +104,7 @@ void uciLoop() {
             board.setStartPos();
             clearTT();
             clearPawnHash();
+            clearMaterialHash();
             clearHistory(searchState);
         } else if (command == "position") {
             joinSearch();

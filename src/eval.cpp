@@ -1,6 +1,7 @@
 #include "eval.h"
 
 #include "bitboard.h"
+#include "material_hash.h"
 #include "pawn_hash.h"
 #include "zobrist.h"
 
@@ -352,6 +353,51 @@ static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
 }
 
 static PawnHashTable pawnHashTable(2);
+static MaterialHashTable materialHashTable(1);
+
+// Compute the pure material contribution for this position: piece values
+// (MG/EG), bishop pair bonus, quadratic imbalance, and game phase. The
+// result depends only on piece counts, so it can be cached by the material
+// zobrist key. PSTs are not included here because they depend on squares.
+static void evaluateMaterial(const Board &board, Score outScores[2], int &outPhase) {
+    int probeMg = 0, probeEg = 0, probePhase = 0;
+    if (materialHashTable.probe(board.materialKey, probeMg, probeEg, probePhase)) {
+        // Material hash stores a single white-minus-black packed score and
+        // the game phase; assign it to White's slot and leave Black at 0.
+        outScores[White] = S(probeMg, probeEg);
+        outScores[Black] = 0;
+        outPhase = probePhase;
+        return;
+    }
+
+    int pc[2][6];
+    int phase = 0;
+    Score scores[2] = {0, 0};
+    for (int c = 0; c < 2; c++) {
+        for (int pt = 1; pt < 7; pt++) {
+            int cnt = board.pieceCount[c][pt];
+            scores[c] += PieceScore[pt] * cnt;
+            phase += GamePhaseInc[pt] * cnt;
+        }
+        pc[c][0] = (board.pieceCount[c][Bishop] >= 2) ? 1 : 0;
+        pc[c][1] = board.pieceCount[c][Pawn];
+        pc[c][2] = board.pieceCount[c][Knight];
+        pc[c][3] = board.pieceCount[c][Bishop];
+        pc[c][4] = board.pieceCount[c][Rook];
+        pc[c][5] = board.pieceCount[c][Queen];
+        if (pc[c][0]) scores[c] += BishopPair;
+    }
+    int imbW = imbalance(pc, White);
+    int imbB = imbalance(pc, Black);
+    scores[White] += S(imbW, imbW);
+    scores[Black] += S(imbB, imbB);
+
+    Score delta = scores[White] - scores[Black];
+    materialHashTable.store(board.materialKey, mg_value(delta), eg_value(delta), phase);
+    outScores[White] = delta;
+    outScores[Black] = 0;
+    outPhase = phase;
+}
 
 static void evaluatePawns(const Board &board, Score &out) {
     int mgCached = 0, egCached = 0;
@@ -706,29 +752,20 @@ int evaluate(const Board &board) {
     Score scores[2] = {0, 0};
     int gamePhase = 0;
 
+    // PST-only accumulation per square; piece material, bishop pair, and
+    // imbalance come from the cached material probe below.
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
 
         int idx = (p.color == White) ? sq : (sq ^ 56);
-        scores[p.color] += PieceScore[p.type] + PST[p.type][idx];
-        gamePhase += GamePhaseInc[p.type];
+        scores[p.color] += PST[p.type][idx];
     }
 
-    int pc[2][6];
-    for (int c = 0; c < 2; c++) {
-        pc[c][0] = (board.pieceCount[c][Bishop] >= 2) ? 1 : 0;
-        pc[c][1] = board.pieceCount[c][Pawn];
-        pc[c][2] = board.pieceCount[c][Knight];
-        pc[c][3] = board.pieceCount[c][Bishop];
-        pc[c][4] = board.pieceCount[c][Rook];
-        pc[c][5] = board.pieceCount[c][Queen];
-        if (pc[c][0]) scores[c] += BishopPair;
-    }
-    int imbWhite = imbalance(pc, White);
-    int imbBlack = imbalance(pc, Black);
-    scores[White] += S(imbWhite, imbWhite);
-    scores[Black] += S(imbBlack, imbBlack);
+    Score matScores[2];
+    evaluateMaterial(board, matScores, gamePhase);
+    scores[White] += matScores[White];
+    scores[Black] += matScores[Black];
 
     Score pawnScore = 0;
     evaluatePawns(board, pawnScore);
@@ -773,4 +810,12 @@ void clearPawnHash() {
 
 void setPawnHashSize(size_t mb) {
     pawnHashTable.resize(mb);
+}
+
+void clearMaterialHash() {
+    materialHashTable.clear();
+}
+
+void setMaterialHashSize(size_t mb) {
+    materialHashTable.resize(mb);
 }

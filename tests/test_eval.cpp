@@ -374,6 +374,28 @@ TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
     CHECK(whitePassed == -blackPassed);
 }
 
+TEST_CASE("Eval: material hash probe is deterministic", "[eval][material]") {
+    Board board;
+
+    // Two positions with identical piece counts (same material key) but
+    // different PST contributions. The overall eval must differ (PSTs are
+    // not cached), but repeating either evaluation must always return the
+    // same value regardless of probe order -- a stored entry cannot poison
+    // a later query of a different position.
+    board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
+    int a1 = evaluate(board);
+    board.setFen("4k3/3Q4/8/8/8/8/8/4K3 w - - 0 1");
+    int b1 = evaluate(board);
+    board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
+    int a2 = evaluate(board);
+    board.setFen("4k3/3Q4/8/8/8/8/8/4K3 w - - 0 1");
+    int b2 = evaluate(board);
+
+    CHECK(a1 == a2);
+    CHECK(b1 == b2);
+    CHECK(a1 != b1);
+}
+
 TEST_CASE("Eval: material imbalance is color-symmetric", "[eval][material]") {
     Board board;
 
