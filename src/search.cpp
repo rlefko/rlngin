@@ -364,11 +364,25 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     int origAlpha = alpha;
     bool pvNode = (beta - alpha > 1);
+    bool hasExcludedMove = (excludedMove.from != 0 || excludedMove.to != 0);
+
+    // Mate distance pruning: once we know the best achievable score at this ply
+    // is bounded by a mate in (MATE_SCORE - ply) and the worst is bounded by a
+    // mated in (MATE_SCORE - ply - 1), clamping the window collapses any search
+    // line that cannot improve on a mate we have already found closer to the
+    // root. Singular exclusion searches pass a deliberately narrow window, so
+    // we leave those untouched.
+    if (ply > 0 && !hasExcludedMove) {
+        int mateAlpha = std::max(alpha, -MATE_SCORE + ply);
+        int mateBeta = std::min(beta, MATE_SCORE - ply - 1);
+        if (mateAlpha >= mateBeta) return mateAlpha;
+        alpha = mateAlpha;
+        beta = mateBeta;
+    }
 
     // TT probe
     TTEntry ttEntry;
     Move ttMove = {0, 0, None};
-    bool hasExcludedMove = (excludedMove.from != 0 || excludedMove.to != 0);
     bool ttHit = tt.probe(board.key, ttEntry, ply);
     if (ttHit) {
         ttMove = ttEntry.best_move;
