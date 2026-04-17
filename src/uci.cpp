@@ -131,6 +131,9 @@ void uciLoop() {
             });
         } else if (command == "stop") {
             joinSearch();
+        } else if (command == "eval") {
+            joinSearch();
+            evaluateVerbose(board, std::cout);
         } else if (command == "quit") {
             joinSearch();
             break;

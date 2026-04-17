@@ -3,6 +3,7 @@
 #include "eval.h"
 
 #include <cstdlib>
+#include <sstream>
 
 TEST_CASE("Eval: starting position equals the tempo bonus", "[eval]") {
     Board board;
@@ -693,6 +694,26 @@ TEST_CASE("Eval: blockaded passer scores worse than free passer", "[eval][passed
     int free = evaluate(board);
 
     CHECK(free > blocked);
+}
+
+TEST_CASE("Eval: verbose output prints and never diverges from evaluate()",
+          "[eval][verbose]") {
+    Board board;
+    board.setFen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+
+    std::ostringstream out;
+    evaluateVerbose(board, out);
+
+    std::string text = out.str();
+    CHECK(text.find("rlngin eval breakdown") != std::string::npos);
+    CHECK(text.find("Material") != std::string::npos);
+    CHECK(text.find("Threats") != std::string::npos);
+    CHECK(text.find("Total (stm)") != std::string::npos);
+
+    // evaluateVerbose prints a warning if its internal sum ever disagrees
+    // with evaluate(board). The absence of that warning is the smoke
+    // test for the shared eval path.
+    CHECK(text.find("WARNING") == std::string::npos);
 }
 
 TEST_CASE("Eval: opposite-colored bishops scale the endgame toward a draw",

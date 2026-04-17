@@ -6,6 +6,7 @@
 #include "zobrist.h"
 
 #include <algorithm>
+#include <iomanip>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
 const int PieceValue[] = {0, 198, 817, 836, 1270, 2521, 20000};
@@ -1104,6 +1105,118 @@ int evaluate(const Board &board) {
     result += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
 
     return (board.sideToMove == White) ? result : -result;
+}
+
+void evaluateVerbose(const Board &board, std::ostream &os) {
+    ensureEvalInit();
+
+    // Replay the same computation as evaluate() but snapshot each term
+    // separately so the breakdown can be printed.
+    Score pstScore = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        Piece p = board.squares[sq];
+        if (p.type == None) continue;
+        int idx = (p.color == White) ? sq : (sq ^ 56);
+        Score contribution = PST[p.type][idx];
+        pstScore += (p.color == White) ? contribution : -contribution;
+    }
+
+    Score matScores[2];
+    int gamePhase = 0;
+    evaluateMaterial(board, matScores, gamePhase);
+    Score matScore = matScores[White] - matScores[Black];
+
+    Score pawnScore = 0;
+    Bitboard passers[2] = {0, 0};
+    evaluatePawns(board, pawnScore, passers);
+
+    EvalContext ctx;
+    Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
+    Bitboard blackPawnsCtx = board.byPiece[Pawn] & board.byColor[Black];
+    ctx.pawnAttacks[White] = pawnAttacksBB(whitePawnsCtx, White);
+    ctx.pawnAttacks[Black] = pawnAttacksBB(blackPawnsCtx, Black);
+    ctx.mobilityArea[White] = ~board.byColor[White] & ~ctx.pawnAttacks[Black];
+    ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
+    buildAttackMaps(board, ctx);
+
+    Score pieceScores[2] = {0, 0};
+    evaluatePieces(board, ctx, pieceScores);
+    Score pieceScore = pieceScores[White] - pieceScores[Black];
+
+    Score passerExtrasScores[2] = {0, 0};
+    evaluatePassedPawnExtras(board, ctx, passers, passerExtrasScores);
+    Score passerExtrasScore = passerExtrasScores[White] - passerExtrasScores[Black];
+
+    Score threatScores[2] = {0, 0};
+    evaluateThreats(board, ctx, threatScores);
+    Score threatScore = threatScores[White] - threatScores[Black];
+
+    Score spaceScores[2] = {0, 0};
+    evaluateSpace(board, ctx, spaceScores);
+    Score spaceScore = spaceScores[White] - spaceScores[Black];
+
+    Score kingSafetyScores[2] = {0, 0};
+    evaluateKingSafety(board, ctx, kingSafetyScores);
+    Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
+
+    Score total = pstScore + matScore + pieceScore + passerExtrasScore + threatScore +
+                  spaceScore + kingSafetyScore + pawnScore;
+    int mg = mg_value(total);
+    int eg = eg_value(total);
+
+    int scale = scaleFactor(board);
+    int scaledEg = eg * scale / 64;
+
+    int mgPhase = std::min(gamePhase, 24);
+    int egPhase = 24 - mgPhase;
+    int blended = (mg * mgPhase + scaledEg * egPhase) / 24;
+
+    int halfmoveScaled = blended;
+    if (board.byPiece[Pawn]) {
+        halfmoveScaled = blended * (200 - board.halfmoveClock) / 200;
+    }
+
+    int tempoContribution = mg_value(Tempo) * mgPhase / 24;
+    int whitePovResult = halfmoveScaled +
+                         ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
+    int stmResult = (board.sideToMove == White) ? whitePovResult : -whitePovResult;
+
+    auto formatTerm = [](std::ostream &out, const char *name, Score s) {
+        int tmg = mg_value(s);
+        int teg = eg_value(s);
+        out << "  " << std::left << std::setw(14) << name << " mg=" << std::setw(6) << std::right
+            << tmg << " eg=" << std::setw(6) << std::right << teg << '\n';
+    };
+
+    os << "rlngin eval breakdown (white perspective unless noted)\n";
+    formatTerm(os, "Material", matScore);
+    formatTerm(os, "PST", pstScore);
+    formatTerm(os, "Pawns", pawnScore);
+    formatTerm(os, "Pieces", pieceScore);
+    formatTerm(os, "Passed extras", passerExtrasScore);
+    formatTerm(os, "Threats", threatScore);
+    formatTerm(os, "Space", spaceScore);
+    formatTerm(os, "King safety", kingSafetyScore);
+    os << "  " << std::left << std::setw(14) << "Sum"
+       << " mg=" << std::setw(6) << std::right << mg << " eg=" << std::setw(6) << std::right << eg
+       << '\n';
+    os << "  " << std::left << std::setw(14) << "Phase"
+       << " " << mgPhase << "/24\n";
+    os << "  " << std::left << std::setw(14) << "Scale"
+       << " eg * " << scale << "/64 = " << scaledEg << '\n';
+    os << "  " << std::left << std::setw(14) << "Halfmove"
+       << " clock=" << board.halfmoveClock << " -> " << halfmoveScaled << '\n';
+    os << "  " << std::left << std::setw(14) << "Tempo"
+       << " " << ((board.sideToMove == White) ? "+" : "-") << tempoContribution << '\n';
+    os << "  " << std::left << std::setw(14) << "Total (stm)"
+       << " internal=" << stmResult << " cp=" << (stmResult * 100 / 228) << '\n';
+
+    // Safety check: the verbose path should never diverge from evaluate().
+    int expected = evaluate(board);
+    if (expected != stmResult) {
+        os << "  WARNING: verbose total " << stmResult << " differs from evaluate() "
+           << expected << '\n';
+    }
 }
 
 void clearPawnHash() {
