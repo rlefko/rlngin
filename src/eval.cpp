@@ -190,6 +190,11 @@ static const Score RookOn7thBonus = S(29, 55);
 static const Score KnightOutpostBonus = S(72, 55);
 static const Score BishopOutpostBonus = S(43, 22);
 
+// Bad bishop: every friendly pawn sharing the bishop's color blocks its
+// diagonals, so the bishop plays behind its own pawn chain. Penalty is
+// linear in the number of matching-color own pawns.
+static const Score BadBishopPenalty = S(-5, -7);
+
 // Penalty for a rook shut in on the same side of the board as its own king
 // when the rook has little room to breathe. Pure middlegame concern; in the
 // endgame the king activates and the rook typically walks free. Doubled
@@ -628,6 +633,11 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 !(PawnSpanMask[c][sq] & theirPawns)) {
                 scores[c] += BishopOutpostBonus;
             }
+
+            Bitboard sameColorSquares =
+                (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
+            int blockingPawns = popcount(ourPawns & sameColorSquares);
+            scores[c] += BadBishopPenalty * blockingPawns;
         }
 
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];

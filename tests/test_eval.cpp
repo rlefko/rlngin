@@ -693,6 +693,24 @@ TEST_CASE("Eval: blockaded passer scores worse than free passer", "[eval][passed
     CHECK(free > blocked);
 }
 
+TEST_CASE("Eval: bishop blocked by same-color pawns is penalized", "[eval][bishop]") {
+    Board board;
+
+    // Two light-square bishops (on b1 and d1) plus four pawns on light
+    // squares. Every own pawn blocks both bishops' diagonals, so the
+    // bad-bishop penalty fires eight times.
+    board.setFen("3k4/8/8/8/8/8/P1P1P1P1/1B1B3K w - - 0 1");
+    int badBishops = evaluate(board);
+
+    // Same material (two bishops + four pawns + kings) but the bishops
+    // live on dark squares, so none of the light-square pawns block them
+    // and the bad-bishop penalty is zero.
+    board.setFen("3k4/8/8/8/8/8/P1P1P1P1/B1B4K w - - 0 1");
+    int goodBishops = evaluate(board);
+
+    CHECK(goodBishops > badBishops);
+}
+
 TEST_CASE("Eval: rook on the seventh with pawns to chew earns a bonus", "[eval][rook]") {
     Board board;
 
