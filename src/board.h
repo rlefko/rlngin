@@ -12,6 +12,7 @@ struct UndoInfo {
     int halfmoveClock;
     uint64_t key;
     uint64_t pawnKey;
+    uint64_t materialKey;
 };
 
 class Board {
@@ -27,9 +28,11 @@ class Board {
     int fullmoveNumber = 1;
     uint64_t key = 0;
     uint64_t pawnKey = 0;
+    uint64_t materialKey = 0;
     uint64_t occupied = 0;
     uint64_t byColor[2] = {0, 0};
     uint64_t byPiece[7] = {0, 0, 0, 0, 0, 0, 0};
+    int pieceCount[2][7] = {{0}};
 
     Board();
     void setStartPos();
@@ -43,6 +46,7 @@ class Board {
   private:
     void computeKey();
     void computePawnKey();
+    void computeMaterialKey();
 };
 
 #endif
