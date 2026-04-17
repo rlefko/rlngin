@@ -130,7 +130,9 @@ bool TranspositionTable::probe(uint64_t key, TTEntry &entry, int ply) const {
 
 int TranspositionTable::hashfull() const {
     // Sample the first 1000 slots (500 clusters) so the reading is cheap and
-    // stable across table sizes. Scale down when the table itself is smaller.
+    // stable across table sizes. Only entries tagged with the current search
+    // generation count as full, so the number reflects table pressure from
+    // the live search rather than residue from prior searches.
     const size_t total_slots = num_clusters_ * TT_CLUSTER_SIZE;
     const size_t sample_slots = std::min(total_slots, static_cast<size_t>(1000));
     const size_t sample_clusters = (sample_slots + TT_CLUSTER_SIZE - 1) / TT_CLUSTER_SIZE;
@@ -139,7 +141,8 @@ int TranspositionTable::hashfull() const {
         for (int e = 0; e < TT_CLUSTER_SIZE; e++) {
             const size_t slot = c * TT_CLUSTER_SIZE + e;
             if (slot >= sample_slots) break;
-            if (table_[c].entries[e].flag != TT_NONE) used++;
+            const TTEntry &entry = table_[c].entries[e];
+            if (entry.flag != TT_NONE && entry.generation == generation_) used++;
         }
     }
     return static_cast<int>(used * 1000 / sample_slots);
