@@ -693,6 +693,22 @@ TEST_CASE("Eval: blockaded passer scores worse than free passer", "[eval][passed
     CHECK(free > blocked);
 }
 
+TEST_CASE("Eval: rook on the seventh with pawns to chew earns a bonus", "[eval][rook]") {
+    Board board;
+
+    // White rook already raided to a7 with seven black pawns still on the
+    // seventh rank to chew on.
+    board.setFen("4k3/Rppppppp/8/8/8/8/8/4K3 w - - 0 1");
+    int rookOn7th = evaluate(board);
+
+    // Same pawn chain but the rook sits quietly on a1 and no longer
+    // qualifies for the seventh-rank bonus.
+    board.setFen("4k3/1ppppppp/8/8/8/8/8/R3K3 w - - 0 1");
+    int rookOnBack = evaluate(board);
+
+    CHECK(rookOn7th > rookOnBack);
+}
+
 TEST_CASE("Eval: our king close to advanced passer is preferred", "[eval][passed]") {
     Board board;
 

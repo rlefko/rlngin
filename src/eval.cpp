@@ -177,6 +177,12 @@ static const Score MobilityBonus[7][28] = {
 static const Score RookOpenFileBonus     = S(109, 55);
 static const Score RookSemiOpenFileBonus = S( 48, 19);
 
+// Rook on the seventh rank: awarded when the rook occupies relative rank
+// 7 and either the enemy king is trapped on its back rank or there are
+// enemy pawns on the seventh for the rook to gobble. The endgame value
+// is richer because a rook on the seventh usually wins pawns over time.
+static const Score RookOn7thBonus = S(29, 55);
+
 // Minor-piece outpost bonuses. A knight or bishop is on an outpost when it
 // sits on a relative rank 4-6 square that is defended by a friendly pawn
 // and can no longer be challenged by an enemy pawn push. Knights benefit
@@ -643,6 +649,18 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += RookOpenFileBonus;
             } else if (noOurPawns) {
                 scores[c] += RookSemiOpenFileBonus;
+            }
+
+            // Rook on the seventh: either targets enemy pawns on the 7th
+            // or pins the enemy king on the 8th. Both conditions generate
+            // most of the classical "pig on the seventh" pressure.
+            if (relativeRank(c, sq) == 6) {
+                Bitboard seventhRankMask = (c == White) ? Rank7BB : Rank2BB;
+                Bitboard eighthRankMask = (c == White) ? Rank8BB : Rank1BB;
+                Bitboard theirKingBB = board.byPiece[King] & board.byColor[c ^ 1];
+                if ((theirKingBB & eighthRankMask) || (theirPawns & seventhRankMask)) {
+                    scores[c] += RookOn7thBonus;
+                }
             }
 
             // Trapped rook: little room to move and our king is on the same
