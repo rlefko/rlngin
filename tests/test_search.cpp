@@ -541,3 +541,81 @@ TEST_CASE("Search: improving heuristic keeps node count bounded", "[search][impr
     // The improving heuristic should not cause node explosion at depth 8
     CHECK(state.nodes < 20000000);
 }
+
+TEST_CASE("Search: razoring keeps hopeless depth-2 searches small", "[search][razoring]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Black is down a queen and a rook; side to move cannot recover at low
+    // depth. Razoring should prune straight to qsearch for many branches.
+    board.setFen("4k3/8/8/8/8/8/8/1Q2K1QR b - - 0 1");
+
+    SearchLimits limits;
+    limits.depth = 2;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from != state.bestMove.to);
+    CHECK(state.nodes < 50000);
+}
+
+TEST_CASE("Search: check extensions sharpen forcing lines", "[search][extensions]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Back-rank mate reachable with a quiet preparatory move. Check extensions
+    // push the mating follow-up one ply deeper without exploding the tree.
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 3);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: qsearch TT probe shrinks repeat work", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setFen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+
+    SearchLimits limits;
+    limits.depth = 6;
+    SearchState first;
+    startSearch(board, limits, first);
+
+    // A second search over the same position should reuse TT entries written
+    // by qsearch as well as the main search, bringing the node count down.
+    SearchState second;
+    startSearch(board, limits, second);
+    CHECK(second.nodes <= first.nodes);
+    CHECK(second.bestMove.from != second.bestMove.to);
+}
+
+TEST_CASE("Search: IIR does not regress mate detection", "[search][iir]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Fresh TT means the reduction trigger fires, yet depth-6 must still see
+    // the mate in one. Catches any bug where IIR hides forced sequences.
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    Move best = findBestMove(board, 6);
+    CHECK(best.from == stringToSquare("e1"));
+    CHECK(best.to == stringToSquare("e8"));
+}
+
+TEST_CASE("Search: pawn correction history stays tactically sound", "[search][corrhist]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Repeat a tactical position several times in a row. If the correction
+    // table drifts in the wrong direction it can distort eval-based pruning
+    // and drop the capture; verify the best move survives.
+    board.setFen("4k3/8/3q4/8/4N3/8/8/4K3 w - - 0 1");
+
+    for (int i = 0; i < 3; i++) {
+        Move best = findBestMove(board, 4);
+        CHECK(best.from == stringToSquare("e4"));
+        CHECK(best.to == stringToSquare("d6"));
+    }
+}
