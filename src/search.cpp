@@ -594,7 +594,11 @@ static void printSearchInfo(int depth, const SearchState &state, int score, int6
         if (score < 0) mateInMoves = -mateInMoves;
         std::cout << " score mate " << mateInMoves;
     } else {
-        std::cout << " score cp " << score;
+        // Convert internal eval grain (~228 per pawn after material rescale)
+        // into standard UCI centipawns so GUI-reported scores stay intuitive.
+        constexpr int NormalizePawn = 228;
+        int cp = score * 100 / NormalizePawn;
+        std::cout << " score cp " << cp;
     }
 
     if (bound == BOUND_LOWER) {
