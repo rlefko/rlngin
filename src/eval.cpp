@@ -1,178 +1,113 @@
 #include "eval.h"
 
 #include "bitboard.h"
+#include "material_hash.h"
 #include "pawn_hash.h"
 #include "zobrist.h"
 
 #include <algorithm>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
-const int PieceValue[] = {0, 82, 337, 365, 477, 1025, 20000};
+const int PieceValue[] = {0, 198, 817, 836, 1270, 2521, 20000};
 
-// PeSTO middlegame and endgame material values (king = 0, always present on both sides)
-static const int MGPieceValue[] = {0, 82, 337, 365, 477, 1025, 0};
-static const int EGPieceValue[] = {0, 94, 281, 297, 512, 936, 0};
+// Packed middlegame and endgame material values (king = 0, always present on
+// both sides). Encoded with S(mg, eg) so eval accumulates both halves with a
+// single add per piece.
+static const Score PieceScore[7] = {
+    S(0, 0),       // None
+    S(198, 258),   // Pawn
+    S(817, 846),   // Knight
+    S(836, 857),   // Bishop
+    S(1270, 1278), // Rook
+    S(2521, 2558), // Queen
+    S(0, 0),       // King (material is implicit; all games have exactly one)
+};
 
 // Game phase increments per piece type (max total = 24)
 static const int GamePhaseInc[] = {0, 0, 1, 1, 2, 4, 0};
 
 // clang-format off
 
-// PeSTO piece-square tables stored in a1=0 order (rank 1 first, rank 8 last)
-// Values are from White's perspective; Black mirrors vertically via sq ^ 56
+// PeSTO piece-square tables stored in a1=0 order (rank 1 first, rank 8 last),
+// with midgame and endgame values packed into a single Score via S(mg, eg).
+// Values are from White's perspective; Black mirrors vertically via sq ^ 56.
 
-static const int MgPawnTable[64] = {
-      0,   0,   0,   0,   0,   0,   0,   0,
-    -35,  -1, -20, -23, -15,  24,  38, -22,
-    -26,  -4,  -4, -10,   3,   3,  33, -12,
-    -27,  -2,  -5,  12,  17,   6,  10, -25,
-    -14,  13,   6,  21,  23,  12,  17, -23,
-     -6,   7,  26,  31,  65,  56,  25, -20,
-     98, 134,  61,  95,  68, 126,  34, -11,
-      0,   0,   0,   0,   0,   0,   0,   0
+static const Score PawnPST[64] = {
+    S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0),
+    S( -85,   36), S(  -2,   22), S( -48,   22), S( -56,   27), S( -36,   36), S(  58,    0), S(  92,    5), S( -53,  -19),
+    S( -63,   11), S( -10,   19), S( -10,  -16), S( -24,    3), S(   7,    0), S(   7,  -14), S(  80,   -3), S( -29,  -22),
+    S( -65,   36), S(  -5,   25), S( -12,   -8), S(  29,  -19), S(  41,  -19), S(  14,  -22), S(  24,    8), S( -60,   -3),
+    S( -34,   88), S(  31,   66), S(  14,   36), S(  51,   14), S(  56,   -5), S(  29,   11), S(  41,   47), S( -56,   47),
+    S( -14,  258), S(  17,  274), S(  63,  233), S(  75,  184), S( 157,  154), S( 135,  145), S(  60,  225), S( -48,  231),
+    S( 237,  489), S( 324,  475), S( 147,  434), S( 229,  368), S( 164,  403), S( 304,  362), S(  82,  453), S( -27,  513),
+    S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0),
 };
 
-static const int EgPawnTable[64] = {
-      0,   0,   0,   0,   0,   0,   0,   0,
-     13,   8,   8,  10,  13,   0,   2,  -7,
-      4,   7,  -6,   1,   0,  -5,  -1,  -8,
-     13,   9,  -3,  -7,  -7,  -8,   3,  -1,
-     32,  24,  13,   5,  -2,   4,  17,  17,
-     94, 100,  85,  67,  56,  53,  82,  84,
-    178, 173, 158, 134, 147, 132, 165, 187,
-      0,   0,   0,   0,   0,   0,   0,   0
+static const Score KnightPST[64] = {
+    S(-254,  -80), S( -51, -140), S(-140,  -63), S( -80,  -41), S( -41,  -60), S( -68,  -49), S( -46, -137), S( -56, -176),
+    S( -70, -115), S(-128,  -55), S( -29,  -27), S(  -7,  -14), S(  -2,   -5), S(  43,  -55), S( -34,  -63), S( -46, -121),
+    S( -56,  -63), S( -22,   -8), S(  29,   -3), S(  24,   41), S(  46,   27), S(  41,   -8), S(  60,  -55), S( -39,  -60),
+    S( -31,  -49), S(  10,  -16), S(  39,   44), S(  31,   69), S(  68,   44), S(  46,   47), S(  51,   11), S( -19,  -49),
+    S( -22,  -47), S(  41,    8), S(  46,   60), S( 128,   60), S(  89,   60), S( 167,   30), S(  43,   22), S(  53,  -49),
+    S(-113,  -66), S( 145,  -55), S(  89,   27), S( 157,   25), S( 203,   -3), S( 311,  -25), S( 176,  -52), S( 106, -113),
+    S(-176,  -69), S( -99,  -22), S( 174,  -69), S(  87,   -5), S(  56,  -25), S( 150,  -69), S(  17,  -66), S( -41, -143),
+    S(-403, -159), S(-215, -104), S( -82,  -36), S(-118,  -77), S( 147,  -85), S(-234,  -74), S( -36, -173), S(-258, -272),
 };
 
-static const int MgKnightTable[64] = {
-   -105, -21, -58, -33, -17, -28, -19, -23,
-    -29, -53, -12,  -3,  -1,  18, -14, -19,
-    -23,  -9,  12,  10,  19,  17,  25, -16,
-    -13,   4,  16,  13,  28,  19,  21,  -8,
-     -9,  17,  19,  53,  37,  69,  18,  22,
-    -47,  60,  37,  65,  84, 129,  73,  44,
-    -73, -41,  72,  36,  23,  62,   7, -17,
-   -167, -89, -34, -49,  61, -97, -15,-107
+static const Score BishopPST[64] = {
+    S( -80,  -63), S(  -7,  -25), S( -34,  -63), S( -51,  -14), S( -31,  -25), S( -29,  -44), S( -94,  -14), S( -51,  -47),
+    S(  10,  -38), S(  36,  -49), S(  39,  -19), S(   0,   -3), S(  17,   11), S(  51,  -25), S(  80,  -41), S(   2,  -74),
+    S(   0,  -33), S(  36,   -8), S(  36,   22), S(  36,   27), S(  34,   36), S(  65,    8), S(  43,  -19), S(  24,  -41),
+    S( -14,  -16), S(  31,    8), S(  31,   36), S(  63,   52), S(  82,   19), S(  29,   27), S(  24,   -8), S(  10,  -25),
+    S( -10,   -8), S(  12,   25), S(  46,   33), S( 121,   25), S(  89,   38), S(  89,   27), S(  17,    8), S(  -5,    5),
+    S( -39,    5), S(  89,  -22), S( 104,    0), S(  97,   -3), S(  85,   -5), S( 121,   16), S(  89,    0), S(  -5,   11),
+    S( -63,  -22), S(  39,  -11), S( -43,   19), S( -31,  -33), S(  72,   -8), S( 142,  -36), S(  43,  -11), S(-113,  -38),
+    S( -70,  -38), S(  10,  -58), S(-198,  -30), S( -89,  -22), S( -60,  -19), S(-101,  -25), S(  17,  -47), S( -19,  -66),
 };
 
-static const int EgKnightTable[64] = {
-    -29, -51, -23, -15, -22, -18, -50, -64,
-    -42, -20, -10,  -5,  -2, -20, -23, -44,
-    -23,  -3,  -1,  15,  10,  -3, -20, -22,
-    -18,  -6,  16,  25,  16,  17,   4, -18,
-    -17,   3,  22,  22,  22,  11,   8, -18,
-    -24, -20,  10,   9,  -1,  -9, -19, -41,
-    -25,  -8, -25,  -2,  -9, -25, -24, -52,
-    -58, -38, -13, -28, -31, -27, -63, -99
+static const Score RookPST[64] = {
+    S( -46,  -25), S( -31,    5), S(   2,    8), S(  41,   -3), S(  39,  -14), S(  17,  -36), S( -89,   11), S( -63,  -55),
+    S(-106,  -16), S( -39,  -16), S( -48,    0), S( -22,    5), S(  -2,  -25), S(  27,  -25), S( -14,  -30), S(-171,   -8),
+    S(-109,  -11), S( -60,    0), S( -39,  -14), S( -41,   -3), S(   7,  -19), S(   0,  -33), S( -12,  -22), S( -80,  -44),
+    S( -87,    8), S( -63,   14), S( -29,   22), S(  -2,   11), S(  22,  -14), S( -17,  -16), S(  14,  -22), S( -56,  -30),
+    S( -58,   11), S( -27,    8), S(  17,   36), S(  63,    3), S(  58,    5), S(  85,    3), S( -19,   -3), S( -48,    5),
+    S( -12,   19), S(  46,   19), S(  63,   19), S(  87,   14), S(  41,   11), S( 109,   -8), S( 147,  -14), S(  39,   -8),
+    S(  65,   30), S(  77,   36), S( 140,   36), S( 150,   30), S( 193,   -8), S( 162,    8), S(  63,   22), S( 106,    8),
+    S(  77,   36), S( 101,   27), S(  77,   49), S( 123,   41), S( 152,   33), S(  22,   33), S(  75,   22), S( 104,   14),
 };
 
-static const int MgBishopTable[64] = {
-    -33,  -3, -14, -21, -13, -12, -39, -21,
-      4,  15,  16,   0,   7,  21,  33,   1,
-      0,  15,  15,  15,  14,  27,  18,  10,
-     -6,  13,  13,  26,  34,  12,  10,   4,
-     -4,   5,  19,  50,  37,  37,   7,  -2,
-    -16,  37,  43,  40,  35,  50,  37,  -2,
-    -26,  16, -18, -13,  30,  59,  18, -47,
-    -29,   4, -82, -37, -25, -42,   7,  -8
+static const Score QueenPST[64] = {
+    S(  -2,  -91), S( -43,  -77), S( -22,  -60), S(  24, -118), S( -36,  -14), S( -60,  -88), S( -75,  -55), S(-121, -113),
+    S( -85,  -60), S( -19,  -63), S(  27,  -82), S(   5,  -44), S(  19,  -44), S(  36,  -63), S(  -7,  -99), S(   2,  -88),
+    S( -34,  -44), S(   5,  -74), S( -27,   41), S(  -5,   16), S( -12,   25), S(   5,   47), S(  34,   27), S(  12,   14),
+    S( -22,  -49), S( -63,   77), S( -22,   52), S( -24,  129), S(  -5,   85), S( -10,   93), S(   7,  107), S(  -7,   63),
+    S( -65,    8), S( -65,   60), S( -39,   66), S( -39,  124), S(  -2,  156), S(  41,  110), S(  -5,  156), S(   2,   99),
+    S( -31,  -55), S( -41,   16), S(  17,   25), S(  19,  134), S(  70,  129), S( 135,   96), S( 113,   52), S( 138,   25),
+    S( -58,  -47), S( -94,   55), S( -12,   88), S(   2,  113), S( -39,  159), S( 138,   69), S(  68,   82), S( 130,    0),
+    S( -68,  -25), S(   0,   60), S(  70,   60), S(  29,   74), S( 142,   74), S( 106,   52), S( 104,   27), S( 109,   55),
 };
 
-static const int EgBishopTable[64] = {
-    -23,  -9, -23,  -5,  -9, -16,  -5, -17,
-    -14, -18,  -7,  -1,   4,  -9, -15, -27,
-    -12,  -3,   8,  10,  13,   3,  -7, -15,
-     -6,   3,  13,  19,   7,  10,  -3,  -9,
-     -3,   9,  12,   9,  14,  10,   3,   2,
-      2,  -8,   0,  -1,  -2,   6,   0,   4,
-     -8,  -4,   7, -12,  -3, -13,  -4, -14,
-    -14, -21, -11,  -8,  -7,  -9, -17, -24
-};
-
-static const int MgRookTable[64] = {
-    -19, -13,   1,  17,  16,   7, -37, -26,
-    -44, -16, -20,  -9,  -1,  11,  -6, -71,
-    -45, -25, -16, -17,   3,   0,  -5, -33,
-    -36, -26, -12,  -1,   9,  -7,   6, -23,
-    -24, -11,   7,  26,  24,  35,  -8, -20,
-     -5,  19,  26,  36,  17,  45,  61,  16,
-     27,  32,  58,  62,  80,  67,  26,  44,
-     32,  42,  32,  51,  63,   9,  31,  43
-};
-
-static const int EgRookTable[64] = {
-     -9,   2,   3,  -1,  -5, -13,   4, -20,
-     -6,  -6,   0,   2,  -9,  -9, -11,  -3,
-     -4,   0,  -5,  -1,  -7, -12,  -8, -16,
-      3,   5,   8,   4,  -5,  -6,  -8, -11,
-      4,   3,  13,   1,   2,   1,  -1,   2,
-      7,   7,   7,   5,   4,  -3,  -5,  -3,
-     11,  13,  13,  11,  -3,   3,   8,   3,
-     13,  10,  18,  15,  12,  12,   8,   5
-};
-
-static const int MgQueenTable[64] = {
-     -1, -18,  -9,  10, -15, -25, -31, -50,
-    -35,  -8,  11,   2,   8,  15,  -3,   1,
-    -14,   2, -11,  -2,  -5,   2,  14,   5,
-     -9, -26,  -9, -10,  -2,  -4,   3,  -3,
-    -27, -27, -16, -16,  -1,  17,  -2,   1,
-    -13, -17,   7,   8,  29,  56,  47,  57,
-    -24, -39,  -5,   1, -16,  57,  28,  54,
-    -28,   0,  29,  12,  59,  44,  43,  45
-};
-
-static const int EgQueenTable[64] = {
-    -33, -28, -22, -43,  -5, -32, -20, -41,
-    -22, -23, -30, -16, -16, -23, -36, -32,
-    -16, -27,  15,   6,   9,  17,  10,   5,
-    -18,  28,  19,  47,  31,  34,  39,  23,
-      3,  22,  24,  45,  57,  40,  57,  36,
-    -20,   6,   9,  49,  47,  35,  19,   9,
-    -17,  20,  32,  41,  58,  25,  30,   0,
-     -9,  22,  22,  27,  27,  19,  10,  20
-};
-
-static const int MgKingTable[64] = {
-    -15,  36,  12, -54,   8, -28,  24,  14,
-      1,   7,  -8, -64, -43, -16,   9,   8,
-    -14, -14, -22, -46, -44, -30, -15, -27,
-    -49,  -1, -27, -39, -46, -44, -33, -51,
-    -17, -20, -12, -27, -30, -25, -14, -36,
-     -9,  24,   2, -16, -20,   6,  22, -22,
-     29,  -1, -20,  -7,  -8,  -4, -38, -29,
-    -65,  23,  16, -15, -56, -34,   2,  13
-};
-
-static const int EgKingTable[64] = {
-    -53, -34, -21, -11, -28, -14, -24, -43,
-    -27, -11,   4,  13,  14,   4,  -5, -17,
-    -19,  -3,  11,  21,  23,  16,   7,  -9,
-    -18,  -4,  21,  24,  27,  23,   9, -11,
-     -8,  22,  24,  27,  26,  33,  26,   3,
-     10,  17,  23,  15,  20,  45,  44,  13,
-    -12,  17,  14,  17,  17,  38,  23,  11,
-    -74, -35, -18, -18, -11,  15,   4, -17
+static const Score KingPST[64] = {
+    S( -36, -145), S(  87,  -93), S(  29,  -58), S(-130,  -30), S(  19,  -77), S( -68,  -38), S(  58,  -66), S(  34, -118),
+    S(   2,  -74), S(  17,  -30), S( -19,   11), S(-155,   36), S(-104,   38), S( -39,   11), S(  22,  -14), S(  19,  -47),
+    S( -34,  -52), S( -34,   -8), S( -53,   30), S(-111,   58), S(-106,   63), S( -72,   44), S( -36,   19), S( -65,  -25),
+    S(-118,  -49), S(  -2,  -11), S( -65,   58), S( -94,   66), S(-111,   74), S(-106,   63), S( -80,   25), S(-123,  -30),
+    S( -41,  -22), S( -48,   60), S( -29,   66), S( -65,   74), S( -72,   71), S( -60,   91), S( -34,   71), S( -87,    8),
+    S( -22,   27), S(  58,   47), S(   5,   63), S( -39,   41), S( -48,   55), S(  14,  124), S(  53,  121), S( -53,   36),
+    S(  70,  -33), S(  -2,   47), S( -48,   38), S( -17,   47), S( -19,   47), S( -10,  104), S( -92,   63), S( -70,   30),
+    S(-157, -203), S(  56,  -96), S(  39,  -49), S( -36,  -49), S(-135,  -30), S( -82,   41), S(   5,   11), S(  31,  -47),
 };
 
 // clang-format on
 
-static const int *MgPST[] = {
-    nullptr,       // None
-    MgPawnTable,   // Pawn
-    MgKnightTable, // Knight
-    MgBishopTable, // Bishop
-    MgRookTable,   // Rook
-    MgQueenTable,  // Queen
-    MgKingTable    // King
-};
-
-static const int *EgPST[] = {
-    nullptr,       // None
-    EgPawnTable,   // Pawn
-    EgKnightTable, // Knight
-    EgBishopTable, // Bishop
-    EgRookTable,   // Rook
-    EgQueenTable,  // Queen
-    EgKingTable    // King
+static const Score *PST[] = {
+    nullptr,   // None
+    PawnPST,   // Pawn
+    KnightPST, // Knight
+    BishopPST, // Bishop
+    RookPST,   // Rook
+    QueenPST,  // Queen
+    KingPST,   // King
 };
 
 static void ensureEvalInit() {
@@ -187,18 +122,17 @@ static void ensureEvalInit() {
 
 // clang-format off
 
-// Passed pawn bonus by rank index (0 = rank 1, 7 = rank 8)
-// Indices 0 and 7 are impossible for pawns; included for indexing simplicity
-static const int PassedPawnBonus[8][2] = {
-    //  MG,  EG
-    {   0,   0},  // rank 1
-    {   5,  10},  // rank 2
-    {  10,  17},  // rank 3
-    {  15,  32},  // rank 4
-    {  30,  62},  // rank 5
-    {  55, 107},  // rank 6
-    {  90, 170},  // rank 7
-    {   0,   0},  // rank 8
+// Passed pawn bonus by rank index (0 = rank 1, 7 = rank 8). Indices 0 and 7
+// are impossible for pawns; included for indexing simplicity.
+static const Score PassedPawnBonus[8] = {
+    S(  0,   0),  // rank 1
+    S( 12,  27),  // rank 2
+    S( 24,  47),  // rank 3
+    S( 36,  88),  // rank 4
+    S( 72, 170),  // rank 5
+    S(133, 294),  // rank 6
+    S(217, 467),  // rank 7
+    S(  0,   0),  // rank 8
 };
 
 // Piece mobility bonus indexed by PieceType and number of attacked
@@ -208,30 +142,30 @@ static const int PassedPawnBonus[8][2] = {
 // leans negative for trapped pieces and flattens once a piece is already
 // well developed. Pawn and King rows are unused; the extra dimensions let
 // us index by PieceType directly.
-static const int MobilityBonus[7][28][2] = {
+static const Score MobilityBonus[7][28] = {
     {},  // None
     {},  // Pawn
     {    // Knight (0..8)
-        {-62, -81}, {-53, -56}, {-12, -30}, { -4, -14}, {  3,   8},
-        { 13,  15}, { 22,  23}, { 28,  27}, { 33,  33},
+        S(-150, -222), S(-128, -154), S( -29,  -82), S( -10,  -38), S(   7,   22),
+        S(  31,   41), S(  53,   63), S(  68,   74), S(  80,   91),
     },
     {    // Bishop (0..13)
-        {-48, -59}, {-20, -23}, { 16,  -3}, { 26,  13}, { 38,  24},
-        { 51,  42}, { 55,  54}, { 63,  57}, { 63,  65}, { 68,  73},
-        { 81,  78}, { 81,  86}, { 91,  88}, { 98,  97},
+        S(-116, -162), S( -48,  -63), S(  39,   -8), S(  63,   36), S(  92,   66),
+        S( 123,  115), S( 133,  148), S( 152,  156), S( 152,  178), S( 164,  200),
+        S( 196,  214), S( 196,  236), S( 220,  242), S( 237,  266),
     },
     {    // Rook (0..14)
-        {-58, -76}, {-27, -18}, {-15,  28}, {-10,  55}, { -5,  69},
-        { -2,  82}, {  9, 112}, { 16, 118}, { 30, 132}, { 29, 142},
-        { 32, 155}, { 38, 165}, { 46, 166}, { 48, 169}, { 58, 171},
+        S(-140, -209), S( -65,  -49), S( -36,   77), S( -24,  151), S( -12,  189),
+        S(  -5,  225), S(  22,  307), S(  39,  324), S(  72,  362), S(  70,  390),
+        S(  77,  425), S(  92,  453), S( 111,  456), S( 116,  464), S( 140,  469),
     },
     {    // Queen (0..27)
-        {-39, -36}, {-21, -15}, {  3,   8}, {  3,  18}, { 14,  34},
-        { 22,  54}, { 28,  61}, { 41,  73}, { 43,  79}, { 48,  92},
-        { 56,  94}, { 60, 104}, { 60, 113}, { 66, 120}, { 67, 123},
-        { 70, 126}, { 71, 133}, { 73, 136}, { 79, 140}, { 88, 143},
-        { 88, 148}, { 99, 166}, {102, 170}, {102, 175}, {106, 184},
-        {109, 191}, {113, 206}, {116, 212},
+        S( -94,  -99), S( -51,  -41), S(   7,   22), S(   7,   49), S(  34,   93),
+        S(  53,  148), S(  68,  167), S(  99,  200), S( 104,  217), S( 116,  253),
+        S( 135,  258), S( 145,  285), S( 145,  310), S( 159,  329), S( 162,  338),
+        S( 169,  346), S( 171,  365), S( 176,  373), S( 191,  384), S( 212,  392),
+        S( 212,  406), S( 239,  456), S( 246,  467), S( 246,  480), S( 256,  505),
+        S( 263,  524), S( 273,  565), S( 280,  582),
     },
     {},  // King
 };
@@ -240,22 +174,22 @@ static const int MobilityBonus[7][28][2] = {
 // either color; a "semi-open file" has no friendly pawns but at least one
 // enemy pawn. Both bonuses are larger in the middlegame where file control
 // translates into direct king pressure.
-static const int RookOpenFileBonus[2] = {45, 20};
-static const int RookSemiOpenFileBonus[2] = {20, 7};
+static const Score RookOpenFileBonus     = S(109, 55);
+static const Score RookSemiOpenFileBonus = S( 48, 19);
 
 // Minor-piece outpost bonuses. A knight or bishop is on an outpost when it
 // sits on a relative rank 4-6 square that is defended by a friendly pawn
 // and can no longer be challenged by an enemy pawn push. Knights benefit
 // more than bishops because bishops see through the square anyway.
-static const int KnightOutpostBonus[2] = {30, 20};
-static const int BishopOutpostBonus[2] = {18, 8};
+static const Score KnightOutpostBonus = S(72, 55);
+static const Score BishopOutpostBonus = S(43, 22);
 
 // Penalty for a rook shut in on the same side of the board as its own king
 // when the rook has little room to breathe. Pure middlegame concern; in the
 // endgame the king activates and the rook typically walks free. Doubled
 // when all castling rights are gone, since O-O / O-O-O cannot relocate the
 // rook to an active square.
-static const int TrappedRookByKingPenalty = -52;
+static const Score TrappedRookByKingPenalty = S(-126, 0);
 
 // Space evaluation: count safe central squares on our own side of the board.
 // Stockfish weights the result quadratically by non-pawn piece count so the
@@ -266,45 +200,44 @@ static const int SpaceWeightDivisor = 16;
 static const int SpaceMinPieceCount = 2;
 
 // Connected pawn bonus by rank index
-static const int ConnectedPawnBonus[8][2] = {
-    //  MG,  EG
-    {   0,   0},  // rank 1
-    {   7,   0},  // rank 2
-    {   8,   3},  // rank 3
-    {  12,   7},  // rank 4
-    {  25,  17},  // rank 5
-    {  45,  30},  // rank 6
-    {  70,  42},  // rank 7
-    {   0,   0},  // rank 8
+static const Score ConnectedPawnBonus[8] = {
+    S(  0,   0),  // rank 1
+    S( 17,   0),  // rank 2
+    S( 19,   8),  // rank 3
+    S( 29,  19),  // rank 4
+    S( 60,  47),  // rank 5
+    S(109,  82),  // rank 6
+    S(169, 115),  // rank 7
+    S(  0,   0),  // rank 8
 };
 
 // --- King safety constants ---
 
-// Pawn shield bonus per shield-file pawn by relative rank: {MG, EG}
+// Pawn shield bonus per shield-file pawn by relative rank.
 // Index 0 = pawn on 2nd rank (unmoved, strongest), index 1 = pawn on 3rd rank.
 // Values are conservative so the shield signal cannot dominate material,
 // PST, or pawn structure in normal middlegame positions.
-static const int PawnShieldBonus[2][2] = {
-    {20, 3},  // 2nd rank
-    {12, 2},  // 3rd rank
+static const Score PawnShieldBonus[2] = {
+    S(48, 8),  // 2nd rank
+    S(29, 5),  // 3rd rank
 };
 
-// Pawn storm penalty indexed by rank distance from our king: {MG, EG}
+// Pawn storm penalty indexed by rank distance from our king.
 // Index 0 = 4+ ranks away, index 4 = on the same rank (blocked)
-static const int PawnStormPenalty[5][2] = {
-    { 0, 0},  // 4+ ranks away
-    {10, 0},  // 3 ranks away
-    {25, 0},  // 2 ranks away
-    {40, 0},  // 1 rank away
-    {10, 0},  // same rank (blocked, less dangerous)
+static const Score PawnStormPenalty[5] = {
+    S( 0, 0),  // 4+ ranks away
+    S(24, 0),  // 3 ranks away
+    S(60, 0),  // 2 ranks away
+    S(97, 0),  // 1 rank away
+    S(24, 0),  // same rank (blocked, less dangerous)
 };
 
 // Per-file penalty when our pawns or all pawns are missing near the king.
 // A shield pawn's absence is the same signal as the file being semi-open
 // or open for us, so we express it only once here rather than stacking a
 // separate "missing shield" penalty on top.
-static const int SemiOpenFileNearKing[2] = {-10, 0};
-static const int OpenFileNearKing[2]     = {-15, 0};
+static const Score SemiOpenFileNearKing = S(-24, 0);
+static const Score OpenFileNearKing     = S(-36, 0);
 
 // Attack units per piece type when it attacks the king zone
 static const int KingAttackUnits[] = {
@@ -322,33 +255,88 @@ static const int KingAttackUnits[] = {
 // richer mating features like safe checks, attack-square multiplicity,
 // or defender saturation.
 static const int KingAttackPenalty[13] = {
-    0,   0,   0,   12,  32,  60,  96,
-    140, 192, 252, 320, 396, 480,
+    0,   0,    0,   29,  77,  145, 232,
+    338, 464,  608, 773, 956, 1159,
 };
 
 // Penalty per king-zone square attacked by enemy but not defended by
-// any friendly piece: {MG, EG}
-static const int UndefendedKingZoneSq[2] = {-7, -1};
+// any friendly piece.
+static const Score UndefendedKingZoneSq = S(-17, -3);
 
 // Penalty by number of safe squares the king can move to (0 = most
 // dangerous). Index is the count of safe squares, capped at 8.
-static const int KingSafeSqPenalty[9][2] = {
-    {-50, -5},  // 0 safe squares
-    {-35, -3},  // 1
-    {-20, -1},  // 2
-    {-10,  0},  // 3
-    { -4,  0},  // 4
-    {  0,  0},  // 5
-    {  0,  0},  // 6
-    {  0,  0},  // 7
-    {  0,  0},  // 8
+static const Score KingSafeSqPenalty[9] = {
+    S(-121, -14),  // 0 safe squares
+    S( -85,  -8),  // 1
+    S( -48,  -3),  // 2
+    S( -24,   0),  // 3
+    S( -10,   0),  // 4
+    S(   0,   0),  // 5
+    S(   0,   0),  // 6
+    S(   0,   0),  // 7
+    S(   0,   0),  // 8
 };
 
 // clang-format on
 
-static const int IsolatedPawnPenalty[2] = {-15, -20}; // MG, EG
-static const int DoubledPawnPenalty[2] = {-10, -20};  // MG, EG
-static const int BackwardPawnPenalty[2] = {-10, -15}; // MG, EG
+static const Score IsolatedPawnPenalty = S(-36, -55);
+static const Score DoubledPawnPenalty = S(-24, -55);
+static const Score BackwardPawnPenalty = S(-24, -41);
+
+// Two bishops together control complementary diagonals that no other piece
+// combination can cover, so the pair is worth noticeably more than the sum
+// of its parts. Slightly larger in the endgame where open diagonals matter
+// most.
+static const Score BishopPair = S(75, 120);
+
+// clang-format off
+
+// Stockfish-lineage quadratic imbalance tables. Indexed by [pt1][pt2] with
+// pt in { BishopPair=0, Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5 }. The
+// "ours" table captures synergy between own-side pieces (e.g. knight value
+// rising with own pawn count); the "theirs" table captures pressure from
+// enemy pieces. Only the lower triangle is used; the upper triangle stays
+// at zero so the inner loop can cap at pt2 <= pt1.
+static const int QuadraticOurs[6][6] = {
+    // BPair,  P,    N,    B,    R,    Q
+    { 1438,    0,    0,    0,    0,    0 }, // BishopPair
+    {   40,   38,    0,    0,    0,    0 }, // Pawn
+    {   32,  255,  -62,    0,    0,    0 }, // Knight
+    {    0,  104,    4,    0,    0,    0 }, // Bishop
+    {  -26,   -2,   47,  105, -208,    0 }, // Rook
+    { -189,   24,  117,  133, -134,   -6 }, // Queen
+};
+
+static const int QuadraticTheirs[6][6] = {
+    // BPair,  P,    N,    B,    R,    Q
+    {    0,    0,    0,    0,    0,    0 }, // BishopPair
+    {   36,    0,    0,    0,    0,    0 }, // Pawn
+    {    9,   63,    0,    0,    0,    0 }, // Knight
+    {   59,   65,   42,    0,    0,    0 }, // Bishop
+    {   46,   39,   24,  -24,    0,    0 }, // Rook
+    {   97,  100,  -42,  137,  268,    0 }, // Queen
+};
+
+// clang-format on
+
+// Evaluate the quadratic imbalance for side `us`. `pc[c][0]` carries a
+// synthetic bishop-pair count (0 or 1); `pc[c][1..5]` mirror the piece
+// counts for pawns through queens in the same order as the tables above.
+// The /16 divisor matches Stockfish's convention.
+static int imbalance(const int pc[2][6], int us) {
+    int them = us ^ 1;
+    int bonus = 0;
+    for (int pt1 = 0; pt1 < 6; pt1++) {
+        if (!pc[us][pt1]) continue;
+        int v = 0;
+        for (int pt2 = 0; pt2 <= pt1; pt2++) {
+            v += QuadraticOurs[pt1][pt2] * pc[us][pt2];
+            v += QuadraticTheirs[pt1][pt2] * pc[them][pt2];
+        }
+        bonus += pc[us][pt1] * v;
+    }
+    return bonus / 16;
+}
 
 // Per-evaluation derived context: enemy-pawn attack maps and mobility-area
 // bitboards reused by every piece-activity term.
@@ -365,11 +353,60 @@ static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
 }
 
 static PawnHashTable pawnHashTable(2);
+static MaterialHashTable materialHashTable(1);
 
-static void evaluatePawns(const Board &board, int &mg, int &eg) {
-    if (pawnHashTable.probe(board.pawnKey, mg, eg)) {
+// Compute the pure material contribution for this position: piece values
+// (MG/EG), bishop pair bonus, quadratic imbalance, and game phase. The
+// result depends only on piece counts, so it can be cached by the material
+// zobrist key. PSTs are not included here because they depend on squares.
+static void evaluateMaterial(const Board &board, Score outScores[2], int &outPhase) {
+    int probeMg = 0, probeEg = 0, probePhase = 0;
+    if (materialHashTable.probe(board.materialKey, probeMg, probeEg, probePhase)) {
+        // Material hash stores a single white-minus-black packed score and
+        // the game phase; assign it to White's slot and leave Black at 0.
+        outScores[White] = S(probeMg, probeEg);
+        outScores[Black] = 0;
+        outPhase = probePhase;
         return;
     }
+
+    int pc[2][6];
+    int phase = 0;
+    Score scores[2] = {0, 0};
+    for (int c = 0; c < 2; c++) {
+        for (int pt = 1; pt < 7; pt++) {
+            int cnt = board.pieceCount[c][pt];
+            scores[c] += PieceScore[pt] * cnt;
+            phase += GamePhaseInc[pt] * cnt;
+        }
+        pc[c][0] = (board.pieceCount[c][Bishop] >= 2) ? 1 : 0;
+        pc[c][1] = board.pieceCount[c][Pawn];
+        pc[c][2] = board.pieceCount[c][Knight];
+        pc[c][3] = board.pieceCount[c][Bishop];
+        pc[c][4] = board.pieceCount[c][Rook];
+        pc[c][5] = board.pieceCount[c][Queen];
+        if (pc[c][0]) scores[c] += BishopPair;
+    }
+    int imbW = imbalance(pc, White);
+    int imbB = imbalance(pc, Black);
+    scores[White] += S(imbW, imbW);
+    scores[Black] += S(imbB, imbB);
+
+    Score delta = scores[White] - scores[Black];
+    materialHashTable.store(board.materialKey, mg_value(delta), eg_value(delta), phase);
+    outScores[White] = delta;
+    outScores[Black] = 0;
+    outPhase = phase;
+}
+
+static void evaluatePawns(const Board &board, Score &out) {
+    int mgCached = 0, egCached = 0;
+    if (pawnHashTable.probe(board.pawnKey, mgCached, egCached)) {
+        out = S(mgCached, egCached);
+        return;
+    }
+
+    Score score = 0;
 
     Bitboard whitePawns = board.byPiece[Pawn] & board.byColor[White];
     Bitboard blackPawns = board.byPiece[Pawn] & board.byColor[Black];
@@ -389,31 +426,27 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
             // Doubled pawn: another friendly pawn ahead on the same file
             bool isDoubled = (ForwardFileBB[c][sq] & ourPawns) != 0;
             if (isDoubled) {
-                mg += sign * DoubledPawnPenalty[0];
-                eg += sign * DoubledPawnPenalty[1];
+                score += sign * DoubledPawnPenalty;
             }
 
             // Passed pawn: no enemy pawns ahead on same or adjacent files,
             // and no friendly pawn ahead on the same file (rear doubled pawns
             // are not passed)
             if (!isDoubled && !(PassedPawnMask[c][sq] & theirPawns)) {
-                mg += sign * PassedPawnBonus[relativeRank][0];
-                eg += sign * PassedPawnBonus[relativeRank][1];
+                score += sign * PassedPawnBonus[relativeRank];
             }
 
             // Isolated pawn: no friendly pawns on adjacent files
             bool isolated = !(AdjacentFilesBB[f] & ourPawns);
             if (isolated) {
-                mg += sign * IsolatedPawnPenalty[0];
-                eg += sign * IsolatedPawnPenalty[1];
+                score += sign * IsolatedPawnPenalty;
             }
 
             // Connected pawn: phalanx (same rank, adjacent file) or defended by friendly pawn
             bool phalanx = (ourPawns & AdjacentFilesBB[f] & RankBB[r]) != 0;
             bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
             if (phalanx || defended) {
-                mg += sign * ConnectedPawnBonus[relativeRank][0];
-                eg += sign * ConnectedPawnBonus[relativeRank][1];
+                score += sign * ConnectedPawnBonus[relativeRank];
             }
 
             // Backward pawn: not connected, not isolated, all adjacent friendly pawns
@@ -423,15 +456,15 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
                 if (noneBelow) {
                     int stopSq = (c == White) ? sq + 8 : sq - 8;
                     if (PawnAttacks[c][stopSq] & theirPawns) {
-                        mg += sign * BackwardPawnPenalty[0];
-                        eg += sign * BackwardPawnPenalty[1];
+                        score += sign * BackwardPawnPenalty;
                     }
                 }
             }
         }
     }
 
-    pawnHashTable.store(board.pawnKey, mg, eg);
+    pawnHashTable.store(board.pawnKey, mg_value(score), eg_value(score));
+    out = score;
 }
 
 // Accumulate piece-activity terms: mobility for every non-pawn non-king
@@ -440,7 +473,7 @@ static void evaluatePawns(const Board &board, int &mg, int &eg) {
 // pinned pieces still get credit for the squares they attack because the
 // search resolves pin tactics on its own, which matches Stockfish's
 // choice here.
-static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2], int eg[2]) {
+static void evaluatePieces(const Board &board, const EvalContext &ctx, Score scores[2]) {
     Bitboard occ = board.occupied;
 
     for (int c = 0; c < 2; c++) {
@@ -451,13 +484,11 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
         while (knights) {
             int sq = popLsb(knights);
             int count = popcount(KnightAttacks[sq] & ctx.mobilityArea[c]);
-            mg[c] += MobilityBonus[Knight][count][0];
-            eg[c] += MobilityBonus[Knight][count][1];
+            scores[c] += MobilityBonus[Knight][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
                 !(PawnSpanMask[c][sq] & theirPawns)) {
-                mg[c] += KnightOutpostBonus[0];
-                eg[c] += KnightOutpostBonus[1];
+                scores[c] += KnightOutpostBonus;
             }
         }
 
@@ -465,13 +496,11 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
         while (bishops) {
             int sq = popLsb(bishops);
             int count = popcount(bishopAttacks(sq, occ) & ctx.mobilityArea[c]);
-            mg[c] += MobilityBonus[Bishop][count][0];
-            eg[c] += MobilityBonus[Bishop][count][1];
+            scores[c] += MobilityBonus[Bishop][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
                 !(PawnSpanMask[c][sq] & theirPawns)) {
-                mg[c] += BishopOutpostBonus[0];
-                eg[c] += BishopOutpostBonus[1];
+                scores[c] += BishopOutpostBonus;
             }
         }
 
@@ -485,18 +514,15 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
         while (rooks) {
             int sq = popLsb(rooks);
             int count = popcount(rookAttacks(sq, occ) & ctx.mobilityArea[c]);
-            mg[c] += MobilityBonus[Rook][count][0];
-            eg[c] += MobilityBonus[Rook][count][1];
+            scores[c] += MobilityBonus[Rook][count];
 
             Bitboard fileMask = FileBB[squareFile(sq)];
             bool noOurPawns = !(fileMask & ourPawns);
             bool noTheirPawns = !(fileMask & theirPawns);
             if (noOurPawns && noTheirPawns) {
-                mg[c] += RookOpenFileBonus[0];
-                eg[c] += RookOpenFileBonus[1];
+                scores[c] += RookOpenFileBonus;
             } else if (noOurPawns) {
-                mg[c] += RookSemiOpenFileBonus[0];
-                eg[c] += RookSemiOpenFileBonus[1];
+                scores[c] += RookSemiOpenFileBonus;
             }
 
             // Trapped rook: little room to move and our king is on the same
@@ -508,9 +534,9 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
                 int rookFile = squareFile(sq);
                 bool sameSide = (kingFile < 4) == (rookFile < kingFile);
                 if (sameSide) {
-                    int penalty = TrappedRookByKingPenalty;
+                    Score penalty = TrappedRookByKingPenalty;
                     if (lostShortCastle && lostLongCastle) penalty *= 2;
-                    mg[c] += penalty;
+                    scores[c] += penalty;
                 }
             }
         }
@@ -519,8 +545,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
         while (queens) {
             int sq = popLsb(queens);
             int count = popcount(queenAttacks(sq, occ) & ctx.mobilityArea[c]);
-            mg[c] += MobilityBonus[Queen][count][0];
-            eg[c] += MobilityBonus[Queen][count][1];
+            scores[c] += MobilityBonus[Queen][count];
         }
     }
 }
@@ -531,8 +556,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, int mg[2]
 // amplify the bonus Stockfish-style. Scaled quadratically by the number
 // of our non-pawn non-king pieces so the term only bites in middlegames
 // with enough material to exploit the extra space.
-static void evaluateSpace(const Board &board, const EvalContext &ctx, int mg[2], int eg[2]) {
-    (void)eg;
+static void evaluateSpace(const Board &board, const EvalContext &ctx, Score scores[2]) {
     for (int c = 0; c < 2; c++) {
         Bitboard ourPieces = board.byColor[c] & ~board.byPiece[Pawn] & ~board.byPiece[King];
         int weight = popcount(ourPieces);
@@ -551,11 +575,11 @@ static void evaluateSpace(const Board &board, const EvalContext &ctx, int mg[2],
         }
 
         int bonus = popcount(safe) + popcount(safe & behind);
-        mg[c] += bonus * weight * weight / SpaceWeightDivisor;
+        scores[c] += S(bonus * weight * weight / SpaceWeightDivisor, 0);
     }
 }
 
-static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
+static void evaluateKingSafety(const Board &board, Score scores[2]) {
     Bitboard occ = board.occupied;
 
     for (int c = 0; c < 2; c++) {
@@ -589,11 +613,9 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
                 int relativeRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
 
                 if (relativeRank == 1) {
-                    mg[us] += PawnShieldBonus[0][0];
-                    eg[us] += PawnShieldBonus[0][1];
+                    scores[us] += PawnShieldBonus[0];
                 } else if (relativeRank == 2) {
-                    mg[us] += PawnShieldBonus[1][0];
-                    eg[us] += PawnShieldBonus[1][1];
+                    scores[us] += PawnShieldBonus[1];
                 }
             }
 
@@ -602,17 +624,14 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
                 int stormSq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
                 int distance = std::abs(squareRank(stormSq) - kingRank);
                 int idx = std::max(0, 4 - std::min(4, distance));
-                mg[us] -= PawnStormPenalty[idx][0];
-                eg[us] -= PawnStormPenalty[idx][1];
+                scores[us] -= PawnStormPenalty[idx];
             }
 
             // Open and semi-open file penalties
             if (!ourPawnsOnFile && !theirPawnsOnFile) {
-                mg[us] += OpenFileNearKing[0];
-                eg[us] += OpenFileNearKing[1];
+                scores[us] += OpenFileNearKing;
             } else if (!ourPawnsOnFile) {
-                mg[us] += SemiOpenFileNearKing[0];
-                eg[us] += SemiOpenFileNearKing[1];
+                scores[us] += SemiOpenFileNearKing;
             }
         }
 
@@ -706,8 +725,7 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
         // attacking the zone this contributes zero, so no gate is needed
         Bitboard undefAttacked = kZone & enemyAttacks & ~friendlyDefense;
         int undefCount = popcount(undefAttacked);
-        mg[us] += undefCount * UndefendedKingZoneSq[0];
-        eg[us] += undefCount * UndefendedKingZoneSq[1];
+        scores[us] += undefCount * UndefendedKingZoneSq;
 
         // Only penalize when at least 2 pieces attack the zone -- a single
         // piece rarely creates a real mating threat on its own
@@ -716,16 +734,14 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
             if (!attackingQueenPresent) {
                 penalty /= 2;
             }
-            mg[us] -= penalty;
-            eg[us] -= penalty / 8;
+            scores[us] -= S(penalty, penalty / 8);
 
             // Gate the safe-square penalty on the same multi-attacker
             // condition so that a king boxed in by its own pawns is not
             // scored as if it were under attack
             Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
             int safeCount = std::min(popcount(kingMoves & ~enemyAttacks), 8);
-            mg[us] += KingSafeSqPenalty[safeCount][0];
-            eg[us] += KingSafeSqPenalty[safeCount][1];
+            scores[us] += KingSafeSqPenalty[safeCount];
         }
     }
 }
@@ -733,23 +749,26 @@ static void evaluateKingSafety(const Board &board, int mg[2], int eg[2]) {
 int evaluate(const Board &board) {
     ensureEvalInit();
 
-    int mg[2] = {0, 0};
-    int eg[2] = {0, 0};
+    Score scores[2] = {0, 0};
     int gamePhase = 0;
 
+    // PST-only accumulation per square; piece material, bishop pair, and
+    // imbalance come from the cached material probe below.
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
 
         int idx = (p.color == White) ? sq : (sq ^ 56);
-
-        mg[p.color] += MGPieceValue[p.type] + MgPST[p.type][idx];
-        eg[p.color] += EGPieceValue[p.type] + EgPST[p.type][idx];
-        gamePhase += GamePhaseInc[p.type];
+        scores[p.color] += PST[p.type][idx];
     }
 
-    int pawnMg = 0, pawnEg = 0;
-    evaluatePawns(board, pawnMg, pawnEg);
+    Score matScores[2];
+    evaluateMaterial(board, matScores, gamePhase);
+    scores[White] += matScores[White];
+    scores[Black] += matScores[Black];
+
+    Score pawnScore = 0;
+    evaluatePawns(board, pawnScore);
 
     EvalContext ctx;
     Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
@@ -759,16 +778,18 @@ int evaluate(const Board &board) {
     ctx.mobilityArea[White] = ~board.byColor[White] & ~ctx.pawnAttacks[Black];
     ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
 
-    evaluatePieces(board, ctx, mg, eg);
-    evaluateSpace(board, ctx, mg, eg);
-    evaluateKingSafety(board, mg, eg);
+    evaluatePieces(board, ctx, scores);
+    evaluateSpace(board, ctx, scores);
+    evaluateKingSafety(board, scores);
 
-    int mgResult = mg[White] - mg[Black] + pawnMg;
-    int egResult = eg[White] - eg[Black] + pawnEg;
+    Score total = scores[White] - scores[Black] + pawnScore;
+
+    int mg = mg_value(total);
+    int eg = eg_value(total);
 
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
-    int result = (mgResult * mgPhase + egResult * egPhase) / 24;
+    int result = (mg * mgPhase + eg * egPhase) / 24;
 
     // Scale evaluation toward 0 as the halfmove clock approaches 100 so the
     // engine prefers moves that make progress (captures, pawn pushes) and
@@ -789,4 +810,12 @@ void clearPawnHash() {
 
 void setPawnHashSize(size_t mb) {
     pawnHashTable.resize(mb);
+}
+
+void clearMaterialHash() {
+    materialHashTable.clear();
+}
+
+void setMaterialHashSize(size_t mb) {
+    materialHashTable.resize(mb);
 }

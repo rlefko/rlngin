@@ -18,7 +18,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 1185);
+    CHECK(evaluate(board) == 3191);
 }
 
 TEST_CASE("Eval: score flips with side to move", "[eval]") {
@@ -35,30 +35,30 @@ TEST_CASE("Eval: score flips with side to move", "[eval]") {
 TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     Board board;
 
-    // Pawn on a2 (sq 8): phase 0, pure endgame: 94 + EgPawnTable[8] = 94 + 13 = 107
-    // Pawn structure: isolated (-20 EG) + passed rank 1 (+10 EG) = -10 -> 97
+    // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
+    // (isolated penalty, passed bonus) collapse into this expected score.
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 97);
+    CHECK(evaluate(board) == 268);
 
     // Knight on a1: material and PSQT plus mobility bonus for its two legal
     // moves from the corner
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 221);
+    CHECK(evaluate(board) == 674);
 
     // Bishop on a1: material, PSQT, square control, and bishop mobility
     // along the long diagonal
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 334);
+    CHECK(evaluate(board) == 951);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 666);
+    CHECK(evaluate(board) == 1693);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 1185);
+    CHECK(evaluate(board) == 3191);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -372,6 +372,59 @@ TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
 
     // Scores should be equal and opposite
     CHECK(whitePassed == -blackPassed);
+}
+
+TEST_CASE("Eval: material hash probe is deterministic", "[eval][material]") {
+    Board board;
+
+    // Two positions with identical piece counts (same material key) but
+    // different PST contributions. The overall eval must differ (PSTs are
+    // not cached), but repeating either evaluation must always return the
+    // same value regardless of probe order -- a stored entry cannot poison
+    // a later query of a different position.
+    board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
+    int a1 = evaluate(board);
+    board.setFen("4k3/3Q4/8/8/8/8/8/4K3 w - - 0 1");
+    int b1 = evaluate(board);
+    board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
+    int a2 = evaluate(board);
+    board.setFen("4k3/3Q4/8/8/8/8/8/4K3 w - - 0 1");
+    int b2 = evaluate(board);
+
+    CHECK(a1 == a2);
+    CHECK(b1 == b2);
+    CHECK(a1 != b1);
+}
+
+TEST_CASE("Eval: material imbalance is color-symmetric", "[eval][material]") {
+    Board board;
+
+    // Q vs R+N, White has the queen. Color-mirror of the same material
+    // imbalance should produce an equal-and-opposite eval.
+    board.setFen("4k3/8/8/8/8/8/3RN3/3QK3 w - - 0 1");
+    int whiteSide = evaluate(board);
+
+    board.setFen("3qk3/3rn3/8/8/8/8/8/4K3 w - - 0 1");
+    int blackSide = evaluate(board);
+
+    CHECK(whiteSide == -blackSide);
+    CHECK(whiteSide != 0);
+}
+
+TEST_CASE("Eval: bishop pair bonus favors the pair", "[eval][material]") {
+    Board board;
+
+    // White has two bishops; Black has bishop and knight. Material on minor
+    // pieces is otherwise identical, so the positive delta comes from the
+    // bishop-pair bonus fired for White.
+    board.setFen("4k3/8/8/8/8/2n5/1B6/B3K3 w - - 0 1");
+    int whitePairVsMixed = evaluate(board);
+    CHECK(whitePairVsMixed > 0);
+
+    // Mirror: Black has the pair, White has mixed. Score should flip sign.
+    board.setFen("b3k3/1b6/2N5/8/8/8/8/4K3 w - - 0 1");
+    int blackPairVsMixed = evaluate(board);
+    CHECK(blackPairVsMixed < 0);
 }
 
 TEST_CASE("Eval: central rook has more mobility than cornered rook", "[eval][mobility]") {

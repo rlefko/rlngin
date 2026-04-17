@@ -12,4 +12,7 @@ int evaluate(const Board &board);
 void clearPawnHash();
 void setPawnHashSize(size_t mb);
 
+void clearMaterialHash();
+void setMaterialHashSize(size_t mb);
+
 #endif

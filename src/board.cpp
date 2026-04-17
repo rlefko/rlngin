@@ -35,6 +35,15 @@ void Board::computePawnKey() {
     }
 }
 
+void Board::computeMaterialKey() {
+    materialKey = 0;
+    for (int c = 0; c < 2; c++) {
+        for (int pt = 1; pt < 7; pt++) {
+            materialKey ^= zobrist::material_keys[c][pt][pieceCount[c][pt]];
+        }
+    }
+}
+
 Piece Board::pieceAt(int sq) const {
     return squares[sq];
 }
@@ -134,16 +143,21 @@ void Board::setFen(const std::string &fen) {
     byColor[Black] = 0;
     for (int i = 0; i < 7; i++)
         byPiece[i] = 0;
+    for (int c = 0; c < 2; c++)
+        for (int pt = 0; pt < 7; pt++)
+            pieceCount[c][pt] = 0;
     for (int sq = 0; sq < 64; sq++) {
         if (squares[sq].type != None) {
             occupied |= 1ULL << sq;
             byColor[squares[sq].color] |= 1ULL << sq;
             byPiece[squares[sq].type] |= 1ULL << sq;
+            pieceCount[squares[sq].color][squares[sq].type]++;
         }
     }
 
     computeKey();
     computePawnKey();
+    computeMaterialKey();
 }
 
 UndoInfo Board::makeMove(const Move &m) {
@@ -156,6 +170,7 @@ UndoInfo Board::makeMove(const Move &m) {
     undo.halfmoveClock = halfmoveClock;
     undo.key = key;
     undo.pawnKey = pawnKey;
+    undo.materialKey = materialKey;
 
     Piece moving = squares[m.from];
     Piece captured = squares[m.to];
@@ -183,6 +198,10 @@ UndoInfo Board::makeMove(const Move &m) {
         occupied ^= 1ULL << capturedPawnSq;
         byColor[1 - moving.color] ^= 1ULL << capturedPawnSq;
         byPiece[Pawn] ^= 1ULL << capturedPawnSq;
+        int &cnt = pieceCount[1 - moving.color][Pawn];
+        materialKey ^= zobrist::material_keys[1 - moving.color][Pawn][cnt];
+        cnt--;
+        materialKey ^= zobrist::material_keys[1 - moving.color][Pawn][cnt];
     } else if (captured.type != None) {
         // Regular capture: remove captured piece from opponent's bitboard
         key ^= zobrist::piece_keys[captured.color][captured.type][m.to];
@@ -192,6 +211,10 @@ UndoInfo Board::makeMove(const Move &m) {
         occupied ^= 1ULL << m.to;
         byColor[captured.color] ^= 1ULL << m.to;
         byPiece[captured.type] ^= 1ULL << m.to;
+        int &cnt = pieceCount[captured.color][captured.type];
+        materialKey ^= zobrist::material_keys[captured.color][captured.type][cnt];
+        cnt--;
+        materialKey ^= zobrist::material_keys[captured.color][captured.type][cnt];
     }
 
     // Move the piece
@@ -206,6 +229,14 @@ UndoInfo Board::makeMove(const Move &m) {
         squares[m.to].type = m.promotion;
         byPiece[moving.type] ^= 1ULL << m.to;
         byPiece[m.promotion] |= 1ULL << m.to;
+        int &pawnCnt = pieceCount[moving.color][Pawn];
+        materialKey ^= zobrist::material_keys[moving.color][Pawn][pawnCnt];
+        pawnCnt--;
+        materialKey ^= zobrist::material_keys[moving.color][Pawn][pawnCnt];
+        int &promoCnt = pieceCount[moving.color][m.promotion];
+        materialKey ^= zobrist::material_keys[moving.color][m.promotion][promoCnt];
+        promoCnt++;
+        materialKey ^= zobrist::material_keys[moving.color][m.promotion][promoCnt];
     }
 
     // XOR in piece at destination (with promoted type if applicable)
@@ -304,6 +335,7 @@ UndoInfo Board::makeNullMove() {
     undo.halfmoveClock = halfmoveClock;
     undo.key = key;
     undo.pawnKey = pawnKey;
+    undo.materialKey = materialKey;
 
     // Clear en passant
     if (enPassantSquare != -1) {
@@ -330,6 +362,7 @@ void Board::unmakeNullMove(const UndoInfo &undo) {
     halfmoveClock = undo.halfmoveClock;
     key = undo.key;
     pawnKey = undo.pawnKey;
+    materialKey = undo.materialKey;
 }
 
 void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
@@ -367,6 +400,8 @@ void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
     if (m.promotion != None) {
         byPiece[movedType] ^= 1ULL << m.to;
         byPiece[Pawn] ^= 1ULL << m.from;
+        pieceCount[us][movedType]--;
+        pieceCount[us][Pawn]++;
     } else {
         byPiece[originalType] ^= (1ULL << m.to) | (1ULL << m.from);
     }
@@ -383,11 +418,13 @@ void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
         occupied |= 1ULL << capturedPawnSq;
         byColor[them] |= 1ULL << capturedPawnSq;
         byPiece[Pawn] |= 1ULL << capturedPawnSq;
+        pieceCount[them][Pawn]++;
     } else if (undo.captured.type != None) {
         squares[m.to] = undo.captured;
         occupied |= 1ULL << m.to;
         byColor[undo.captured.color] |= 1ULL << m.to;
         byPiece[undo.captured.type] |= 1ULL << m.to;
+        pieceCount[undo.captured.color][undo.captured.type]++;
     }
 
     // Restore saved state
@@ -399,5 +436,6 @@ void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
     halfmoveClock = undo.halfmoveClock;
     key = undo.key;
     pawnKey = undo.pawnKey;
+    materialKey = undo.materialKey;
     if (us == Black) fullmoveNumber--;
 }

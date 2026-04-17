@@ -1,5 +1,8 @@
+#include "bitboard.h"
 #include "board.h"
 #include "catch_amalgamated.hpp"
+#include "movegen.h"
+#include "zobrist.h"
 
 TEST_CASE("Board default constructor sets start position", "[board]") {
     Board board;
@@ -185,4 +188,98 @@ TEST_CASE("pieceAt returns correct piece", "[board]") {
 
     Piece empty = board.pieceAt(32);
     CHECK(empty.type == None);
+}
+
+TEST_CASE("pieceCount matches board contents in start position", "[board][material]") {
+    Board board;
+    CHECK(board.pieceCount[White][Pawn] == 8);
+    CHECK(board.pieceCount[White][Knight] == 2);
+    CHECK(board.pieceCount[White][Bishop] == 2);
+    CHECK(board.pieceCount[White][Rook] == 2);
+    CHECK(board.pieceCount[White][Queen] == 1);
+    CHECK(board.pieceCount[White][King] == 1);
+    CHECK(board.pieceCount[Black][Pawn] == 8);
+    CHECK(board.pieceCount[Black][Knight] == 2);
+    CHECK(board.pieceCount[Black][Bishop] == 2);
+    CHECK(board.pieceCount[Black][Rook] == 2);
+    CHECK(board.pieceCount[Black][Queen] == 1);
+    CHECK(board.pieceCount[Black][King] == 1);
+}
+
+TEST_CASE("materialKey equals computed key from piece counts", "[board][material]") {
+    Board board;
+    uint64_t expected = 0;
+    for (int c = 0; c < 2; c++)
+        for (int pt = 1; pt < 7; pt++)
+            expected ^= zobrist::material_keys[c][pt][board.pieceCount[c][pt]];
+    CHECK(board.materialKey == expected);
+}
+
+static void perftCheck(Board &board, int depth) {
+    if (depth == 0) return;
+    uint64_t savedKey = board.key;
+    uint64_t savedMatKey = board.materialKey;
+    int savedCounts[2][7];
+    for (int c = 0; c < 2; c++)
+        for (int pt = 0; pt < 7; pt++)
+            savedCounts[c][pt] = board.pieceCount[c][pt];
+
+    std::vector<Move> moves = generateLegalMoves(board);
+    for (const Move &m : moves) {
+        UndoInfo undo = board.makeMove(m);
+        perftCheck(board, depth - 1);
+        board.unmakeMove(m, undo);
+        REQUIRE(board.key == savedKey);
+        REQUIRE(board.materialKey == savedMatKey);
+        for (int c = 0; c < 2; c++)
+            for (int pt = 0; pt < 7; pt++) {
+                REQUIRE(board.pieceCount[c][pt] == savedCounts[c][pt]);
+            }
+    }
+}
+
+TEST_CASE("pieceCount and materialKey round-trip through make/unmake", "[board][material]") {
+    zobrist::init();
+    initBitboards();
+    Board board;
+    board.setFen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    perftCheck(board, 3);
+}
+
+TEST_CASE("materialKey changes on captures and matches recomputed", "[board][material]") {
+    Board board;
+    board.setFen("4k3/8/8/3p4/4N3/8/8/4K3 w - - 0 1");
+
+    Move capture = stringToMove("e4d6");
+    (void)capture;
+    // Knight takes pawn on d5 (e4xd5)
+    Move m = stringToMove("e4d5");
+    board.makeMove(m);
+
+    CHECK(board.pieceCount[Black][Pawn] == 0);
+    CHECK(board.pieceCount[White][Knight] == 1);
+
+    uint64_t expected = 0;
+    for (int c = 0; c < 2; c++)
+        for (int pt = 1; pt < 7; pt++)
+            expected ^= zobrist::material_keys[c][pt][board.pieceCount[c][pt]];
+    CHECK(board.materialKey == expected);
+}
+
+TEST_CASE("materialKey changes on promotion and matches recomputed", "[board][material]") {
+    Board board;
+    board.setFen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+
+    Move m = stringToMove("a7a8q");
+    board.makeMove(m);
+
+    CHECK(board.pieceCount[White][Pawn] == 0);
+    CHECK(board.pieceCount[White][Queen] == 1);
+
+    uint64_t expected = 0;
+    for (int c = 0; c < 2; c++)
+        for (int pt = 1; pt < 7; pt++)
+            expected ^= zobrist::material_keys[c][pt][board.pieceCount[c][pt]];
+    CHECK(board.materialKey == expected);
 }

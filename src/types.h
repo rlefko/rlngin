@@ -1,11 +1,41 @@
 #ifndef TYPES_H
 #define TYPES_H
 
+#include <cstdint>
 #include <string>
 
 enum Color { White, Black };
 
 enum PieceType { None, Pawn, Knight, Bishop, Rook, Queen, King };
+
+// Packed tapered score: upper 16 bits hold the endgame value, lower 16 hold
+// the middlegame value. Storing both halves in a single int32 lets the eval
+// accumulate midgame and endgame contributions with one add per term.
+using Score = int32_t;
+
+constexpr Score make_score(int mg, int eg) {
+    return static_cast<Score>(static_cast<int32_t>(static_cast<uint32_t>(eg) << 16) + mg);
+}
+
+#define S(mg, eg) make_score((mg), (eg))
+
+inline int mg_value(Score s) {
+    union {
+        uint16_t u;
+        int16_t v;
+    } r = {static_cast<uint16_t>(static_cast<uint32_t>(s))};
+    return static_cast<int>(r.v);
+}
+
+inline int eg_value(Score s) {
+    // Adding 0x8000 before the shift compensates for borrow from a negative
+    // mg half so the eg half is extracted with the correct sign.
+    union {
+        uint16_t u;
+        int16_t v;
+    } r = {static_cast<uint16_t>(static_cast<uint32_t>(s + 0x8000) >> 16)};
+    return static_cast<int>(r.v);
+}
 
 struct Piece {
     PieceType type = None;
