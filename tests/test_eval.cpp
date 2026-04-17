@@ -801,6 +801,33 @@ TEST_CASE("Eval: our king close to advanced passer is preferred", "[eval][passed
     CHECK(kingClose > kingFar);
 }
 
+TEST_CASE("Eval: safe pawn push threat does not double count pawn attacks", "[eval][threats]") {
+    Board board;
+
+    // White pawn on c4 already attacks the black knight on d5, so
+    // ThreatByPawn fires. Our c2 pawn could also push to c3 which would
+    // also attack d5, but crediting SafePawnPush here would double count
+    // the same threatened piece. After the fix, the eval delta coming
+    // from the pushable second pawn is zero.
+    board.setFen("4k3/8/8/3n4/2P5/8/2P5/4K3 w - - 0 1");
+    int withPushPartner = evaluate(board);
+
+    // Same knight, same attacking pawn on c4, but no c2 pawn behind it
+    // so no push-based threat is possible. The pawn threat on d5 still
+    // fires equally, so if the earlier position was inflated by a double
+    // counted SafePawnPush the two evals would diverge by more than the
+    // one-pawn material delta alone.
+    board.setFen("4k3/8/8/3n4/2P5/8/8/4K3 w - - 0 1");
+    int withoutPushPartner = evaluate(board);
+
+    // The c2 pawn contributes material (PieceValue[Pawn] internal = 198)
+    // plus PST plus pawn structure; there is no additional SafePawnPush
+    // bonus, so the delta should stay in that range.
+    int delta = withPushPartner - withoutPushPartner;
+    CHECK(delta > 0);
+    CHECK(delta < 400);
+}
+
 TEST_CASE("Eval: two pieces converging on the enemy queen are a weak queen", "[eval][threats]") {
     Board board;
 

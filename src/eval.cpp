@@ -308,20 +308,24 @@ static const Score Tempo = S(28, 0);
 // ThreatByKing, Hanging, WeakQueen, and SafePawnPush terms are flat per
 // affected piece / occurrence.
 
-static const Score ThreatByPawn = S(82, 126);
+// Threat values trimmed roughly 20 percent below the initial Stockfish
+// transliteration so they do not overwhelm pre-tuned PST and mobility
+// signal. A full joint tune is a follow-up; these softer values keep
+// threats useful without dominating the evaluator.
+static const Score ThreatByPawn = S(65, 100);
 
 static const Score ThreatByMinor[7] = {
-    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(41, 55), S(87, 110), S(0, 0),
+    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(33, 44), S(70, 88), S(0, 0),
 };
 
 static const Score ThreatByRook[7] = {
-    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(87, 82), S(0, 0),
+    S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(70, 66), S(0, 0),
 };
 
-static const Score ThreatByKing = S(55, 60);
-static const Score Hanging = S(48, 30);
-static const Score WeakQueen = S(41, 14);
-static const Score SafePawnPush = S(32, 22);
+static const Score ThreatByKing = S(44, 48);
+static const Score Hanging = S(36, 22);
+static const Score WeakQueen = S(32, 11);
+static const Score SafePawnPush = S(26, 18);
 
 // --- Passed pawn refinements ---
 //
@@ -935,7 +939,10 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
             bool stopEmpty = !(occ & stopBB);
             if (!stopEmpty && (board.byColor[them] & stopBB)) {
                 scores[us] += PassedBlockedPenalty[relRank];
-            } else if (stopEmpty && (ctx.allAttacks[us] & stopBB)) {
+            } else if (stopEmpty && (ctx.allAttacks[us] & stopBB) &&
+                       !(ctx.allAttacks[them] & stopBB)) {
+                // Only a truly safe stop square counts as supported -- if
+                // the enemy attacks it too, the push loses the pawn.
                 scores[us] += PassedSupportedBonus[relRank];
             }
         }
@@ -989,20 +996,18 @@ static int scaleFactor(const Board &board) {
     if (ocb) {
         int nonBishopPieces = popcount(board.occupied) - popcount(board.byPiece[Pawn]) -
                               popcount(board.byPiece[King]) - popcount(board.byPiece[Bishop]);
-        int strongPawns = std::max(board.pieceCount[White][Pawn], board.pieceCount[Black][Pawn]);
-        if (nonBishopPieces == 0) {
-            // Pure OCB: drawishness depends on whether the strong side has
-            // enough pawns to build winning chances. Very few pawns is a
-            // near-certain draw; a full pawn chain can still break through.
-            if (strongPawns <= 1) return 10;
-            if (strongPawns <= 3) return 26;
-            return 38;
+        if (nonBishopPieces > 0) {
+            // OCB alongside rooks, knights, or queens is not reliably
+            // drawish, and scaling it down distorts middlegame positions
+            // that transiently feature opposite-colored bishops. Leave
+            // those untouched and only correct genuine bishops-and-pawns
+            // OCB endings below.
+            return 64;
         }
-        // OCB with rooks, knights, or queens still on the board keeps
-        // tactical chances alive, so only apply a mild haircut rather than
-        // the aggressive flat scale that would otherwise smother middlegame
-        // positions that happen to have opposite-colored bishops.
-        return 54;
+        int strongPawns = std::max(board.pieceCount[White][Pawn], board.pieceCount[Black][Pawn]);
+        if (strongPawns <= 1) return 10;
+        if (strongPawns <= 3) return 26;
+        return 38;
     }
 
     // Pawnless minor-only endings reduce to draws unless one side has a
@@ -1084,6 +1089,8 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // the enemy at all or defended by our own pieces. From those
         // safe landing squares, compute the pawn attack footprint and
         // bonus every enemy non-pawn/non-king piece that falls under it.
+        // Exclude pieces already attacked by our pawns in place so the
+        // bonus is not double counted with ThreatByPawn.
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
         Bitboard empty = ~board.occupied;
         Bitboard singlePush = (us == White) ? (ourPawns << 8) : (ourPawns >> 8);
@@ -1094,7 +1101,8 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard pushes = singlePush | doublePush;
         Bitboard safePushes =
             pushes & ~ctx.pawnAttacks[them] & (~ctx.allAttacks[them] | ctx.allAttacks[us]);
-        Bitboard pushVictims = pawnAttacksBB(safePushes, us) & theirNonPawnNonKing;
+        Bitboard pushVictims =
+            pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
         scores[us] += SafePawnPush * popcount(pushVictims);
     }
 }
@@ -1144,14 +1152,19 @@ int evaluate(const Board &board) {
     int mg = mg_value(total);
     int eg = eg_value(total);
 
-    // Drawish endings scale the endgame half toward zero before blending.
-    // This does not touch the middlegame side because the term is a pure
-    // endgame-drawishness correction; a 64/64 scale is a no-op.
-    int scale = scaleFactor(board);
-    eg = eg * scale / 64;
-
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
+
+    // Drawish endings scale the endgame half toward zero before blending.
+    // Gated on genuine endgame phase so transient opposite-colored-bishop
+    // configurations that pop up in the middlegame search tree do not
+    // have their eg half distorted; in a true endgame the term still
+    // correctly pushes drawish material toward a draw.
+    if (mgPhase <= 10) {
+        int scale = scaleFactor(board);
+        eg = eg * scale / 64;
+    }
+
     int result = (mg * mgPhase + eg * egPhase) / 24;
 
     // Scale evaluation toward 0 as the halfmove clock approaches 100 so the
@@ -1230,11 +1243,15 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     int mg = mg_value(total);
     int eg = eg_value(total);
 
-    int scale = scaleFactor(board);
-    int scaledEg = eg * scale / 64;
-
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
+
+    int scale = 64;
+    int scaledEg = eg;
+    if (mgPhase <= 10) {
+        scale = scaleFactor(board);
+        scaledEg = eg * scale / 64;
+    }
     int blended = (mg * mgPhase + scaledEg * egPhase) / 24;
 
     int halfmoveScaled = blended;
