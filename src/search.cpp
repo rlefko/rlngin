@@ -375,6 +375,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         improving = true;
     }
 
+    // Razoring: at shallow non-PV depths, if the corrected eval plus a generous
+    // margin still cannot reach alpha, the position is losing badly enough that
+    // a full search is unlikely to recover. Drop straight to qsearch instead.
+    if (!pvNode && !inCheck && depth <= 2 && alpha > -MATE_SCORE + MAX_PLY) {
+        int razorMargin = 300 + 250 * depth;
+        if (corrEval + razorMargin <= alpha) {
+            return quiescence(board, alpha, beta, ply, state);
+        }
+    }
+
     // Reverse futility pruning: if static eval is far above beta at shallow depth,
     // assume this node will fail high
     if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
