@@ -720,6 +720,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // Reduce less when position is improving
                 reduction -= improving;
 
+                // Reduce harder at expected cut-nodes. These are nodes where
+                // the parent search is betting on a beta cutoff, so a late
+                // move that failed the earlier pruning checks is unlikely to
+                // overturn that bet; saving a ply here is almost free.
+                if (cutNode) reduction += 1;
+
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 
