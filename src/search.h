@@ -30,6 +30,7 @@ struct SearchState {
     int pvLength[MAX_PLY] = {};
     Move killers[MAX_PLY][2] = {};
     int captureHistory[7][64][7] = {};
+    int mainHistory[2][64][64] = {};
 
     // Continuation history: [prev_piece][prev_to][curr_piece][curr_to]
     // Heap-allocated to avoid stack overflow (~400KB)

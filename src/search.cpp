@@ -85,8 +85,8 @@ static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int 
         }
     }
 
-    // Quiet moves: use continuation history
-    int score = 0;
+    // Quiet moves: butterfly history plus continuation history
+    int score = state.mainHistory[board.sideToMove][m.from][m.to];
     if (ply >= 1) {
         PieceType prevPt = state.movedPiece[ply - 1];
         int prevTo = state.moveStack[ply - 1].to;
@@ -459,14 +459,18 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 reduction = lmrReductions[std::min(depth, MAX_PLY - 1)]
                                          [std::min(moveIndex, MAX_LMR_MOVES - 1)];
 
-                // Adjust reduction based on continuation history
+                // Adjust reduction based on butterfly plus continuation history.
+                // board.sideToMove is the opponent here (the move has been played),
+                // so invert it to index the mover's butterfly slot.
+                Color mover = (board.sideToMove == White) ? Black : White;
+                int histScore = state.mainHistory[mover][m.from][m.to];
                 if (ply >= 1) {
                     PieceType prevPt = state.movedPiece[ply - 1];
                     int prevTo = state.moveStack[ply - 1].to;
                     PieceType currPt = state.movedPiece[ply];
-                    int histScore = state.contHistory->data[prevPt][prevTo][currPt][m.to];
-                    reduction -= histScore / 8192;
+                    histScore += state.contHistory->data[prevPt][prevTo][currPt][m.to];
                 }
+                reduction -= histScore / 8192;
 
                 // Reduce less when position is improving
                 reduction -= improving;
@@ -521,7 +525,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // Killer move update
                 state.killers[ply][1] = state.killers[ply][0];
                 state.killers[ply][0] = m;
-                // Continuation history reward
+                // Butterfly history reward and continuation history reward
+                Color us = board.sideToMove;
+                updateHistory(state.mainHistory[us][m.from][m.to], bonus);
+                for (int i = 0; i < numSearchedQuiets; i++) {
+                    const Move &prev = searchedQuiets[i];
+                    updateHistory(state.mainHistory[us][prev.from][prev.to], -bonus);
+                }
                 if (ply >= 1) {
                     PieceType prevPt = state.movedPiece[ply - 1];
                     int prevTo = state.moveStack[ply - 1].to;
@@ -789,6 +799,7 @@ int getHashfull() {
 
 void clearHistory(SearchState &state) {
     memset(state.captureHistory, 0, sizeof(state.captureHistory));
+    memset(state.mainHistory, 0, sizeof(state.mainHistory));
     memset(state.contHistory->data, 0, sizeof(state.contHistory->data));
 }
 
