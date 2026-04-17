@@ -696,8 +696,7 @@ TEST_CASE("Eval: blockaded passer scores worse than free passer", "[eval][passed
     CHECK(free > blocked);
 }
 
-TEST_CASE("Eval: verbose output prints and never diverges from evaluate()",
-          "[eval][verbose]") {
+TEST_CASE("Eval: verbose output prints and never diverges from evaluate()", "[eval][verbose]") {
     Board board;
     board.setFen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
 
@@ -716,8 +715,7 @@ TEST_CASE("Eval: verbose output prints and never diverges from evaluate()",
     CHECK(text.find("WARNING") == std::string::npos);
 }
 
-TEST_CASE("Eval: opposite-colored bishops scale the endgame toward a draw",
-          "[eval][scale]") {
+TEST_CASE("Eval: opposite-colored bishops scale the endgame toward a draw", "[eval][scale]") {
     Board board;
 
     // White has an extra pawn and both sides keep one bishop of opposite

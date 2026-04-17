@@ -318,10 +318,10 @@ static const Score ThreatByRook[7] = {
     S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(87, 82), S(0, 0),
 };
 
-static const Score ThreatByKing   = S(55, 60);
-static const Score Hanging        = S(48, 30);
-static const Score WeakQueen      = S(41, 14);
-static const Score SafePawnPush   = S(32, 22);
+static const Score ThreatByKing = S(55, 60);
+static const Score Hanging = S(48, 30);
+static const Score WeakQueen = S(41, 14);
+static const Score SafePawnPush = S(32, 22);
 
 // --- Passed pawn refinements ---
 //
@@ -344,8 +344,7 @@ static const Score PassedEnemyKingProxPenalty[8] = {
 
 // Flat penalty per rank when an enemy piece sits on the stop square.
 static const Score PassedBlockedPenalty[8] = {
-    S(0, 0),    S(0, 0),    S(0, 0),     S(-5, -11), S(-11, -24),
-    S(-22, -48), S(-47, -97), S(0, 0),
+    S(0, 0), S(0, 0), S(0, 0), S(-5, -11), S(-11, -24), S(-22, -48), S(-47, -97), S(0, 0),
 };
 
 // Flat bonus per rank when the stop square is empty and defended by one
@@ -443,23 +442,28 @@ static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
 static void buildAttackMaps(const Board &board, EvalContext &ctx) {
     Bitboard occ = board.occupied;
     for (int c = 0; c < 2; c++) {
-        for (int pt = 0; pt < 7; pt++) ctx.attackedBy[c][pt] = 0;
+        for (int pt = 0; pt < 7; pt++)
+            ctx.attackedBy[c][pt] = 0;
         ctx.attackedBy[c][Pawn] = ctx.pawnAttacks[c];
 
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];
         if (kingBB) ctx.attackedBy[c][King] = KingAttacks[lsb(kingBB)];
 
         Bitboard pieces = board.byPiece[Knight] & board.byColor[c];
-        while (pieces) ctx.attackedBy[c][Knight] |= KnightAttacks[popLsb(pieces)];
+        while (pieces)
+            ctx.attackedBy[c][Knight] |= KnightAttacks[popLsb(pieces)];
 
         pieces = board.byPiece[Bishop] & board.byColor[c];
-        while (pieces) ctx.attackedBy[c][Bishop] |= bishopAttacks(popLsb(pieces), occ);
+        while (pieces)
+            ctx.attackedBy[c][Bishop] |= bishopAttacks(popLsb(pieces), occ);
 
         pieces = board.byPiece[Rook] & board.byColor[c];
-        while (pieces) ctx.attackedBy[c][Rook] |= rookAttacks(popLsb(pieces), occ);
+        while (pieces)
+            ctx.attackedBy[c][Rook] |= rookAttacks(popLsb(pieces), occ);
 
         pieces = board.byPiece[Queen] & board.byColor[c];
-        while (pieces) ctx.attackedBy[c][Queen] |= queenAttacks(popLsb(pieces), occ);
+        while (pieces)
+            ctx.attackedBy[c][Queen] |= queenAttacks(popLsb(pieces), occ);
 
         // Aggregate allAttacks and the two-attackers map. Each |= of a new
         // type folds its overlaps into attackedBy2 before extending allAttacks.
@@ -561,8 +565,10 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             // are not passed)
             if (!isDoubled && !(PassedPawnMask[c][sq] & theirPawns)) {
                 score += sign * PassedPawnBonus[relRank];
-                if (c == White) whitePassers |= squareBB(sq);
-                else blackPassers |= squareBB(sq);
+                if (c == White)
+                    whitePassers |= squareBB(sq);
+                else
+                    blackPassers |= squareBB(sq);
             }
 
             // Isolated pawn: no friendly pawns on adjacent files
@@ -1022,8 +1028,8 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard empty = ~board.occupied;
         Bitboard singlePush = (us == White) ? (ourPawns << 8) : (ourPawns >> 8);
         singlePush &= empty;
-        Bitboard doublePush = (us == White) ? ((singlePush & Rank3BB) << 8)
-                                            : ((singlePush & Rank6BB) >> 8);
+        Bitboard doublePush =
+            (us == White) ? ((singlePush & Rank3BB) << 8) : ((singlePush & Rank6BB) >> 8);
         doublePush &= empty;
         Bitboard pushes = singlePush | doublePush;
         Bitboard safePushes =
@@ -1159,8 +1165,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score total = pstScore + matScore + pieceScore + passerExtrasScore + threatScore +
-                  spaceScore + kingSafetyScore + pawnScore;
+    Score total = pstScore + matScore + pieceScore + passerExtrasScore + threatScore + spaceScore +
+                  kingSafetyScore + pawnScore;
     int mg = mg_value(total);
     int eg = eg_value(total);
 
@@ -1177,8 +1183,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     }
 
     int tempoContribution = mg_value(Tempo) * mgPhase / 24;
-    int whitePovResult = halfmoveScaled +
-                         ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
+    int whitePovResult =
+        halfmoveScaled + ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
     int stmResult = (board.sideToMove == White) ? whitePovResult : -whitePovResult;
 
     auto formatTerm = [](std::ostream &out, const char *name, Score s) {
@@ -1214,8 +1220,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     // Safety check: the verbose path should never diverge from evaluate().
     int expected = evaluate(board);
     if (expected != stmResult) {
-        os << "  WARNING: verbose total " << stmResult << " differs from evaluate() "
-           << expected << '\n';
+        os << "  WARNING: verbose total " << stmResult << " differs from evaluate() " << expected
+           << '\n';
     }
 }
 
