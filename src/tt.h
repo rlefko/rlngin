@@ -27,7 +27,7 @@ struct TTEntry {
     Move best_move = {0, 0, None};
 };
 
-struct TTCluster {
+struct alignas(64) TTCluster {
     TTEntry entries[TT_CLUSTER_SIZE];
 };
 

@@ -1,11 +1,14 @@
 #include "tt.h"
 
 #include <algorithm>
+#include <cassert>
+#include <cstdint>
 
 // Lock the TT entry layout: padding changes would silently alter the ratio of
 // entries per megabyte and invalidate hash-sizing assumptions.
 static_assert(sizeof(TTEntry) == 32, "TTEntry layout unexpectedly changed");
 static_assert(sizeof(TTCluster) == 64, "TTCluster must fit in one cache line");
+static_assert(alignof(TTCluster) == 64, "TTCluster must be cache-line aligned");
 
 TranspositionTable::TranspositionTable(size_t size_mb) {
     resize(size_mb);
@@ -15,6 +18,10 @@ void TranspositionTable::resize(size_t size_mb) {
     num_clusters_ = (size_mb * 1024 * 1024) / sizeof(TTCluster);
     if (num_clusters_ == 0) num_clusters_ = 1;
     table_.resize(num_clusters_);
+    // std::allocator honors over-aligned types under C++17; assert it so the
+    // single-cache-line-per-cluster invariant holds at runtime as well as the
+    // layout static_asserts hold at compile time.
+    assert(reinterpret_cast<std::uintptr_t>(table_.data()) % alignof(TTCluster) == 0);
     clear();
 }
 
