@@ -17,7 +17,27 @@ A chess engine, made with love.
 make build
 ```
 
-This compiles the engine to `build/rlngin`.
+This compiles the engine to `build/rlngin` with `-O3 -flto -DNDEBUG` and, by default, `-march=native -mtune=native` so the host CPU's extensions (BMI2/PEXT, POPCNT, AVX2, NEON, and friends) are all turned on.
+
+### Architecture tiers
+
+For reproducible distributable binaries, pick an explicit tier with `ARCH=`:
+
+| Tier | Target |
+|---|---|
+| `native` (default) | Whatever the build host supports |
+| `x86-64-v3` | Modern x86-64 baseline (Haswell/Zen2+): AVX2, BMI2, POPCNT |
+| `x86-64` | Portable x86-64 with POPCNT and SSSE3 |
+| `armv8` | Generic ARMv8-A (NEON is baseline) |
+| `apple-silicon` | Tuned for Apple M-series cores |
+
+```bash
+make build ARCH=x86-64-v3
+```
+
+When the active tier supplies BMI2, the sliding-attack lookups compile to `_pext_u64` instead of the scalar magic multiply. If you are running on a Zen1 or Zen2 CPU, where PEXT is microcoded and slower than the fallback, force the scalar path with `NO_PEXT=1`.
+
+Other knobs: `LTO=off` to disable link-time optimization, `DEBUG=on` to swap in `-O0 -g` with asserts enabled.
 
 ## Running
 
@@ -46,8 +66,17 @@ position startpos
 go
 bestmove a2a3
 
+eval
+ +---+---+---+---+---+---+---+---+
+ ...
+ Term          |    White     |    Black     |    Total
+ ...
+ Final:         0 internal (0 cp) from side to move
+
 quit
 ```
+
+Alongside the standard UCI commands, `eval` prints an ASCII board and a per-term static-evaluation breakdown for the current position.
 
 ## Testing
 

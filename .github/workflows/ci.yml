@@ -29,7 +29,10 @@ jobs:
       - uses: actions/checkout@v4
 
       - name: Build engine
-        run: make build
+        # GitHub's ubuntu-latest runners are Cascade Lake / Zen3 class, both of
+        # which cleanly support the x86-64-v3 psABI tier. Compiling here rather
+        # than on native exercises the PEXT sliding-attack path end-to-end.
+        run: make build ARCH=x86-64-v3
 
       - name: Upload binary
         uses: actions/upload-artifact@v4
@@ -47,7 +50,7 @@ jobs:
         run: make fetch-catch2
 
       - name: Run tests
-        run: make test
+        run: make test ARCH=x86-64-v3
 
   screen-pr:
     name: PR Smoke Screen
@@ -70,10 +73,12 @@ jobs:
       - run: chmod +x build/rlngin
 
       - name: Build base engine from main
+        # Match the dev binary's compile tier so the screen compares like with
+        # like rather than O3/PEXT vs the legacy O2 magic path.
         run: |
           git fetch origin main
           git worktree add /tmp/base origin/main
-          make -C /tmp/base build
+          make -C /tmp/base build ARCH=x86-64-v3
           cp /tmp/base/build/rlngin build/rlngin-base
           chmod +x build/rlngin-base
           git worktree remove /tmp/base
