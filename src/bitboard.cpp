@@ -16,14 +16,18 @@ Bitboard SpaceMask[2];
 Bitboard KingSideBB;
 Bitboard QueenSideBB;
 
-Bitboard KnightAttacks[64];
-Bitboard KingAttacks[64];
-Bitboard PawnAttacks[2][64];
+// Align the hot sliding- and leaper-attack tables to a cache line so a lookup
+// never straddles two lines. Magic/PEXT indexing touches these every few
+// cycles during movegen, so predictable line boundaries matter more here than
+// for any other static in the codebase.
+alignas(64) Bitboard KnightAttacks[64];
+alignas(64) Bitboard KingAttacks[64];
+alignas(64) Bitboard PawnAttacks[2][64];
 
-Magic RookMagics[64];
-Magic BishopMagics[64];
-Bitboard RookTable[102400];
-Bitboard BishopTable[5248];
+alignas(64) Magic RookMagics[64];
+alignas(64) Magic BishopMagics[64];
+alignas(64) Bitboard RookTable[102400];
+alignas(64) Bitboard BishopTable[5248];
 
 static void initKnightAttacks() {
     const int dr[] = {-2, -2, -1, -1, 1, 1, 2, 2};

@@ -71,7 +71,7 @@ extern Bitboard SpaceMask[2];
 extern Bitboard KingSideBB;
 extern Bitboard QueenSideBB;
 
-// Non-sliding attack tables
+// Non-sliding attack tables (cache-line aligned in bitboard.cpp).
 extern Bitboard KnightAttacks[64];
 extern Bitboard KingAttacks[64];
 extern Bitboard PawnAttacks[2][64];
@@ -96,6 +96,8 @@ struct Magic {
     Bitboard *attacks;
 };
 
+// Sliding-attack metadata and backing tables (cache-line aligned in
+// bitboard.cpp).
 extern Magic RookMagics[64];
 extern Magic BishopMagics[64];
 extern Bitboard RookTable[102400];
