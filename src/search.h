@@ -66,6 +66,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 Move findBestMove(const Board &board, int depth = 1);
 
 void initSearch();
+void rebuildLmrTable();
 void setHashSize(size_t mb);
 void clearTT();
 int getHashfull();

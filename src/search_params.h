@@ -30,6 +30,12 @@ struct SearchParams {
     // Captures: -SeeCaptureCoef * depth * depth. Quiets: -SeeQuietCoef * depth.
     int SeeCaptureCoef;
     int SeeQuietCoef;
+
+    // Late move reductions table: scaled integers that are divided by 100
+    // at table-fill time. Formula:
+    //   lmrReductions[d][m] = int(LmrBase/100 + log(d) * log(m) / (LmrDivisor/100))
+    int LmrBase;
+    int LmrDivisor;
 };
 
 extern SearchParams searchParams;

@@ -1051,14 +1051,20 @@ void clearHistory(SearchState &state) {
     }
 }
 
-void initSearch() {
+void rebuildLmrTable() {
+    double base = searchParams.LmrBase / 100.0;
+    double div = searchParams.LmrDivisor / 100.0;
     for (int d = 0; d < MAX_PLY; d++) {
         for (int m = 0; m < MAX_LMR_MOVES; m++) {
             if (d == 0 || m == 0) {
                 lmrReductions[d][m] = 0;
             } else {
-                lmrReductions[d][m] = static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.25);
+                lmrReductions[d][m] = static_cast<int>(base + std::log(d) * std::log(m) / div);
             }
         }
     }
+}
+
+void initSearch() {
+    rebuildLmrTable();
 }
