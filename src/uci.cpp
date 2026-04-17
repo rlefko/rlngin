@@ -89,6 +89,12 @@ void uciLoop() {
         } else if (command == "isready") {
             joinSearch();
             std::cout << "readyok" << std::endl;
+        } else if (command == "eval") {
+            // Synchronous; must not race with a running search since both
+            // read the same Board. Joining first matches the isready guard.
+            joinSearch();
+            printEvalTrace(std::cout, board);
+            std::cout << std::flush;
         } else if (command == "setoption") {
             std::string token, name;
             ss >> token; // "name"

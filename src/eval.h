@@ -5,6 +5,7 @@
 #include "types.h"
 
 #include <cstddef>
+#include <iosfwd>
 
 extern const int PieceValue[7];
 
@@ -37,6 +38,11 @@ struct EvalTrace {
 };
 
 int evaluateTraced(const Board &board, EvalTrace &trace);
+
+// Render a human-readable static-evaluation breakdown. Matches the UCI
+// ``eval`` command's output layout: ASCII board, per-term table, phase, and
+// tapered/cp totals. Writes to an arbitrary stream so tests can capture.
+void printEvalTrace(std::ostream &os, const Board &board);
 
 void clearPawnHash();
 void setPawnHashSize(size_t mb);

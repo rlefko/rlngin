@@ -6,6 +6,8 @@
 #include "zobrist.h"
 
 #include <algorithm>
+#include <iomanip>
+#include <ostream>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
 const int PieceValue[] = {0, 198, 817, 836, 1270, 2521, 20000};
@@ -774,6 +776,30 @@ template <bool Trace> static int evaluateImpl(const Board &board, EvalTrace *tra
     scores[White] += matScores[White];
     scores[Black] += matScores[Black];
 
+    // The material cache stores white-minus-black in a single slot, which is
+    // ambiguous for a per-side trace table. Recompute the true per-side split
+    // only under tracing so the hot path keeps its one-probe cost.
+    Score matPerSide[2] = {0, 0};
+    if constexpr (Trace) {
+        int pc[2][6];
+        for (int c = 0; c < 2; c++) {
+            for (int pt = 1; pt < 7; pt++) {
+                matPerSide[c] += PieceScore[pt] * board.pieceCount[c][pt];
+            }
+            pc[c][0] = (board.pieceCount[c][Bishop] >= 2) ? 1 : 0;
+            pc[c][1] = board.pieceCount[c][Pawn];
+            pc[c][2] = board.pieceCount[c][Knight];
+            pc[c][3] = board.pieceCount[c][Bishop];
+            pc[c][4] = board.pieceCount[c][Rook];
+            pc[c][5] = board.pieceCount[c][Queen];
+            if (pc[c][0]) matPerSide[c] += BishopPair;
+        }
+        int imbW = imbalance(pc, White);
+        int imbB = imbalance(pc, Black);
+        matPerSide[White] += S(imbW, imbW);
+        matPerSide[Black] += S(imbB, imbB);
+    }
+
     Score pawnScore = 0;
     evaluatePawns(board, pawnScore);
 
@@ -844,8 +870,8 @@ template <bool Trace> static int evaluateImpl(const Board &board, EvalTrace *tra
     int final_ = (board.sideToMove == White) ? result : -result;
 
     if constexpr (Trace) {
-        trace->material[White] = matScores[White];
-        trace->material[Black] = matScores[Black];
+        trace->material[White] = matPerSide[White];
+        trace->material[Black] = matPerSide[Black];
         trace->pst[White] = pstScores[White];
         trace->pst[Black] = pstScores[Black];
         trace->pawns = pawnScore;
@@ -872,6 +898,99 @@ int evaluate(const Board &board) {
 
 int evaluateTraced(const Board &board, EvalTrace &trace) {
     return evaluateImpl<true>(board, &trace);
+}
+
+namespace {
+
+char pieceGlyph(Piece p) {
+    if (p.type == None) return '.';
+    const char symbols[] = " PNBRQK";
+    char c = symbols[p.type];
+    if (p.color == Black) c = static_cast<char>(c - 'A' + 'a');
+    return c;
+}
+
+void printBoardAscii(std::ostream &os, const Board &board) {
+    static const char *line = " +---+---+---+---+---+---+---+---+\n";
+    for (int r = 7; r >= 0; r--) {
+        os << line;
+        os << " |";
+        for (int f = 0; f < 8; f++) {
+            Piece p = board.squares[r * 8 + f];
+            os << " " << pieceGlyph(p) << " |";
+        }
+        os << " " << (r + 1) << "\n";
+    }
+    os << line;
+    os << "   a   b   c   d   e   f   g   h\n";
+}
+
+void printScorePair(std::ostream &os, Score s) {
+    os << std::setw(5) << mg_value(s) << " " << std::setw(5) << eg_value(s);
+}
+
+void printTermRow(std::ostream &os, const char *label, const Score white, const Score black) {
+    Score total = white - black;
+    os << " " << std::left << std::setw(14) << label << std::right << "| ";
+    printScorePair(os, white);
+    os << " | ";
+    printScorePair(os, black);
+    os << " | ";
+    printScorePair(os, total);
+    os << "\n";
+}
+
+void printTotalOnlyRow(std::ostream &os, const char *label, Score total) {
+    os << " " << std::left << std::setw(14) << label << std::right << "|      ---     ---"
+       << " |      ---     ---"
+       << " | ";
+    printScorePair(os, total);
+    os << "\n";
+}
+
+} // namespace
+
+void printEvalTrace(std::ostream &os, const Board &board) {
+    EvalTrace trace;
+    int stmEval = evaluateTraced(board, trace);
+
+    printBoardAscii(os, board);
+    os << "\n";
+    os << " Side to move: " << (board.sideToMove == White ? "White" : "Black") << "\n\n";
+
+    os << " Term          |    White     |    Black     |    Total\n";
+    os << "               |   MG     EG  |   MG     EG  |   MG     EG\n";
+    os << " --------------+--------------+--------------+--------------\n";
+    printTermRow(os, "Material", trace.material[White], trace.material[Black]);
+    printTermRow(os, "PST", trace.pst[White], trace.pst[Black]);
+    printTotalOnlyRow(os, "Pawns", trace.pawns);
+    printTermRow(os, "Pieces", trace.pieces[White], trace.pieces[Black]);
+    printTermRow(os, "Space", trace.space[White], trace.space[Black]);
+    printTermRow(os, "King safety", trace.kingSafety[White], trace.kingSafety[Black]);
+    os << " --------------+--------------+--------------+--------------\n";
+
+    // Total row: the packed pre-taper combined score (white minus black plus
+    // pawns) in MG/EG form. Reassembling from the terms keeps the table
+    // self-consistent; printing the pre-taper pair makes the phase weighting
+    // immediately below easy to read.
+    Score combined = (trace.material[White] + trace.pst[White] + trace.pieces[White] +
+                      trace.space[White] + trace.kingSafety[White]) -
+                     (trace.material[Black] + trace.pst[Black] + trace.pieces[Black] +
+                      trace.space[Black] + trace.kingSafety[Black]) +
+                     trace.pawns;
+    os << " " << std::left << std::setw(14) << "Total" << std::right
+       << "|              |              | ";
+    printScorePair(os, combined);
+    os << "\n\n";
+
+    os << " Phase:         " << trace.gamePhase << " / 24\n";
+    os << " 50-move clock: " << trace.halfmoveClock << " / 100\n";
+    os << " Tapered:       " << trace.rawTapered << " internal ("
+       << (trace.rawTapered * 100 / NormalizePawn) << " cp)\n";
+    os << " After 50-move: " << trace.finalFromWhite << " internal ("
+       << (trace.finalFromWhite * 100 / NormalizePawn) << " cp) from White\n";
+    os << " Final:         " << stmEval << " internal (" << (stmEval * 100 / NormalizePawn)
+       << " cp) from side to move\n";
 }
 
 void clearPawnHash() {

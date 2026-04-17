@@ -3,6 +3,7 @@
 #include "eval.h"
 
 #include <cstdlib>
+#include <sstream>
 
 TEST_CASE("Eval: starting position is 0", "[eval]") {
     Board board;
@@ -634,6 +635,27 @@ static int reassembleTrace(const EvalTrace &t) {
     int egPhase = 24 - mgPhase;
     int tapered = (mg_value(combined) * mgPhase + eg_value(combined) * egPhase) / 24;
     return tapered;
+}
+
+TEST_CASE("Eval print: emits every section header the eval command promises",
+          "[eval][trace][print]") {
+    Board board;
+    std::ostringstream out;
+    printEvalTrace(out, board);
+
+    const std::string s = out.str();
+    const char *sections[] = {
+        "Side to move", "Material", "PST",    "Pawns",         "Pieces",   "Space",
+        "King safety",  "Total",    "Phase:", "50-move clock", "Tapered:", "Final:",
+    };
+    for (const char *section : sections) {
+        CAPTURE(section);
+        CHECK(s.find(section) != std::string::npos);
+    }
+
+    // Startpos stays symmetric, so the printed final must land on zero even
+    // though the table above may show non-zero PST cells for each side.
+    CHECK(s.find("Final:         0 internal") != std::string::npos);
 }
 
 TEST_CASE("Eval trace: per-term sums reproduce the flat score", "[eval][trace]") {
