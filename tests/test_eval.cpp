@@ -619,3 +619,48 @@ TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
 
     CHECK(whiteKnight == -blackKnight);
 }
+
+// Reassemble the tapered final from an EvalTrace using the same arithmetic
+// that evaluateImpl runs internally. If any term is captured at the wrong
+// moment the delta here will not round-trip to the flat score.
+static int reassembleTrace(const EvalTrace &t) {
+    Score combined = (t.material[White] + t.pst[White] + t.pieces[White] + t.space[White] +
+                      t.kingSafety[White]) -
+                     (t.material[Black] + t.pst[Black] + t.pieces[Black] + t.space[Black] +
+                      t.kingSafety[Black]) +
+                     t.pawns;
+
+    int mgPhase = std::min(t.gamePhase, 24);
+    int egPhase = 24 - mgPhase;
+    int tapered = (mg_value(combined) * mgPhase + eg_value(combined) * egPhase) / 24;
+    return tapered;
+}
+
+TEST_CASE("Eval trace: per-term sums reproduce the flat score", "[eval][trace]") {
+    const char *positions[] = {
+        "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+        "r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1",
+        "8/2p5/3p4/KP5r/1R3p1k/8/4P1P1/8 w - - 0 1",
+        "r3k2r/Pppp1ppp/1b3nbN/nP6/BBP1P3/q4N2/Pp1P2PP/R2Q1RK1 w kq - 0 1",
+        "rnbq1k1r/pp1Pbppp/2p5/8/2B5/8/PPP1NnPP/RNBQK2R w KQ - 1 8",
+        "4k3/8/8/8/3N4/8/8/4K3 w - - 0 1",
+    };
+
+    for (const char *fen : positions) {
+        Board board;
+        board.setFen(fen);
+
+        EvalTrace trace;
+        int traced = evaluateTraced(board, trace);
+        int flat = evaluate(board);
+
+        CAPTURE(fen);
+        CHECK(traced == flat);
+        CHECK(trace.finalFromStm == flat);
+        CHECK(trace.sideToMove == board.sideToMove);
+        CHECK(trace.halfmoveClock == board.halfmoveClock);
+        CHECK(trace.gamePhase >= 0);
+        CHECK(trace.gamePhase <= 24);
+        CHECK(trace.rawTapered == reassembleTrace(trace));
+    }
+}

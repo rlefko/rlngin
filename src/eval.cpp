@@ -746,7 +746,11 @@ static void evaluateKingSafety(const Board &board, Score scores[2]) {
     }
 }
 
-int evaluate(const Board &board) {
+// Shared evaluation body used by both the hot path (``evaluate``) and the
+// tracing path (``evaluateTraced``). ``if constexpr (Trace)`` drops every
+// capture branch out of the untraced instantiation, so the non-trace build
+// compiles to the same sequence it did before this refactor.
+template <bool Trace> static int evaluateImpl(const Board &board, EvalTrace *trace) {
     ensureEvalInit();
 
     Score scores[2] = {0, 0};
@@ -754,13 +758,16 @@ int evaluate(const Board &board) {
 
     // PST-only accumulation per square; piece material, bishop pair, and
     // imbalance come from the cached material probe below.
+    Score pstScores[2] = {0, 0};
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
 
         int idx = (p.color == White) ? sq : (sq ^ 56);
-        scores[p.color] += PST[p.type][idx];
+        pstScores[p.color] += PST[p.type][idx];
     }
+    scores[White] += pstScores[White];
+    scores[Black] += pstScores[Black];
 
     Score matScores[2];
     evaluateMaterial(board, matScores, gamePhase);
@@ -778,9 +785,41 @@ int evaluate(const Board &board) {
     ctx.mobilityArea[White] = ~board.byColor[White] & ~ctx.pawnAttacks[Black];
     ctx.mobilityArea[Black] = ~board.byColor[Black] & ~ctx.pawnAttacks[White];
 
+    Score piecesBefore[2];
+    if constexpr (Trace) {
+        piecesBefore[White] = scores[White];
+        piecesBefore[Black] = scores[Black];
+    }
     evaluatePieces(board, ctx, scores);
+    Score piecesDelta[2];
+    if constexpr (Trace) {
+        piecesDelta[White] = scores[White] - piecesBefore[White];
+        piecesDelta[Black] = scores[Black] - piecesBefore[Black];
+    }
+
+    Score spaceBefore[2];
+    if constexpr (Trace) {
+        spaceBefore[White] = scores[White];
+        spaceBefore[Black] = scores[Black];
+    }
     evaluateSpace(board, ctx, scores);
+    Score spaceDelta[2];
+    if constexpr (Trace) {
+        spaceDelta[White] = scores[White] - spaceBefore[White];
+        spaceDelta[Black] = scores[Black] - spaceBefore[Black];
+    }
+
+    Score ksBefore[2];
+    if constexpr (Trace) {
+        ksBefore[White] = scores[White];
+        ksBefore[Black] = scores[Black];
+    }
     evaluateKingSafety(board, scores);
+    Score ksDelta[2];
+    if constexpr (Trace) {
+        ksDelta[White] = scores[White] - ksBefore[White];
+        ksDelta[Black] = scores[Black] - ksBefore[Black];
+    }
 
     Score total = scores[White] - scores[Black] + pawnScore;
 
@@ -790,6 +829,7 @@ int evaluate(const Board &board) {
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
     int result = (mg * mgPhase + eg * egPhase) / 24;
+    int rawTapered = result;
 
     // Scale evaluation toward 0 as the halfmove clock approaches 100 so the
     // engine prefers moves that make progress (captures, pawn pushes) and
@@ -801,7 +841,37 @@ int evaluate(const Board &board) {
         result = result * (200 - board.halfmoveClock) / 200;
     }
 
-    return (board.sideToMove == White) ? result : -result;
+    int final_ = (board.sideToMove == White) ? result : -result;
+
+    if constexpr (Trace) {
+        trace->material[White] = matScores[White];
+        trace->material[Black] = matScores[Black];
+        trace->pst[White] = pstScores[White];
+        trace->pst[Black] = pstScores[Black];
+        trace->pawns = pawnScore;
+        trace->pieces[White] = piecesDelta[White];
+        trace->pieces[Black] = piecesDelta[Black];
+        trace->space[White] = spaceDelta[White];
+        trace->space[Black] = spaceDelta[Black];
+        trace->kingSafety[White] = ksDelta[White];
+        trace->kingSafety[Black] = ksDelta[Black];
+        trace->gamePhase = gamePhase;
+        trace->halfmoveClock = board.halfmoveClock;
+        trace->sideToMove = board.sideToMove;
+        trace->rawTapered = rawTapered;
+        trace->finalFromWhite = result;
+        trace->finalFromStm = final_;
+    }
+
+    return final_;
+}
+
+int evaluate(const Board &board) {
+    return evaluateImpl<false>(board, nullptr);
+}
+
+int evaluateTraced(const Board &board, EvalTrace &trace) {
+    return evaluateImpl<true>(board, &trace);
 }
 
 void clearPawnHash() {
