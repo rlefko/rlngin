@@ -23,6 +23,7 @@ struct TTEntry {
     int16_t depth = 0;
     int16_t eval = TT_NO_EVAL;
     TTFlag flag = TT_NONE;
+    uint8_t generation = 0;
     Move best_move = {0, 0, None};
 };
 
@@ -36,15 +37,18 @@ class TranspositionTable {
 
     void resize(size_t size_mb);
     void clear();
+    void new_search();
 
     void store(uint64_t key, int score, int eval, int depth, TTFlag flag, const Move &best_move,
                int ply);
     bool probe(uint64_t key, TTEntry &entry, int ply) const;
     int hashfull() const;
+    uint8_t generation() const { return generation_; }
 
   private:
     std::vector<TTCluster> table_;
     size_t num_clusters_ = 0;
+    uint8_t generation_ = 0;
 
     size_t index(uint64_t key) const;
     static int16_t scoreToTT(int score, int ply);

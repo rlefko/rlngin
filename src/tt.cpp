@@ -20,6 +20,15 @@ void TranspositionTable::resize(size_t size_mb) {
 
 void TranspositionTable::clear() {
     std::fill(table_.begin(), table_.end(), TTCluster{});
+    generation_ = 0;
+}
+
+void TranspositionTable::new_search() {
+    // Bump once per root search so stored entries carry the generation tag
+    // used by the aging replacement rule. Natural uint8_t overflow wraps at
+    // 256, which is sufficient given search-to-search generations stay well
+    // within the ageing horizon we penalize against.
+    generation_++;
 }
 
 size_t TranspositionTable::index(uint64_t key) const {
@@ -47,7 +56,10 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
 
     // Prefer three slots in priority order: the slot already holding this key
     // (refresh in place so the newest info wins), then any empty slot, then
-    // the entry with the lowest depth as a classical depth-preferred eviction.
+    // the entry whose age-adjusted depth is lowest. Each generation older
+    // subtracts 8 ply of effective depth, so a stale deep result loses to a
+    // fresh shallow one once the stale entry trails the current search by
+    // several generations.
     TTEntry *target = nullptr;
     for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
         if (cluster.entries[i].key == key && cluster.entries[i].flag != TT_NONE) {
@@ -64,16 +76,19 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
         }
     }
     if (target == nullptr) {
+        auto quality = [this](const TTEntry &e) {
+            int age = static_cast<uint8_t>(generation_ - e.generation);
+            return static_cast<int>(e.depth) - 8 * age;
+        };
         target = &cluster.entries[0];
+        int best_quality = quality(cluster.entries[0]);
         for (int i = 1; i < TT_CLUSTER_SIZE; i++) {
-            if (cluster.entries[i].depth < target->depth) {
+            int q = quality(cluster.entries[i]);
+            if (q < best_quality) {
                 target = &cluster.entries[i];
+                best_quality = q;
             }
         }
-        // Do not evict a deeper entry belonging to a different key.  Keeping
-        // the deeper result preserves the work that earned that slot, the
-        // same invariant the single-slot depth-preferred policy enforced.
-        if (target->key != key && target->depth > depth) return;
     }
 
     target->key = key;
@@ -81,6 +96,7 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
     target->depth = static_cast<int16_t>(depth);
     target->eval = static_cast<int16_t>(eval);
     target->flag = flag;
+    target->generation = generation_;
     target->best_move = best_move;
 }
 
