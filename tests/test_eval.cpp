@@ -374,6 +374,22 @@ TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
     CHECK(whitePassed == -blackPassed);
 }
 
+TEST_CASE("Eval: bishop pair bonus favors the pair", "[eval][material]") {
+    Board board;
+
+    // White has two bishops; Black has bishop and knight. Material on minor
+    // pieces is otherwise identical, so the positive delta comes from the
+    // bishop-pair bonus fired for White.
+    board.setFen("4k3/8/8/8/8/2n5/1B6/B3K3 w - - 0 1");
+    int whitePairVsMixed = evaluate(board);
+    CHECK(whitePairVsMixed > 0);
+
+    // Mirror: Black has the pair, White has mixed. Score should flip sign.
+    board.setFen("b3k3/1b6/2N5/8/8/8/8/4K3 w - - 0 1");
+    int blackPairVsMixed = evaluate(board);
+    CHECK(blackPairVsMixed < 0);
+}
+
 TEST_CASE("Eval: central rook has more mobility than cornered rook", "[eval][mobility]") {
     Board board;
 

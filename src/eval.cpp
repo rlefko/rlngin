@@ -282,6 +282,12 @@ static const Score IsolatedPawnPenalty = S(-36, -55);
 static const Score DoubledPawnPenalty = S(-24, -55);
 static const Score BackwardPawnPenalty = S(-24, -41);
 
+// Two bishops together control complementary diagonals that no other piece
+// combination can cover, so the pair is worth noticeably more than the sum
+// of its parts. Slightly larger in the endgame where open diagonals matter
+// most.
+static const Score BishopPair = S(75, 120);
+
 // Per-evaluation derived context: enemy-pawn attack maps and mobility-area
 // bitboards reused by every piece-activity term.
 struct EvalContext {
@@ -658,6 +664,12 @@ int evaluate(const Board &board) {
         int idx = (p.color == White) ? sq : (sq ^ 56);
         scores[p.color] += PieceScore[p.type] + PST[p.type][idx];
         gamePhase += GamePhaseInc[p.type];
+    }
+
+    for (int c = 0; c < 2; c++) {
+        if (board.pieceCount[c][Bishop] >= 2) {
+            scores[c] += BishopPair;
+        }
     }
 
     Score pawnScore = 0;
