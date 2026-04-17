@@ -607,18 +607,23 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
         }
 
-        // SEE check on the pre-move board is the gating signal for check
-        // extensions. Stashing it here keeps the logic together; the extension
-        // itself is only applied after confirming the move actually gives check.
-        bool checkExtSeeOk = pvNode && depth >= 6 && seeGE(board, m, 0);
+        // Check extension gate. seeGE operates on the pre-move board, so we
+        // compute it here, and only for captures/promotions where the SEE
+        // answer is meaningful. Quiet non-captures extend without the SEE
+        // gate, sparing the per-move SEE cost on the common case where the
+        // move never gives check at all.
+        bool checkExtPass = pvNode && depth >= 6;
+        if (checkExtPass && (capture || isPromotion)) {
+            checkExtPass = seeGE(board, m, 0);
+        }
 
         UndoInfo undo = board.makeMove(m);
         bool givesCheck = isInCheck(board);
 
-        // Check extension: extend checking PV moves with non-negative SEE. Take
-        // the max rather than sum with singular to avoid stacking extensions on
-        // the same move. A per-path cap keeps forcing lines from exploding.
-        if (givesCheck && checkExtSeeOk) {
+        // Check extension: extend checking PV moves. Take the max rather than
+        // sum with singular to avoid stacking extensions on the same move. A
+        // per-path cap keeps forcing lines from exploding.
+        if (givesCheck && checkExtPass) {
             moveExtension = std::max(moveExtension, 1);
         }
         int extBudget = 2 * state.rootDepth - state.extensionsOnPath[ply];
