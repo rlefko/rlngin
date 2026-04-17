@@ -283,6 +283,11 @@ static const Score IsolatedPawnPenalty = S(-36, -55);
 static const Score DoubledPawnPenalty = S(-24, -55);
 static const Score BackwardPawnPenalty = S(-24, -41);
 
+// Side-to-move tempo bonus. Only the middlegame value is non-zero because
+// the endgame value of a free move is folded into the tempo-independent
+// position once material dwindles and zugzwang starts to matter.
+static const Score Tempo = S(28, 0);
+
 // Two bishops together control complementary diagonals that no other piece
 // combination can cover, so the pair is worth noticeably more than the sum
 // of its parts. Slightly larger in the endgame where open diagonals matter
@@ -800,6 +805,12 @@ int evaluate(const Board &board) {
     if (board.byPiece[Pawn]) {
         result = result * (200 - board.halfmoveClock) / 200;
     }
+
+    // Tempo is applied after the halfmove scale so the side-to-move bonus
+    // does not decay with the fifty-move counter, then folded into the
+    // white-perspective total before the final flip.
+    int tempoContribution = mg_value(Tempo) * mgPhase / 24;
+    result += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
 
     return (board.sideToMove == White) ? result : -result;
 }

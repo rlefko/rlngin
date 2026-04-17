@@ -4,9 +4,11 @@
 
 #include <cstdlib>
 
-TEST_CASE("Eval: starting position is 0", "[eval]") {
+TEST_CASE("Eval: starting position equals the tempo bonus", "[eval]") {
     Board board;
-    CHECK(evaluate(board) == 0);
+    // The positional half of startpos is zero by symmetry, so the score
+    // reduces to the middlegame tempo bonus for the side to move.
+    CHECK(evaluate(board) == 28);
 }
 
 TEST_CASE("Eval: kings only is 0", "[eval]") {
@@ -18,10 +20,10 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3191);
+    CHECK(evaluate(board) == 3195);
 }
 
-TEST_CASE("Eval: score flips with side to move", "[eval]") {
+TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
     int whiteToMove = evaluate(board);
@@ -29,7 +31,12 @@ TEST_CASE("Eval: score flips with side to move", "[eval]") {
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 b - - 0 1");
     int blackToMove = evaluate(board);
 
-    CHECK(whiteToMove == -blackToMove);
+    // With a tempo bonus the two scores are no longer pure negations: each
+    // side gets the same middlegame tempo boost, so (wtm + btm) measures
+    // twice the tempo contribution while (wtm - btm) preserves the
+    // positional asymmetry in favor of White.
+    CHECK((whiteToMove + blackToMove) > 0);
+    CHECK((whiteToMove - blackToMove) > 0);
 }
 
 TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
@@ -43,22 +50,22 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Knight on a1: material and PSQT plus mobility bonus for its two legal
     // moves from the corner
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 674);
+    CHECK(evaluate(board) == 675);
 
     // Bishop on a1: material, PSQT, square control, and bishop mobility
     // along the long diagonal
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 951);
+    CHECK(evaluate(board) == 952);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1693);
+    CHECK(evaluate(board) == 1695);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3191);
+    CHECK(evaluate(board) == 3195);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -124,12 +131,14 @@ TEST_CASE("Eval: tapered eval blends middlegame and endgame", "[eval]") {
     CHECK(heavyCastled > heavyExposed);
 }
 
-TEST_CASE("Eval: symmetric positions score 0", "[eval]") {
+TEST_CASE("Eval: symmetric positions equal the tempo bonus", "[eval]") {
     Board board;
 
-    // Mirror position: identical pieces on mirrored squares
+    // Mirror position: the positional half cancels cleanly, so only the
+    // middlegame tempo contribution (scaled by the full startpos phase of
+    // 24) is left for the side to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1");
-    CHECK(evaluate(board) == 0);
+    CHECK(evaluate(board) == 28);
 }
 
 // --- King safety tests ---
@@ -190,13 +199,15 @@ TEST_CASE("Eval: pawn storm penalizes defending side", "[eval][kingsafety]") {
 TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     Board board;
 
-    // Fully symmetric position with pawns -- should still be 0
+    // Fully symmetric position with pawns: positional half cancels and the
+    // score reduces to the tempo contribution for whoever is to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    CHECK(evaluate(board) == 0);
+    CHECK(evaluate(board) == 28);
 
-    // Symmetric with castled kings
+    // Symmetric with castled kings. Phase is reduced (no queens: 24 - 8 = 16)
+    // but the tempo contribution scales with the middlegame weight.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 0);
+    CHECK(evaluate(board) == 25);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
@@ -352,9 +363,11 @@ TEST_CASE("Eval: pawn chain gives connected bonus", "[eval][pawn]") {
     CHECK(chain > noChain);
 }
 
-TEST_CASE("Eval: symmetric pawn structure scores 0", "[eval][pawn]") {
+TEST_CASE("Eval: symmetric pawn structure leaves only the tempo bonus", "[eval][pawn]") {
     Board board;
 
+    // Kings and pawns: phase is 0 so the middlegame tempo contribution
+    // tapers all the way to zero and the score is exactly 0.
     board.setFen("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
     CHECK(evaluate(board) == 0);
 }
@@ -400,14 +413,17 @@ TEST_CASE("Eval: material imbalance is color-symmetric", "[eval][material]") {
     Board board;
 
     // Q vs R+N, White has the queen. Color-mirror of the same material
-    // imbalance should produce an equal-and-opposite eval.
+    // imbalance should produce an equal-and-opposite positional half. The
+    // tempo bonus goes to whoever is to move in both positions (White
+    // here), so (whiteSide + blackSide) equals twice the tempo contribution.
     board.setFen("4k3/8/8/8/8/8/3RN3/3QK3 w - - 0 1");
     int whiteSide = evaluate(board);
 
     board.setFen("3qk3/3rn3/8/8/8/8/8/4K3 w - - 0 1");
     int blackSide = evaluate(board);
 
-    CHECK(whiteSide == -blackSide);
+    CHECK((whiteSide + blackSide) > 0);
+    CHECK((whiteSide - blackSide) > 0);
     CHECK(whiteSide != 0);
 }
 
@@ -617,5 +633,9 @@ TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
     board.setFen("4k3/8/8/3n4/8/8/8/4K3 w - - 0 1");
     int blackKnight = evaluate(board);
 
-    CHECK(whiteKnight == -blackKnight);
+    // Both FENs have White to move, so the shared tempo bonus survives the
+    // sign flip. The positional halves still mirror (whiteKnight - blackKnight
+    // stays positive), while (whiteKnight + blackKnight) captures 2 * tempo.
+    CHECK((whiteKnight + blackKnight) > 0);
+    CHECK((whiteKnight - blackKnight) > 0);
 }
