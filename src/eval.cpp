@@ -435,44 +435,75 @@ static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
 }
 
 // Populate per-side attack maps by piece type plus the aggregate
-// allAttacks and attackedBy2 bitboards. Pawn and king attacks come from
-// their dedicated helpers; the sliding pieces pay one magic lookup per
-// occurrence. The caller is expected to have already filled in
-// ctx.pawnAttacks.
+// allAttacks and attackedBy2 bitboards. attackedBy2 must track squares
+// hit by two or more distinct pieces of the same color -- including
+// two pieces of the same type (for example two rooks converging on
+// the enemy queen) -- so it is accumulated per individual piece
+// rather than per piece-type union.
 static void buildAttackMaps(const Board &board, EvalContext &ctx) {
     Bitboard occ = board.occupied;
     for (int c = 0; c < 2; c++) {
         for (int pt = 0; pt < 7; pt++)
             ctx.attackedBy[c][pt] = 0;
-        ctx.attackedBy[c][Pawn] = ctx.pawnAttacks[c];
 
-        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
-        if (kingBB) ctx.attackedBy[c][King] = KingAttacks[lsb(kingBB)];
-
-        Bitboard pieces = board.byPiece[Knight] & board.byColor[c];
-        while (pieces)
-            ctx.attackedBy[c][Knight] |= KnightAttacks[popLsb(pieces)];
-
-        pieces = board.byPiece[Bishop] & board.byColor[c];
-        while (pieces)
-            ctx.attackedBy[c][Bishop] |= bishopAttacks(popLsb(pieces), occ);
-
-        pieces = board.byPiece[Rook] & board.byColor[c];
-        while (pieces)
-            ctx.attackedBy[c][Rook] |= rookAttacks(popLsb(pieces), occ);
-
-        pieces = board.byPiece[Queen] & board.byColor[c];
-        while (pieces)
-            ctx.attackedBy[c][Queen] |= queenAttacks(popLsb(pieces), occ);
-
-        // Aggregate allAttacks and the two-attackers map. Each |= of a new
-        // type folds its overlaps into attackedBy2 before extending allAttacks.
         Bitboard all = 0;
         Bitboard two = 0;
-        for (int pt = Pawn; pt <= King; pt++) {
-            two |= all & ctx.attackedBy[c][pt];
-            all |= ctx.attackedBy[c][pt];
+
+        // Pawns: split the capture halves so squares hit by both
+        // diagonals land in attackedBy2 from the first step.
+        Bitboard pawns = board.byPiece[Pawn] & board.byColor[c];
+        Bitboard pawnLeft, pawnRight;
+        if (c == White) {
+            pawnLeft = (pawns & ~FileABB) << 7;
+            pawnRight = (pawns & ~FileHBB) << 9;
+        } else {
+            pawnLeft = (pawns & ~FileABB) >> 9;
+            pawnRight = (pawns & ~FileHBB) >> 7;
         }
+        ctx.attackedBy[c][Pawn] = pawnLeft | pawnRight;
+        two |= pawnLeft & pawnRight;
+        all = ctx.attackedBy[c][Pawn];
+
+        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
+        if (kingBB) {
+            Bitboard ka = KingAttacks[lsb(kingBB)];
+            ctx.attackedBy[c][King] = ka;
+            two |= all & ka;
+            all |= ka;
+        }
+
+        Bitboard pieces = board.byPiece[Knight] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = KnightAttacks[popLsb(pieces)];
+            ctx.attackedBy[c][Knight] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
+        pieces = board.byPiece[Bishop] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = bishopAttacks(popLsb(pieces), occ);
+            ctx.attackedBy[c][Bishop] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
+        pieces = board.byPiece[Rook] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = rookAttacks(popLsb(pieces), occ);
+            ctx.attackedBy[c][Rook] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
+        pieces = board.byPiece[Queen] & board.byColor[c];
+        while (pieces) {
+            Bitboard a = queenAttacks(popLsb(pieces), occ);
+            ctx.attackedBy[c][Queen] |= a;
+            two |= all & a;
+            all |= a;
+        }
+
         ctx.allAttacks[c] = all;
         ctx.attackedBy2[c] = two;
     }

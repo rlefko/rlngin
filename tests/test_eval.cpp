@@ -801,6 +801,24 @@ TEST_CASE("Eval: our king close to advanced passer is preferred", "[eval][passed
     CHECK(kingClose > kingFar);
 }
 
+TEST_CASE("Eval: two pieces converging on the enemy queen are a weak queen", "[eval][threats]") {
+    Board board;
+
+    // White rook on d1 and white bishop on b2 both attacking the black
+    // queen on d5. That puts the queen in attackedBy2 and should fire
+    // the weak-queen term in addition to the per-attacker threats.
+    board.setFen("4k3/8/8/3q4/8/8/1B6/3RK3 w - - 0 1");
+    int twoAttackers = evaluate(board);
+
+    // Same black queen, only attacked by the white rook: the weak-queen
+    // bonus should not fire because attackedBy2 requires two distinct
+    // attackers.
+    board.setFen("4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1");
+    int oneAttacker = evaluate(board);
+
+    CHECK(twoAttackers > oneAttacker);
+}
+
 TEST_CASE("Eval: rook attacking enemy queen earns a threat bonus", "[eval][threats]") {
     Board board;
 
