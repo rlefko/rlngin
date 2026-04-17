@@ -7,9 +7,11 @@
 // every Score in `evalParams`. The final parameter values are printed
 // in a form that can be pasted back into `src/eval_params.cpp`.
 
+#include "bitboard.h"
 #include "board.h"
 #include "eval.h"
 #include "eval_params.h"
+#include "search.h"
 #include "types.h"
 #include "zobrist.h"
 
@@ -121,6 +123,12 @@ static double sigmoid(double x, double K) {
 
 static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
                           int numThreads) {
+    // The qsearch leaf score is the Texel target (see qsearchScore); it
+    // reads and writes a shared TT. Clearing between loss computations
+    // ensures stale entries from earlier parameter values do not bias
+    // the score once parameters move. Within a single computeLoss call
+    // threads race on TT writes, which is acceptable tuner noise.
+    clearTT();
     size_t n = positions.size();
     std::vector<double> partial(numThreads, 0.0);
     std::vector<std::thread> threads;
@@ -131,12 +139,11 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
         threads.emplace_back([&, start, end, t]() {
             double sum = 0.0;
             for (size_t i = start; i < end; i++) {
-                Board board = positions[i].board;
-                int raw = evaluate(board);
-                // evaluate() returns side-to-move relative; convert to
+                int raw = qsearchScore(positions[i].board);
+                // qsearchScore returns side-to-move relative; convert to
                 // White POV so the tuner can compare directly to the
                 // White-POV game result.
-                if (board.sideToMove == Black) raw = -raw;
+                if (positions[i].board.sideToMove == Black) raw = -raw;
                 double pred = sigmoid(static_cast<double>(raw), K);
                 double err = pred - positions[i].result;
                 sum += err * err;
@@ -177,52 +184,76 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
 
+    // Snapshot starting values so we can bound how far any one parameter
+    // may drift over the whole run. Without this cap, weakly-signaled
+    // scalars (tempo, hanging-style terms) can run away when the corpus
+    // has label noise, inflating each pass's coordinate-descent step by
+    // maxStepsPerPass even though the true optimum is far closer.
+    std::vector<int> startingValues(params.size());
+    for (size_t pi = 0; pi < params.size(); pi++) {
+        startingValues[pi] = params[pi].read();
+    }
+
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
 
     // Relative improvement threshold -- changes smaller than this are
     // treated as noise, preventing coordinate descent from running away
     // on parameters that barely appear in the dataset. Also cap how far
-    // a single parameter can move in one pass so no one scalar explodes.
-    const double relThreshold = 1e-6;
+    // a single parameter can move in one pass and in total so no one
+    // scalar explodes when the loss surface is noisy.
+    const double relThreshold = 1e-5;
     const int maxStepsPerPass = 20;
+    const int maxTotalDrift = 80;
 
     for (int pass = 0; pass < maxPasses; pass++) {
         bool improved = false;
         for (size_t pi = 0; pi < params.size(); pi++) {
             auto &p = params[pi];
             int original = p.read();
+            int start = startingValues[pi];
 
             double threshold = bestLoss * relThreshold;
 
-            // Try +1
-            p.write(original + 1);
-            double lossUp = computeLoss(positions, K, numThreads);
+            auto withinCap = [&](int candidate) {
+                return std::abs(candidate - start) <= maxTotalDrift;
+            };
+
             int best = original;
             double bestHere = bestLoss;
-            if (bestHere - lossUp > threshold) {
-                bestHere = lossUp;
-                best = original + 1;
-                int steps = 1;
-                while (steps < maxStepsPerPass) {
-                    p.write(best + 1);
-                    double l = computeLoss(positions, K, numThreads);
-                    if (bestHere - l > threshold) {
-                        bestHere = l;
-                        best = best + 1;
-                        steps++;
-                    } else {
-                        break;
+
+            // Try +1; if it improves, keep stepping up while inside the cap.
+            if (withinCap(original + 1)) {
+                p.write(original + 1);
+                double lossUp = computeLoss(positions, K, numThreads);
+                if (bestHere - lossUp > threshold) {
+                    bestHere = lossUp;
+                    best = original + 1;
+                    int steps = 1;
+                    while (steps < maxStepsPerPass && withinCap(best + 1)) {
+                        p.write(best + 1);
+                        double l = computeLoss(positions, K, numThreads);
+                        if (bestHere - l > threshold) {
+                            bestHere = l;
+                            best = best + 1;
+                            steps++;
+                        } else {
+                            break;
+                        }
                     }
                 }
-            } else {
+            }
+
+            // If +1 did not improve, try -1 (subject to the cap). Stepping
+            // down uses the same per-pass limit.
+            if (best == original && withinCap(original - 1)) {
                 p.write(original - 1);
                 double lossDown = computeLoss(positions, K, numThreads);
                 if (bestHere - lossDown > threshold) {
                     bestHere = lossDown;
                     best = original - 1;
                     int steps = 1;
-                    while (steps < maxStepsPerPass) {
+                    while (steps < maxStepsPerPass && withinCap(best - 1)) {
                         p.write(best - 1);
                         double l = computeLoss(positions, K, numThreads);
                         if (bestHere - l > threshold) {
@@ -295,6 +326,10 @@ int main(int argc, char **argv) {
     int maxPasses = argc >= 4 ? std::atoi(argv[3]) : 30;
 
     zobrist::init();
+    // Qsearch calls movegen (isSquareAttacked, generateLegalCaptures)
+    // which depends on the bitboard attack tables; evaluate()'s usual
+    // lazy init can race in the tuner's multi-threaded loss loop.
+    initBitboards();
 
     std::cerr << "loading " << dataset << "...\n";
     auto positions = loadDataset(dataset);
