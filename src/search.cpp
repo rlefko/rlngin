@@ -583,9 +583,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // alternatives, extend its search by one ply to resolve critical lines.
     // When it dominates them by a wide margin, trust the TT move even more and
     // extend by two plies. The doubled extension is gated off the PV so the
-    // principal variation never compounds extensions past a per-path budget,
-    // and the margin is depth-scaled so deeper singular tests require a wider
-    // failure before earning the second ply.
+    // principal variation never compounds extensions past a per-path budget.
+    // The double margin is sized in our internal eval units (~228 per pawn);
+    // a starting floor of 80 with a small depth-scaled slope keeps doubles
+    // rare unless the TT move clearly dominates by ~35 cp or more.
     int singularExtension = 0;
     if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove && ttMove.from != 0 &&
         ttEntry.depth >= depth - 3 &&
@@ -600,7 +601,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
-            int doubleMargin = depth * 2;
+            int doubleMargin = 80 + depth * 4;
             if (!pvNode && singularScore < singularBeta - doubleMargin) {
                 singularExtension = 2;
             }
