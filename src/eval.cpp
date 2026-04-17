@@ -7,19 +7,19 @@
 #include <algorithm>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
-const int PieceValue[] = {0, 82, 337, 365, 477, 1025, 20000};
+const int PieceValue[] = {0, 198, 817, 836, 1270, 2521, 20000};
 
 // Packed middlegame and endgame material values (king = 0, always present on
 // both sides). Encoded with S(mg, eg) so eval accumulates both halves with a
 // single add per piece.
 static const Score PieceScore[7] = {
-    S(0, 0),      // None
-    S(82, 94),    // Pawn
-    S(337, 281),  // Knight
-    S(365, 297),  // Bishop
-    S(477, 512),  // Rook
-    S(1025, 936), // Queen
-    S(0, 0),      // King (material is implicit; all games have exactly one)
+    S(0, 0),       // None
+    S(198, 258),   // Pawn
+    S(817, 846),   // Knight
+    S(836, 857),   // Bishop
+    S(1270, 1278), // Rook
+    S(2521, 2558), // Queen
+    S(0, 0),       // King (material is implicit; all games have exactly one)
 };
 
 // Game phase increments per piece type (max total = 24)
@@ -32,69 +32,69 @@ static const int GamePhaseInc[] = {0, 0, 1, 1, 2, 4, 0};
 // Values are from White's perspective; Black mirrors vertically via sq ^ 56.
 
 static const Score PawnPST[64] = {
-    S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0),
-    S(-35,  13), S( -1,   8), S(-20,   8), S(-23,  10), S(-15,  13), S( 24,   0), S( 38,   2), S(-22,  -7),
-    S(-26,   4), S( -4,   7), S( -4,  -6), S(-10,   1), S(  3,   0), S(  3,  -5), S( 33,  -1), S(-12,  -8),
-    S(-27,  13), S( -2,   9), S( -5,  -3), S( 12,  -7), S( 17,  -7), S(  6,  -8), S( 10,   3), S(-25,  -1),
-    S(-14,  32), S( 13,  24), S(  6,  13), S( 21,   5), S( 23,  -2), S( 12,   4), S( 17,  17), S(-23,  17),
-    S( -6,  94), S(  7, 100), S( 26,  85), S( 31,  67), S( 65,  56), S( 56,  53), S( 25,  82), S(-20,  84),
-    S( 98, 178), S(134, 173), S( 61, 158), S( 95, 134), S( 68, 147), S(126, 132), S( 34, 165), S(-11, 187),
-    S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0), S(  0,   0),
+    S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0),
+    S( -85,   36), S(  -2,   22), S( -48,   22), S( -56,   27), S( -36,   36), S(  58,    0), S(  92,    5), S( -53,  -19),
+    S( -63,   11), S( -10,   19), S( -10,  -16), S( -24,    3), S(   7,    0), S(   7,  -14), S(  80,   -3), S( -29,  -22),
+    S( -65,   36), S(  -5,   25), S( -12,   -8), S(  29,  -19), S(  41,  -19), S(  14,  -22), S(  24,    8), S( -60,   -3),
+    S( -34,   88), S(  31,   66), S(  14,   36), S(  51,   14), S(  56,   -5), S(  29,   11), S(  41,   47), S( -56,   47),
+    S( -14,  258), S(  17,  274), S(  63,  233), S(  75,  184), S( 157,  154), S( 135,  145), S(  60,  225), S( -48,  231),
+    S( 237,  489), S( 324,  475), S( 147,  434), S( 229,  368), S( 164,  403), S( 304,  362), S(  82,  453), S( -27,  513),
+    S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0),
 };
 
 static const Score KnightPST[64] = {
-    S(-105, -29), S(-21, -51), S(-58, -23), S(-33, -15), S(-17, -22), S(-28, -18), S(-19, -50), S(-23, -64),
-    S( -29, -42), S(-53, -20), S(-12, -10), S( -3,  -5), S( -1,  -2), S( 18, -20), S(-14, -23), S(-19, -44),
-    S( -23, -23), S( -9,  -3), S( 12,  -1), S( 10,  15), S( 19,  10), S( 17,  -3), S( 25, -20), S(-16, -22),
-    S( -13, -18), S(  4,  -6), S( 16,  16), S( 13,  25), S( 28,  16), S( 19,  17), S( 21,   4), S( -8, -18),
-    S(  -9, -17), S( 17,   3), S( 19,  22), S( 53,  22), S( 37,  22), S( 69,  11), S( 18,   8), S( 22, -18),
-    S( -47, -24), S( 60, -20), S( 37,  10), S( 65,   9), S( 84,  -1), S(129,  -9), S( 73, -19), S( 44, -41),
-    S( -73, -25), S(-41,  -8), S( 72, -25), S( 36,  -2), S( 23,  -9), S( 62, -25), S(  7, -24), S(-17, -52),
-    S(-167, -58), S(-89, -38), S(-34, -13), S(-49, -28), S( 61, -31), S(-97, -27), S(-15, -63), S(-107, -99),
+    S(-254,  -80), S( -51, -140), S(-140,  -63), S( -80,  -41), S( -41,  -60), S( -68,  -49), S( -46, -137), S( -56, -176),
+    S( -70, -115), S(-128,  -55), S( -29,  -27), S(  -7,  -14), S(  -2,   -5), S(  43,  -55), S( -34,  -63), S( -46, -121),
+    S( -56,  -63), S( -22,   -8), S(  29,   -3), S(  24,   41), S(  46,   27), S(  41,   -8), S(  60,  -55), S( -39,  -60),
+    S( -31,  -49), S(  10,  -16), S(  39,   44), S(  31,   69), S(  68,   44), S(  46,   47), S(  51,   11), S( -19,  -49),
+    S( -22,  -47), S(  41,    8), S(  46,   60), S( 128,   60), S(  89,   60), S( 167,   30), S(  43,   22), S(  53,  -49),
+    S(-113,  -66), S( 145,  -55), S(  89,   27), S( 157,   25), S( 203,   -3), S( 311,  -25), S( 176,  -52), S( 106, -113),
+    S(-176,  -69), S( -99,  -22), S( 174,  -69), S(  87,   -5), S(  56,  -25), S( 150,  -69), S(  17,  -66), S( -41, -143),
+    S(-403, -159), S(-215, -104), S( -82,  -36), S(-118,  -77), S( 147,  -85), S(-234,  -74), S( -36, -173), S(-258, -272),
 };
 
 static const Score BishopPST[64] = {
-    S(-33, -23), S( -3,  -9), S(-14, -23), S(-21,  -5), S(-13,  -9), S(-12, -16), S(-39,  -5), S(-21, -17),
-    S(  4, -14), S( 15, -18), S( 16,  -7), S(  0,  -1), S(  7,   4), S( 21,  -9), S( 33, -15), S(  1, -27),
-    S(  0, -12), S( 15,  -3), S( 15,   8), S( 15,  10), S( 14,  13), S( 27,   3), S( 18,  -7), S( 10, -15),
-    S( -6,  -6), S( 13,   3), S( 13,  13), S( 26,  19), S( 34,   7), S( 12,  10), S( 10,  -3), S(  4,  -9),
-    S( -4,  -3), S(  5,   9), S( 19,  12), S( 50,   9), S( 37,  14), S( 37,  10), S(  7,   3), S( -2,   2),
-    S(-16,   2), S( 37,  -8), S( 43,   0), S( 40,  -1), S( 35,  -2), S( 50,   6), S( 37,   0), S( -2,   4),
-    S(-26,  -8), S( 16,  -4), S(-18,   7), S(-13, -12), S( 30,  -3), S( 59, -13), S( 18,  -4), S(-47, -14),
-    S(-29, -14), S(  4, -21), S(-82, -11), S(-37,  -8), S(-25,  -7), S(-42,  -9), S(  7, -17), S( -8, -24),
+    S( -80,  -63), S(  -7,  -25), S( -34,  -63), S( -51,  -14), S( -31,  -25), S( -29,  -44), S( -94,  -14), S( -51,  -47),
+    S(  10,  -38), S(  36,  -49), S(  39,  -19), S(   0,   -3), S(  17,   11), S(  51,  -25), S(  80,  -41), S(   2,  -74),
+    S(   0,  -33), S(  36,   -8), S(  36,   22), S(  36,   27), S(  34,   36), S(  65,    8), S(  43,  -19), S(  24,  -41),
+    S( -14,  -16), S(  31,    8), S(  31,   36), S(  63,   52), S(  82,   19), S(  29,   27), S(  24,   -8), S(  10,  -25),
+    S( -10,   -8), S(  12,   25), S(  46,   33), S( 121,   25), S(  89,   38), S(  89,   27), S(  17,    8), S(  -5,    5),
+    S( -39,    5), S(  89,  -22), S( 104,    0), S(  97,   -3), S(  85,   -5), S( 121,   16), S(  89,    0), S(  -5,   11),
+    S( -63,  -22), S(  39,  -11), S( -43,   19), S( -31,  -33), S(  72,   -8), S( 142,  -36), S(  43,  -11), S(-113,  -38),
+    S( -70,  -38), S(  10,  -58), S(-198,  -30), S( -89,  -22), S( -60,  -19), S(-101,  -25), S(  17,  -47), S( -19,  -66),
 };
 
 static const Score RookPST[64] = {
-    S(-19,  -9), S(-13,   2), S(  1,   3), S( 17,  -1), S( 16,  -5), S(  7, -13), S(-37,   4), S(-26, -20),
-    S(-44,  -6), S(-16,  -6), S(-20,   0), S( -9,   2), S( -1,  -9), S( 11,  -9), S( -6, -11), S(-71,  -3),
-    S(-45,  -4), S(-25,   0), S(-16,  -5), S(-17,  -1), S(  3,  -7), S(  0, -12), S( -5,  -8), S(-33, -16),
-    S(-36,   3), S(-26,   5), S(-12,   8), S( -1,   4), S(  9,  -5), S( -7,  -6), S(  6,  -8), S(-23, -11),
-    S(-24,   4), S(-11,   3), S(  7,  13), S( 26,   1), S( 24,   2), S( 35,   1), S( -8,  -1), S(-20,   2),
-    S( -5,   7), S( 19,   7), S( 26,   7), S( 36,   5), S( 17,   4), S( 45,  -3), S( 61,  -5), S( 16,  -3),
-    S( 27,  11), S( 32,  13), S( 58,  13), S( 62,  11), S( 80,  -3), S( 67,   3), S( 26,   8), S( 44,   3),
-    S( 32,  13), S( 42,  10), S( 32,  18), S( 51,  15), S( 63,  12), S(  9,  12), S( 31,   8), S( 43,   5),
+    S( -46,  -25), S( -31,    5), S(   2,    8), S(  41,   -3), S(  39,  -14), S(  17,  -36), S( -89,   11), S( -63,  -55),
+    S(-106,  -16), S( -39,  -16), S( -48,    0), S( -22,    5), S(  -2,  -25), S(  27,  -25), S( -14,  -30), S(-171,   -8),
+    S(-109,  -11), S( -60,    0), S( -39,  -14), S( -41,   -3), S(   7,  -19), S(   0,  -33), S( -12,  -22), S( -80,  -44),
+    S( -87,    8), S( -63,   14), S( -29,   22), S(  -2,   11), S(  22,  -14), S( -17,  -16), S(  14,  -22), S( -56,  -30),
+    S( -58,   11), S( -27,    8), S(  17,   36), S(  63,    3), S(  58,    5), S(  85,    3), S( -19,   -3), S( -48,    5),
+    S( -12,   19), S(  46,   19), S(  63,   19), S(  87,   14), S(  41,   11), S( 109,   -8), S( 147,  -14), S(  39,   -8),
+    S(  65,   30), S(  77,   36), S( 140,   36), S( 150,   30), S( 193,   -8), S( 162,    8), S(  63,   22), S( 106,    8),
+    S(  77,   36), S( 101,   27), S(  77,   49), S( 123,   41), S( 152,   33), S(  22,   33), S(  75,   22), S( 104,   14),
 };
 
 static const Score QueenPST[64] = {
-    S( -1, -33), S(-18, -28), S( -9, -22), S( 10, -43), S(-15,  -5), S(-25, -32), S(-31, -20), S(-50, -41),
-    S(-35, -22), S( -8, -23), S( 11, -30), S(  2, -16), S(  8, -16), S( 15, -23), S( -3, -36), S(  1, -32),
-    S(-14, -16), S(  2, -27), S(-11,  15), S( -2,   6), S( -5,   9), S(  2,  17), S( 14,  10), S(  5,   5),
-    S( -9, -18), S(-26,  28), S( -9,  19), S(-10,  47), S( -2,  31), S( -4,  34), S(  3,  39), S( -3,  23),
-    S(-27,   3), S(-27,  22), S(-16,  24), S(-16,  45), S( -1,  57), S( 17,  40), S( -2,  57), S(  1,  36),
-    S(-13, -20), S(-17,   6), S(  7,   9), S(  8,  49), S( 29,  47), S( 56,  35), S( 47,  19), S( 57,   9),
-    S(-24, -17), S(-39,  20), S( -5,  32), S(  1,  41), S(-16,  58), S( 57,  25), S( 28,  30), S( 54,   0),
-    S(-28,  -9), S(  0,  22), S( 29,  22), S( 12,  27), S( 59,  27), S( 44,  19), S( 43,  10), S( 45,  20),
+    S(  -2,  -91), S( -43,  -77), S( -22,  -60), S(  24, -118), S( -36,  -14), S( -60,  -88), S( -75,  -55), S(-121, -113),
+    S( -85,  -60), S( -19,  -63), S(  27,  -82), S(   5,  -44), S(  19,  -44), S(  36,  -63), S(  -7,  -99), S(   2,  -88),
+    S( -34,  -44), S(   5,  -74), S( -27,   41), S(  -5,   16), S( -12,   25), S(   5,   47), S(  34,   27), S(  12,   14),
+    S( -22,  -49), S( -63,   77), S( -22,   52), S( -24,  129), S(  -5,   85), S( -10,   93), S(   7,  107), S(  -7,   63),
+    S( -65,    8), S( -65,   60), S( -39,   66), S( -39,  124), S(  -2,  156), S(  41,  110), S(  -5,  156), S(   2,   99),
+    S( -31,  -55), S( -41,   16), S(  17,   25), S(  19,  134), S(  70,  129), S( 135,   96), S( 113,   52), S( 138,   25),
+    S( -58,  -47), S( -94,   55), S( -12,   88), S(   2,  113), S( -39,  159), S( 138,   69), S(  68,   82), S( 130,    0),
+    S( -68,  -25), S(   0,   60), S(  70,   60), S(  29,   74), S( 142,   74), S( 106,   52), S( 104,   27), S( 109,   55),
 };
 
 static const Score KingPST[64] = {
-    S(-15, -53), S( 36, -34), S( 12, -21), S(-54, -11), S(  8, -28), S(-28, -14), S( 24, -24), S( 14, -43),
-    S(  1, -27), S(  7, -11), S( -8,   4), S(-64,  13), S(-43,  14), S(-16,   4), S(  9,  -5), S(  8, -17),
-    S(-14, -19), S(-14,  -3), S(-22,  11), S(-46,  21), S(-44,  23), S(-30,  16), S(-15,   7), S(-27,  -9),
-    S(-49, -18), S( -1,  -4), S(-27,  21), S(-39,  24), S(-46,  27), S(-44,  23), S(-33,   9), S(-51, -11),
-    S(-17,  -8), S(-20,  22), S(-12,  24), S(-27,  27), S(-30,  26), S(-25,  33), S(-14,  26), S(-36,   3),
-    S( -9,  10), S( 24,  17), S(  2,  23), S(-16,  15), S(-20,  20), S(  6,  45), S( 22,  44), S(-22,  13),
-    S( 29, -12), S( -1,  17), S(-20,  14), S( -7,  17), S( -8,  17), S( -4,  38), S(-38,  23), S(-29,  11),
-    S(-65, -74), S( 23, -35), S( 16, -18), S(-15, -18), S(-56, -11), S(-34,  15), S(  2,   4), S( 13, -17),
+    S( -36, -145), S(  87,  -93), S(  29,  -58), S(-130,  -30), S(  19,  -77), S( -68,  -38), S(  58,  -66), S(  34, -118),
+    S(   2,  -74), S(  17,  -30), S( -19,   11), S(-155,   36), S(-104,   38), S( -39,   11), S(  22,  -14), S(  19,  -47),
+    S( -34,  -52), S( -34,   -8), S( -53,   30), S(-111,   58), S(-106,   63), S( -72,   44), S( -36,   19), S( -65,  -25),
+    S(-118,  -49), S(  -2,  -11), S( -65,   58), S( -94,   66), S(-111,   74), S(-106,   63), S( -80,   25), S(-123,  -30),
+    S( -41,  -22), S( -48,   60), S( -29,   66), S( -65,   74), S( -72,   71), S( -60,   91), S( -34,   71), S( -87,    8),
+    S( -22,   27), S(  58,   47), S(   5,   63), S( -39,   41), S( -48,   55), S(  14,  124), S(  53,  121), S( -53,   36),
+    S(  70,  -33), S(  -2,   47), S( -48,   38), S( -17,   47), S( -19,   47), S( -10,  104), S( -92,   63), S( -70,   30),
+    S(-157, -203), S(  56,  -96), S(  39,  -49), S( -36,  -49), S(-135,  -30), S( -82,   41), S(   5,   11), S(  31,  -47),
 };
 
 // clang-format on
@@ -124,14 +124,14 @@ static void ensureEvalInit() {
 // Passed pawn bonus by rank index (0 = rank 1, 7 = rank 8). Indices 0 and 7
 // are impossible for pawns; included for indexing simplicity.
 static const Score PassedPawnBonus[8] = {
-    S( 0,   0),  // rank 1
-    S( 5,  10),  // rank 2
-    S(10,  17),  // rank 3
-    S(15,  32),  // rank 4
-    S(30,  62),  // rank 5
-    S(55, 107),  // rank 6
-    S(90, 170),  // rank 7
-    S( 0,   0),  // rank 8
+    S(  0,   0),  // rank 1
+    S( 12,  27),  // rank 2
+    S( 24,  47),  // rank 3
+    S( 36,  88),  // rank 4
+    S( 72, 170),  // rank 5
+    S(133, 294),  // rank 6
+    S(217, 467),  // rank 7
+    S(  0,   0),  // rank 8
 };
 
 // Piece mobility bonus indexed by PieceType and number of attacked
@@ -145,26 +145,26 @@ static const Score MobilityBonus[7][28] = {
     {},  // None
     {},  // Pawn
     {    // Knight (0..8)
-        S(-62, -81), S(-53, -56), S(-12, -30), S( -4, -14), S(  3,   8),
-        S( 13,  15), S( 22,  23), S( 28,  27), S( 33,  33),
+        S(-150, -222), S(-128, -154), S( -29,  -82), S( -10,  -38), S(   7,   22),
+        S(  31,   41), S(  53,   63), S(  68,   74), S(  80,   91),
     },
     {    // Bishop (0..13)
-        S(-48, -59), S(-20, -23), S( 16,  -3), S( 26,  13), S( 38,  24),
-        S( 51,  42), S( 55,  54), S( 63,  57), S( 63,  65), S( 68,  73),
-        S( 81,  78), S( 81,  86), S( 91,  88), S( 98,  97),
+        S(-116, -162), S( -48,  -63), S(  39,   -8), S(  63,   36), S(  92,   66),
+        S( 123,  115), S( 133,  148), S( 152,  156), S( 152,  178), S( 164,  200),
+        S( 196,  214), S( 196,  236), S( 220,  242), S( 237,  266),
     },
     {    // Rook (0..14)
-        S(-58, -76), S(-27, -18), S(-15,  28), S(-10,  55), S( -5,  69),
-        S( -2,  82), S(  9, 112), S( 16, 118), S( 30, 132), S( 29, 142),
-        S( 32, 155), S( 38, 165), S( 46, 166), S( 48, 169), S( 58, 171),
+        S(-140, -209), S( -65,  -49), S( -36,   77), S( -24,  151), S( -12,  189),
+        S(  -5,  225), S(  22,  307), S(  39,  324), S(  72,  362), S(  70,  390),
+        S(  77,  425), S(  92,  453), S( 111,  456), S( 116,  464), S( 140,  469),
     },
     {    // Queen (0..27)
-        S(-39, -36), S(-21, -15), S(  3,   8), S(  3,  18), S( 14,  34),
-        S( 22,  54), S( 28,  61), S( 41,  73), S( 43,  79), S( 48,  92),
-        S( 56,  94), S( 60, 104), S( 60, 113), S( 66, 120), S( 67, 123),
-        S( 70, 126), S( 71, 133), S( 73, 136), S( 79, 140), S( 88, 143),
-        S( 88, 148), S( 99, 166), S(102, 170), S(102, 175), S(106, 184),
-        S(109, 191), S(113, 206), S(116, 212),
+        S( -94,  -99), S( -51,  -41), S(   7,   22), S(   7,   49), S(  34,   93),
+        S(  53,  148), S(  68,  167), S(  99,  200), S( 104,  217), S( 116,  253),
+        S( 135,  258), S( 145,  285), S( 145,  310), S( 159,  329), S( 162,  338),
+        S( 169,  346), S( 171,  365), S( 176,  373), S( 191,  384), S( 212,  392),
+        S( 212,  406), S( 239,  456), S( 246,  467), S( 246,  480), S( 256,  505),
+        S( 263,  524), S( 273,  565), S( 280,  582),
     },
     {},  // King
 };
@@ -173,22 +173,22 @@ static const Score MobilityBonus[7][28] = {
 // either color; a "semi-open file" has no friendly pawns but at least one
 // enemy pawn. Both bonuses are larger in the middlegame where file control
 // translates into direct king pressure.
-static const Score RookOpenFileBonus     = S(45, 20);
-static const Score RookSemiOpenFileBonus = S(20,  7);
+static const Score RookOpenFileBonus     = S(109, 55);
+static const Score RookSemiOpenFileBonus = S( 48, 19);
 
 // Minor-piece outpost bonuses. A knight or bishop is on an outpost when it
 // sits on a relative rank 4-6 square that is defended by a friendly pawn
 // and can no longer be challenged by an enemy pawn push. Knights benefit
 // more than bishops because bishops see through the square anyway.
-static const Score KnightOutpostBonus = S(30, 20);
-static const Score BishopOutpostBonus = S(18,  8);
+static const Score KnightOutpostBonus = S(72, 55);
+static const Score BishopOutpostBonus = S(43, 22);
 
 // Penalty for a rook shut in on the same side of the board as its own king
 // when the rook has little room to breathe. Pure middlegame concern; in the
 // endgame the king activates and the rook typically walks free. Doubled
 // when all castling rights are gone, since O-O / O-O-O cannot relocate the
 // rook to an active square.
-static const Score TrappedRookByKingPenalty = S(-52, 0);
+static const Score TrappedRookByKingPenalty = S(-126, 0);
 
 // Space evaluation: count safe central squares on our own side of the board.
 // Stockfish weights the result quadratically by non-pawn piece count so the
@@ -200,14 +200,14 @@ static const int SpaceMinPieceCount = 2;
 
 // Connected pawn bonus by rank index
 static const Score ConnectedPawnBonus[8] = {
-    S( 0,  0),  // rank 1
-    S( 7,  0),  // rank 2
-    S( 8,  3),  // rank 3
-    S(12,  7),  // rank 4
-    S(25, 17),  // rank 5
-    S(45, 30),  // rank 6
-    S(70, 42),  // rank 7
-    S( 0,  0),  // rank 8
+    S(  0,   0),  // rank 1
+    S( 17,   0),  // rank 2
+    S( 19,   8),  // rank 3
+    S( 29,  19),  // rank 4
+    S( 60,  47),  // rank 5
+    S(109,  82),  // rank 6
+    S(169, 115),  // rank 7
+    S(  0,   0),  // rank 8
 };
 
 // --- King safety constants ---
@@ -217,26 +217,26 @@ static const Score ConnectedPawnBonus[8] = {
 // Values are conservative so the shield signal cannot dominate material,
 // PST, or pawn structure in normal middlegame positions.
 static const Score PawnShieldBonus[2] = {
-    S(20, 3),  // 2nd rank
-    S(12, 2),  // 3rd rank
+    S(48, 8),  // 2nd rank
+    S(29, 5),  // 3rd rank
 };
 
 // Pawn storm penalty indexed by rank distance from our king.
 // Index 0 = 4+ ranks away, index 4 = on the same rank (blocked)
 static const Score PawnStormPenalty[5] = {
     S( 0, 0),  // 4+ ranks away
-    S(10, 0),  // 3 ranks away
-    S(25, 0),  // 2 ranks away
-    S(40, 0),  // 1 rank away
-    S(10, 0),  // same rank (blocked, less dangerous)
+    S(24, 0),  // 3 ranks away
+    S(60, 0),  // 2 ranks away
+    S(97, 0),  // 1 rank away
+    S(24, 0),  // same rank (blocked, less dangerous)
 };
 
 // Per-file penalty when our pawns or all pawns are missing near the king.
 // A shield pawn's absence is the same signal as the file being semi-open
 // or open for us, so we express it only once here rather than stacking a
 // separate "missing shield" penalty on top.
-static const Score SemiOpenFileNearKing = S(-10, 0);
-static const Score OpenFileNearKing     = S(-15, 0);
+static const Score SemiOpenFileNearKing = S(-24, 0);
+static const Score OpenFileNearKing     = S(-36, 0);
 
 // Attack units per piece type when it attacks the king zone
 static const int KingAttackUnits[] = {
@@ -254,33 +254,33 @@ static const int KingAttackUnits[] = {
 // richer mating features like safe checks, attack-square multiplicity,
 // or defender saturation.
 static const int KingAttackPenalty[13] = {
-    0,   0,   0,   12,  32,  60,  96,
-    140, 192, 252, 320, 396, 480,
+    0,   0,    0,   29,  77,  145, 232,
+    338, 464,  608, 773, 956, 1159,
 };
 
 // Penalty per king-zone square attacked by enemy but not defended by
 // any friendly piece.
-static const Score UndefendedKingZoneSq = S(-7, -1);
+static const Score UndefendedKingZoneSq = S(-17, -3);
 
 // Penalty by number of safe squares the king can move to (0 = most
 // dangerous). Index is the count of safe squares, capped at 8.
 static const Score KingSafeSqPenalty[9] = {
-    S(-50, -5),  // 0 safe squares
-    S(-35, -3),  // 1
-    S(-20, -1),  // 2
-    S(-10,  0),  // 3
-    S( -4,  0),  // 4
-    S(  0,  0),  // 5
-    S(  0,  0),  // 6
-    S(  0,  0),  // 7
-    S(  0,  0),  // 8
+    S(-121, -14),  // 0 safe squares
+    S( -85,  -8),  // 1
+    S( -48,  -3),  // 2
+    S( -24,   0),  // 3
+    S( -10,   0),  // 4
+    S(   0,   0),  // 5
+    S(   0,   0),  // 6
+    S(   0,   0),  // 7
+    S(   0,   0),  // 8
 };
 
 // clang-format on
 
-static const Score IsolatedPawnPenalty = S(-15, -20);
-static const Score DoubledPawnPenalty = S(-10, -20);
-static const Score BackwardPawnPenalty = S(-10, -15);
+static const Score IsolatedPawnPenalty = S(-36, -55);
+static const Score DoubledPawnPenalty = S(-24, -55);
+static const Score BackwardPawnPenalty = S(-24, -41);
 
 // Per-evaluation derived context: enemy-pawn attack maps and mobility-area
 // bitboards reused by every piece-activity term.

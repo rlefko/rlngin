@@ -154,7 +154,7 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
             // distribution, standPat often sits well below alpha, so qsearch
             // fans out captures that have no chance of moving the score.
             if (m.promotion == None &&
-                standPat + PieceValue[capturedType(board, m)] + 300 <= alpha) {
+                standPat + PieceValue[capturedType(board, m)] + 724 <= alpha) {
                 continue;
             }
         }
@@ -274,7 +274,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // Reverse futility pruning: if static eval is far above beta at shallow depth,
     // assume this node will fail high
     if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
-        int rfpMargin = (120 - 60 * improving) * depth;
+        int rfpMargin = (290 - 145 * improving) * depth;
         if (staticEval - rfpMargin >= beta) {
             return staticEval - rfpMargin;
         }
@@ -288,7 +288,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         Bitboard nonPawnMaterial = board.byColor[us] & ~board.byPiece[Pawn] & ~board.byPiece[King];
         if (nonPawnMaterial) {
             // Dynamic reduction: base depth component + eval-based bonus
-            int R = 3 + depth / 3 + std::clamp((staticEval - beta) / 200, 0, 3);
+            int R = 3 + depth / 3 + std::clamp((staticEval - beta) / 483, 0, 3);
             R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
@@ -312,7 +312,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // search would produce a beta cutoff
     if (!pvNode && !inCheck && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
         std::abs(beta) < MATE_SCORE - MAX_PLY) {
-        int probcutBeta = beta + 200 - 60 * improving;
+        int probcutBeta = beta + 483 - 145 * improving;
         int probcutDepth = depth - 4;
 
         std::vector<Move> pcMoves = generateLegalCaptures(board);
@@ -409,7 +409,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // SEE pruning: skip captures with very negative SEE at non-PV nodes
         if (!pvNode && !inCheck && moveIndex > 0 && capture && !isPromotion &&
             bestScore > -MATE_SCORE + MAX_PLY) {
-            if (!seeGE(board, m, -20 * depth * depth)) {
+            if (!seeGE(board, m, -48 * depth * depth)) {
                 continue;
             }
         }
@@ -417,7 +417,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // SEE pruning: skip quiet moves to heavily attacked squares at shallow depth
         if (!pvNode && !inCheck && moveIndex > 0 && !capture && !isPromotion && depth <= 8 &&
             bestScore > -MATE_SCORE + MAX_PLY) {
-            if (!seeGE(board, m, -50 * depth)) {
+            if (!seeGE(board, m, -121 * depth)) {
                 continue;
             }
         }
@@ -428,7 +428,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
             alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
-            int fpMargin = 100 + 80 * depth;
+            int fpMargin = 241 + 193 * depth;
             if (staticEval + fpMargin <= alpha) {
                 board.unmakeMove(m, undo);
                 continue;
@@ -632,7 +632,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     int prevScore = 0;
 
     for (int depth = 1; depth <= maxDepth; depth++) {
-        int delta = 25;
+        int delta = 60;
         int alpha, beta;
 
         // Use aspiration windows at depth >= 4 when the previous score is not a mate score

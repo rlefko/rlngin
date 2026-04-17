@@ -162,7 +162,7 @@ TEST_CASE("seeGE: losing capture at threshold 0", "[see]") {
 TEST_CASE("seeGE: positive threshold rejects small gain", "[see]") {
     ensureInit();
     Board board;
-    // White knight on e4, black pawn on d5 undefended. SEE = PieceValue[Pawn] = 82
+    // White knight on e4, black pawn on d5 undefended. SEE = PieceValue[Pawn] = 198
     board.setFen("4k3/8/8/3p4/4N3/8/8/4K3 w - - 0 1");
 
     Move m;
@@ -170,15 +170,15 @@ TEST_CASE("seeGE: positive threshold rejects small gain", "[see]") {
     m.to = stringToSquare("d5");
     m.promotion = None;
 
-    CHECK(seeGE(board, m, 200) == false);
-    CHECK(seeGE(board, m, 82) == true);
-    CHECK(seeGE(board, m, 83) == false);
+    CHECK(seeGE(board, m, 500) == false);
+    CHECK(seeGE(board, m, 198) == true);
+    CHECK(seeGE(board, m, 199) == false);
 }
 
 TEST_CASE("seeGE: negative threshold accepts losing capture", "[see]") {
     ensureInit();
     Board board;
-    // White queen captures pawn defended by pawn. SEE ~ 82 - 1025 = -943
+    // White queen captures pawn defended by pawn. SEE ~ 198 - 2521 = -2323
     board.setFen("4k3/8/4p3/3p4/8/8/8/3QK3 w - - 0 1");
 
     Move m;
@@ -187,7 +187,7 @@ TEST_CASE("seeGE: negative threshold accepts losing capture", "[see]") {
     m.promotion = None;
 
     int seeVal = see(board, m);
-    CHECK(seeGE(board, m, -500) == false);
+    CHECK(seeGE(board, m, -1200) == false);
     CHECK(seeGE(board, m, seeVal) == true);
     CHECK(seeGE(board, m, seeVal + 1) == false);
 }
@@ -244,8 +244,8 @@ TEST_CASE("seeGE: quiet move to attacked square", "[see]") {
     m.to = stringToSquare("d6");
     m.promotion = None;
 
-    // Moving to a square attacked by a pawn: SEE = -PieceValue[Knight] = -337
+    // Moving to a square attacked by a pawn: SEE = -PieceValue[Knight] = -817
     CHECK(seeGE(board, m, 0) == false);
-    CHECK(seeGE(board, m, -337) == true);
-    CHECK(seeGE(board, m, -336) == false);
+    CHECK(seeGE(board, m, -817) == true);
+    CHECK(seeGE(board, m, -816) == false);
 }
