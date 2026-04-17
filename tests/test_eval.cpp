@@ -38,12 +38,12 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
     // (isolated penalty, passed bonus) collapse into this expected score.
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 266);
+    CHECK(evaluate(board) == 268);
 
     // Knight on a1: material and PSQT plus mobility bonus for its two legal
     // moves from the corner
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 677);
+    CHECK(evaluate(board) == 674);
 
     // Bishop on a1: material, PSQT, square control, and bishop mobility
     // along the long diagonal
@@ -53,7 +53,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1706);
+    CHECK(evaluate(board) == 1693);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
@@ -372,6 +372,21 @@ TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
 
     // Scores should be equal and opposite
     CHECK(whitePassed == -blackPassed);
+}
+
+TEST_CASE("Eval: material imbalance is color-symmetric", "[eval][material]") {
+    Board board;
+
+    // Q vs R+N, White has the queen. Color-mirror of the same material
+    // imbalance should produce an equal-and-opposite eval.
+    board.setFen("4k3/8/8/8/8/8/3RN3/3QK3 w - - 0 1");
+    int whiteSide = evaluate(board);
+
+    board.setFen("3qk3/3rn3/8/8/8/8/8/4K3 w - - 0 1");
+    int blackSide = evaluate(board);
+
+    CHECK(whiteSide == -blackSide);
+    CHECK(whiteSide != 0);
 }
 
 TEST_CASE("Eval: bishop pair bonus favors the pair", "[eval][material]") {

@@ -288,6 +288,55 @@ static const Score BackwardPawnPenalty = S(-24, -41);
 // most.
 static const Score BishopPair = S(75, 120);
 
+// clang-format off
+
+// Stockfish-lineage quadratic imbalance tables. Indexed by [pt1][pt2] with
+// pt in { BishopPair=0, Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5 }. The
+// "ours" table captures synergy between own-side pieces (e.g. knight value
+// rising with own pawn count); the "theirs" table captures pressure from
+// enemy pieces. Only the lower triangle is used; the upper triangle stays
+// at zero so the inner loop can cap at pt2 <= pt1.
+static const int QuadraticOurs[6][6] = {
+    // BPair,  P,    N,    B,    R,    Q
+    { 1438,    0,    0,    0,    0,    0 }, // BishopPair
+    {   40,   38,    0,    0,    0,    0 }, // Pawn
+    {   32,  255,  -62,    0,    0,    0 }, // Knight
+    {    0,  104,    4,    0,    0,    0 }, // Bishop
+    {  -26,   -2,   47,  105, -208,    0 }, // Rook
+    { -189,   24,  117,  133, -134,   -6 }, // Queen
+};
+
+static const int QuadraticTheirs[6][6] = {
+    // BPair,  P,    N,    B,    R,    Q
+    {    0,    0,    0,    0,    0,    0 }, // BishopPair
+    {   36,    0,    0,    0,    0,    0 }, // Pawn
+    {    9,   63,    0,    0,    0,    0 }, // Knight
+    {   59,   65,   42,    0,    0,    0 }, // Bishop
+    {   46,   39,   24,  -24,    0,    0 }, // Rook
+    {   97,  100,  -42,  137,  268,    0 }, // Queen
+};
+
+// clang-format on
+
+// Evaluate the quadratic imbalance for side `us`. `pc[c][0]` carries a
+// synthetic bishop-pair count (0 or 1); `pc[c][1..5]` mirror the piece
+// counts for pawns through queens in the same order as the tables above.
+// The /16 divisor matches Stockfish's convention.
+static int imbalance(const int pc[2][6], int us) {
+    int them = us ^ 1;
+    int bonus = 0;
+    for (int pt1 = 0; pt1 < 6; pt1++) {
+        if (!pc[us][pt1]) continue;
+        int v = 0;
+        for (int pt2 = 0; pt2 <= pt1; pt2++) {
+            v += QuadraticOurs[pt1][pt2] * pc[us][pt2];
+            v += QuadraticTheirs[pt1][pt2] * pc[them][pt2];
+        }
+        bonus += pc[us][pt1] * v;
+    }
+    return bonus / 16;
+}
+
 // Per-evaluation derived context: enemy-pawn attack maps and mobility-area
 // bitboards reused by every piece-activity term.
 struct EvalContext {
@@ -666,11 +715,20 @@ int evaluate(const Board &board) {
         gamePhase += GamePhaseInc[p.type];
     }
 
+    int pc[2][6];
     for (int c = 0; c < 2; c++) {
-        if (board.pieceCount[c][Bishop] >= 2) {
-            scores[c] += BishopPair;
-        }
+        pc[c][0] = (board.pieceCount[c][Bishop] >= 2) ? 1 : 0;
+        pc[c][1] = board.pieceCount[c][Pawn];
+        pc[c][2] = board.pieceCount[c][Knight];
+        pc[c][3] = board.pieceCount[c][Bishop];
+        pc[c][4] = board.pieceCount[c][Rook];
+        pc[c][5] = board.pieceCount[c][Queen];
+        if (pc[c][0]) scores[c] += BishopPair;
     }
+    int imbWhite = imbalance(pc, White);
+    int imbBlack = imbalance(pc, Black);
+    scores[White] += S(imbWhite, imbWhite);
+    scores[Black] += S(imbBlack, imbBlack);
 
     Score pawnScore = 0;
     evaluatePawns(board, pawnScore);
