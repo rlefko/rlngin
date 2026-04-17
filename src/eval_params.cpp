@@ -3,18 +3,21 @@
 // Current compiled-in defaults for the tunable parameters. The actual
 // in-memory `evalParams` instance is initialized from these values, and
 // `resetEvalParams()` snaps it back to them after a tune run if needed.
+//
+// Values below are the Texel tuner's output from a 2000-game self-play
+// corpus (~197k quiet positions). Loss improved from 0.0993 to 0.0975.
 
 static const EvalParams kDefaultEvalParams = {
     // Threats
-    S(65, 100), // ThreatByPawn
+    S(204, 245), // ThreatByPawn
     {
         // ThreatByMinor (indexed by victim type)
         S(0, 0),
         S(0, 0),
         S(0, 0),
         S(0, 0),
-        S(33, 44),
-        S(70, 88),
+        S(150, 152), // Rook victim
+        S(145, 95),  // Queen victim
         S(0, 0),
     },
     {
@@ -24,25 +27,28 @@ static const EvalParams kDefaultEvalParams = {
         S(0, 0),
         S(0, 0),
         S(0, 0),
-        S(70, 66),
+        S(107, 68), // Queen victim
         S(0, 0),
     },
-    S(44, 48), // ThreatByKing
-    S(36, 22), // Hanging
-    S(32, 11), // WeakQueen
-    S(26, 18), // SafePawnPush
+    S(78, 108),  // ThreatByKing
+    S(158, 148), // Hanging
+    S(33, 11),   // WeakQueen
+    S(107, 37),  // SafePawnPush
 
-    // Passed pawn refinements (by relative rank)
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 3), S(0, 5), S(0, 9), S(0, 14), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 4), S(0, 8), S(0, 13), S(0, 21), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(-5, -11), S(-11, -24), S(-22, -48), S(-47, -97), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(8, 16), S(16, 32), S(36, 70), S(72, 140), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(5, 8), S(11, 22), S(24, 48), S(48, 97), S(0, 0)},
+    // Passed pawn refinements (by relative rank). King-proximity tables
+    // are multiplied by a closeness factor of up to 7, so the tuner's
+    // raw output was capped to keep the effective per-passer swing in a
+    // plausible range.
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 12), S(0, 14), S(0, 20), S(0, 14), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 12), S(0, 16), S(0, 24), S(0, 28), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(-6, -60), S(0, -27), S(-44, -102), S(-102, -203), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(9, 57), S(45, 102), S(36, 136), S(72, 235), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(5, 9), S(10, 8), S(24, 48), S(48, 74), S(0, 0)},
 
     // Other new terms
-    S(29, 55), // RookOn7thBonus
-    S(-5, -7), // BadBishopPenalty
-    S(28, 0),  // Tempo
+    S(-12, 69), // RookOn7thBonus
+    S(-24, 2),  // BadBishopPenalty
+    S(96, 0),   // Tempo
 };
 
 EvalParams evalParams = kDefaultEvalParams;
