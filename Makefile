@@ -30,7 +30,11 @@ OPENINGS_URL := https://github.com/official-stockfish/books/raw/master/UHO_Liche
 OPENINGS_DIR := openings
 OPENINGS_FILE := $(OPENINGS_DIR)/UHO_Lichess_4852_v1.epd
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay
+TUNE_TARGET := $(BUILDDIR)/tune
+TUNE_SRC := tools/tune.cpp
+TUNE_OBJ := $(BUILDDIR)/tune.o
+
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune
 
 build: $(TARGET)
 
@@ -41,6 +45,16 @@ $(TARGET): $(OBJS)
 $(BUILDDIR)/%.o: $(SRCDIR)/%.cpp
 	@mkdir -p $(BUILDDIR)
 	$(CXX) $(CXXFLAGS) -c -o $@ $<
+
+tune: $(TUNE_TARGET)
+
+$(TUNE_TARGET): $(TUNE_OBJ) $(LIB_OBJS)
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -o $@ $^
+
+$(TUNE_OBJ): $(TUNE_SRC)
+	@mkdir -p $(BUILDDIR)
+	$(CXX) $(CXXFLAGS) -I$(SRCDIR) -c -o $@ $<
 
 clean:
 	rm -rf $(BUILDDIR)

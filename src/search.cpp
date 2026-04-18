@@ -210,7 +210,7 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
-static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
+int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
 
@@ -316,6 +316,22 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     }
 
     return bestScore;
+}
+
+int qsearchScore(const Board &board) {
+    // Quiet-target helper for the Texel tuner. We run qsearch with a
+    // fresh state and an effectively unlimited time budget, then return
+    // the side-to-move POV leaf score. Using qsearch (instead of raw
+    // evaluate()) ensures every labeled position is scored on its quiet
+    // continuation, which is the Texel premise. The shared TT is read
+    // and written during the qsearch; when the tuner calls this from
+    // multiple threads, rare TT races are acceptable noise and are
+    // mitigated by clearing the TT between loss computations.
+    SearchState state;
+    state.startTime = std::chrono::steady_clock::now();
+    state.allocatedTimeMs = std::numeric_limits<int64_t>::max();
+    Board copy = board;
+    return quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
 }
 
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {

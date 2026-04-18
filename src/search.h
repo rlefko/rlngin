@@ -71,4 +71,9 @@ void clearTT();
 int getHashfull();
 void clearHistory(SearchState &state);
 
+// Quiescence-resolved static evaluation for use outside the search (e.g. the
+// Texel tuner). Runs qsearch from the given position with an empty state and
+// returns the side-to-move POV score.
+int qsearchScore(const Board &board);
+
 #endif
