@@ -34,7 +34,7 @@ TUNE_TARGET := $(BUILDDIR)/tune
 TUNE_SRC := tools/tune.cpp
 TUNE_OBJ := $(BUILDDIR)/tune.o
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa
 
 build: $(TARGET)
 
@@ -112,3 +112,15 @@ $(OPENINGS_FILE):
 
 selfplay: build
 	./scripts/selfplay.sh
+
+spsa: build
+	@mkdir -p tuning/spsa
+	python3 tools/spsa/spsa.py \
+	    --iterations 300 \
+	    --concurrency 6 \
+	    --tc 10+0.1 \
+	    --output-dir tuning/spsa \
+	    --engine ./build/rlngin \
+	    --fastchess ./fastchess \
+	    --openings $(OPENINGS_FILE) \
+	    --seed 1
