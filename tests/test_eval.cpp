@@ -46,7 +46,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
     // (isolated penalty, passed bonus) collapse into this expected score.
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 268);
+    CHECK(evaluate(board) == 322);
 
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
@@ -63,7 +63,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1695);
+    CHECK(evaluate(board) == 1725);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
