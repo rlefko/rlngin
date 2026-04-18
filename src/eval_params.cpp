@@ -1,61 +1,148 @@
 #include "eval_params.h"
 
-// Current compiled-in defaults for the tunable parameters. The actual
-// in-memory `evalParams` instance is initialized from these values, and
-// `resetEvalParams()` snaps it back to them after a tune run if needed.
+// Compiled-in defaults for the tunable parameters. The in-memory
+// `evalParams` instance is initialized from this struct, and
+// `resetEvalParams()` snaps it back to these values after a tune run.
 //
-// Values below are from a second Texel pass on a qsearch-filtered corpus
-// (698k positions from 7000 self-play games at 25k nodes). Loss improved
-// from 0.0905 to 0.0897 across 10 coordinate-descent passes. The qsearch
-// target collapsed the tactical overfitting signal that inflated the
-// first-pass magnitudes: threat, hanging, tempo, and rook-on-7th values
-// stayed at their pre-tune defaults, and only the passer tables and a
-// couple of scalars moved. Coordinate descent is bounded to +/-80 units
-// of total drift per scalar so no one parameter can run away.
+// Values below are from a broad Texel tune on ~1.5M qsearch-leaf
+// positions harvested from 15,000 self-play games. The tunable set
+// covers PSTs, material, mobility, passer / pawn-structure scalars,
+// rook files, king-zone scalars, and the first-pass threat terms:
+// 1003 scalars in total. Coordinate descent converged after 8 passes,
+// with per-parameter drift capped at baseDriftCap + |start|/3 so no
+// one scalar could run away on the noisy loss surface. Loss improved
+// from 0.0898 to 0.0875.
 
+// clang-format off
 static const EvalParams kDefaultEvalParams = {
-    // Threats
-    S(65, 100), // ThreatByPawn
-    {
-        // ThreatByMinor (indexed by victim type)
-        S(0, 0),
-        S(0, 0),
-        S(0, 0),
-        S(0, 0),
-        S(33, 44), // Rook victim
-        S(70, 88), // Queen victim
-        S(0, 0),
-    },
-    {
-        // ThreatByRook (indexed by victim type)
-        S(0, 0),
-        S(0, 0),
-        S(0, 0),
-        S(0, 0),
-        S(0, 0),
-        S(70, 66), // Queen victim
-        S(0, 0),
-    },
-    S(44, 48), // ThreatByKing
-    S(36, 22), // Hanging
-    S(32, 11), // WeakQueen
-    S(59, 18), // SafePawnPush
-
-    // Passed pawn refinements (by relative rank). King-proximity tables
-    // are multiplied by a closeness factor of up to 7, so values here
-    // become per-step weights; the tuner was bounded so no single rank
-    // can swing more than a pawn per closeness step on the final table.
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 33), S(0, 47), S(0, 59), S(0, 12), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 9), S(0, 33), S(0, 64), S(0, 96), S(0, 0)},
+    S(74, 100), // ThreatByPawn
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(33, 44), S(70, 88), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(70, 66), S(0, 0)},
+    S(44, 48),   // ThreatByKing
+    S(36, 22),   // Hanging
+    S(32, 11),   // WeakQueen
+    S(68, 18),   // SafePawnPush
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 33), S(0, 53), S(0, 59), S(0, 36), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 15), S(0, 40), S(0, 68), S(0, 96), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(-5, -11), S(-11, -24), S(-22, -48), S(-47, -97), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(8, 16), S(16, 32), S(36, 70), S(72, 140), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(5, 8), S(11, 22), S(24, 48), S(48, 97), S(0, 0)},
-
-    // Other new terms
     S(29, 55),   // RookOn7thBonus
-    S(-16, -10), // BadBishopPenalty
+    S(-20, -10), // BadBishopPenalty
     S(28, 0),    // Tempo
+
+    // PieceScore (None, Pawn, Knight, Bishop, Rook, Queen, King)
+    {S(0, 0), S(190, 281), S(817, 844), S(836, 857), S(1366, 1372), S(2521, 2558), S(0, 0)},
+
+    // PawnPST
+    {
+        S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0),
+        S( -73,   36), S( -21,   22), S( -48,   22), S( -56,   27), S( -36,   36), S(  58,    0), S(  76,    5), S( -53,  -19),
+        S( -63,   11), S( -10,   19), S( -10,  -16), S(   8,    3), S(  42,    5), S(   7,  -14), S(  80,   -3), S( -29,  -21),
+        S( -65,   36), S(  -5,   25), S( -12,   -8), S(  29,  -19), S(  41,  -19), S(  14,  -22), S(  24,    8), S( -60,   -3),
+        S( -34,   88), S(  31,   66), S(  14,   36), S(  37,   14), S(  28,   -5), S(  29,   11), S(  41,   47), S( -56,   47),
+        S( -14,  258), S(  17,  274), S(  63,  233), S(  75,  184), S( 157,  154), S( 135,  145), S(  60,  225), S( -48,  231),
+        S( 237,  489), S( 324,  475), S( 147,  434), S( 229,  368), S( 164,  403), S( 304,  362), S(  82,  453), S( -27,  513),
+        S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0), S(   0,    0),
+    },
+
+    // KnightPST
+    {
+        S(-254,  -80), S( -51, -140), S(-140,  -63), S( -80,  -41), S( -41,  -60), S( -68,  -49), S( -46, -137), S( -56, -176),
+        S( -70, -115), S(-128,  -55), S( -29,  -27), S(  -7,  -14), S(  -2,   -5), S(  43,  -55), S( -34,  -63), S( -46, -121),
+        S( -56,  -63), S( -22,   -8), S(   6,   -3), S(  24,   41), S(  46,   27), S(  41,   -8), S(  60,  -55), S( -39,  -60),
+        S( -31,  -49), S(  10,  -16), S(  39,   44), S(  31,   69), S(  68,   44), S(  46,   47), S(  51,   11), S( -19,  -49),
+        S( -22,  -47), S(  41,    8), S(  46,   60), S( 128,   60), S(  89,   60), S( 167,   30), S(  43,   22), S(  53,  -49),
+        S(-113,  -66), S( 145,  -55), S(  89,   27), S( 157,   25), S( 203,   -3), S( 311,  -25), S( 176,  -52), S( 106, -113),
+        S(-176,  -69), S( -99,  -22), S( 174,  -69), S(  87,   -5), S(  56,  -25), S( 150,  -69), S(  17,  -66), S( -41, -143),
+        S(-403, -159), S(-215, -104), S( -82,  -36), S(-118,  -77), S( 147,  -85), S(-234,  -74), S( -36, -173), S(-258, -272),
+    },
+
+    // BishopPST
+    {
+        S( -80,  -63), S(  -7,  -25), S( -15,  -63), S( -51,  -14), S( -31,  -25), S( -26,  -44), S( -94,  -14), S( -51,  -47),
+        S(  10,  -38), S(  36,  -49), S(  39,  -19), S(   0,   -3), S(  18,   11), S(  51,  -25), S(  80,  -41), S(   2,  -74),
+        S(   0,  -33), S(  36,   -8), S(  36,   22), S(  35,   27), S(  23,   36), S(  65,    8), S(  43,  -19), S(  24,  -41),
+        S( -14,  -16), S(  31,    8), S(  31,   36), S(  63,   52), S(  82,   19), S(  29,   27), S(  24,   -8), S(  10,  -25),
+        S( -10,   -8), S(  12,   25), S(  46,   33), S( 121,   25), S(  89,   38), S(  89,   27), S(  17,    8), S(  -5,    5),
+        S( -39,    5), S(  89,  -22), S( 104,    0), S(  97,   -3), S(  85,   -5), S( 121,   16), S(  89,    0), S(  -5,   11),
+        S( -63,  -22), S(  39,  -11), S( -43,   19), S( -31,  -33), S(  72,   -8), S( 142,  -36), S(  43,  -11), S(-113,  -38),
+        S( -70,  -38), S(  10,  -58), S(-198,  -30), S( -89,  -22), S( -60,  -19), S(-101,  -25), S(  17,  -47), S( -19,  -66),
+    },
+
+    // RookPST
+    {
+        S( -24,  -23), S( -31,    5), S(   2,    8), S(  41,   -3), S(  39,  -14), S(  17,  -36), S( -89,   11), S( -43,  -51),
+        S(-106,  -16), S( -39,  -16), S( -48,    0), S( -22,    5), S(  -2,  -25), S(  27,  -25), S( -14,  -30), S(-171,   -8),
+        S(-109,  -11), S( -60,    0), S( -39,  -14), S( -41,   -3), S(   7,  -19), S(   0,  -33), S( -12,  -22), S( -80,  -44),
+        S( -87,    8), S( -63,   14), S( -29,   22), S(  -2,   11), S(  22,  -14), S( -17,  -16), S(  14,  -22), S( -56,  -30),
+        S( -58,   11), S( -27,    8), S(  17,   36), S(  63,    3), S(  58,    5), S(  85,    3), S( -19,   -3), S( -48,    5),
+        S( -12,   19), S(  46,   19), S(  63,   19), S(  87,   14), S(  41,   11), S( 109,   -8), S( 147,  -14), S(  39,   -8),
+        S(  65,   30), S(  77,   36), S( 140,   36), S( 150,   30), S( 193,   -8), S( 162,    8), S(  63,   22), S( 106,    8),
+        S(  77,   36), S( 101,   27), S(  77,   49), S( 123,   41), S( 152,   33), S(  22,   33), S(  75,   22), S( 104,   14),
+    },
+
+    // QueenPST
+    {
+        S(  -2,  -91), S( -43,  -77), S( -22,  -60), S(  43, -118), S( -36,  -14), S( -60,  -88), S( -75,  -55), S(-121, -113),
+        S( -85,  -60), S( -19,  -63), S(  27,  -82), S(   5,  -44), S(  19,  -44), S(  36,  -63), S(  -7,  -99), S(   2,  -88),
+        S( -34,  -44), S(   5,  -74), S( -27,   41), S(  -5,   16), S( -12,   25), S(   5,   47), S(  34,   27), S(  12,   14),
+        S( -22,  -49), S( -63,   77), S( -22,   52), S( -24,  129), S(  -5,   85), S( -10,   93), S(   7,  107), S(  -7,   63),
+        S( -65,    8), S( -65,   60), S( -39,   66), S( -39,  124), S(  -2,  156), S(  41,  110), S(  -5,  156), S(   2,   99),
+        S( -31,  -55), S( -41,   16), S(  17,   25), S(  19,  134), S(  70,  129), S( 135,   96), S( 113,   52), S( 138,   25),
+        S( -58,  -47), S( -94,   55), S( -12,   88), S(   2,  113), S( -39,  159), S( 138,   69), S(  68,   82), S( 130,    0),
+        S( -68,  -25), S(   0,   60), S(  70,   60), S(  29,   74), S( 142,   74), S( 106,   52), S( 104,   27), S( 109,   55),
+    },
+
+    // KingPST
+    {
+        S( -36, -145), S(  87,  -93), S(  29,  -58), S(-130,  -30), S(  26,  -77), S( -68,  -38), S(  38,  -86), S(  34, -118),
+        S(   2,  -74), S(  17,  -30), S( -19,   11), S(-155,   36), S(-104,   38), S( -39,   11), S(  22,  -14), S(  19,  -47),
+        S( -34,  -52), S( -34,   -8), S( -53,   30), S(-111,   58), S(-106,   63), S( -72,   44), S( -36,   19), S( -65,  -25),
+        S(-118,  -49), S(  -2,  -11), S( -65,   58), S( -94,   66), S(-111,   74), S(-106,   63), S( -80,   25), S(-123,  -30),
+        S( -41,  -22), S( -48,   60), S( -29,   66), S( -65,   74), S( -72,   71), S( -60,   91), S( -34,   71), S( -87,    8),
+        S( -22,   27), S(  58,   47), S(   5,   63), S( -39,   41), S( -48,   55), S(  14,  124), S(  53,  121), S( -53,   36),
+        S(  70,  -33), S(  -2,   47), S( -48,   38), S( -17,   47), S( -19,   47), S( -10,  104), S( -92,   63), S( -70,   30),
+        S(-157, -203), S(  56,  -96), S(  39,  -49), S( -36,  -49), S(-135,  -30), S( -82,   41), S(   5,   11), S(  31,  -47),
+    },
+
+    // MobilityBonus (indexed by piece type and attacked-square count)
+    {
+        {},
+        {},
+        {S(-150, -222), S(-110, -154), S( -29,  -82), S( -10,  -38), S(   7,   22), S(  31,   41), S(  53,   63), S(  68,   74), S(  80,   91)},
+        {S(-116, -162), S(   1,  -63), S(  52,   -8), S(  63,   36), S(  92,   66), S( 120,  115), S( 127,  148), S( 151,  156), S( 152,  178), S( 164,  200), S( 196,  214), S( 196,  236), S( 220,  242), S( 237,  266)},
+        {S(-140, -209), S(   2,  -49), S(   8,   77), S(   7,  151), S( -12,  195), S(  -5,  225), S(  22,  307), S(  39,  324), S(  66,  362), S(  70,  390), S(  77,  425), S(  92,  453), S( 111,  456), S( 116,  464), S( 140,  469)},
+        {S( -94,  -99), S( -51,  -41), S(   7,   22), S(   7,   49), S(  34,   93), S(  53,  148), S(  68,  167), S(  99,  200), S( 104,  217), S( 116,  253), S( 135,  258), S( 145,  285), S( 145,  310), S( 159,  329), S( 162,  338), S( 169,  346), S( 171,  365), S( 176,  373), S( 191,  384), S( 212,  392), S( 212,  406), S( 239,  456), S( 246,  467), S( 246,  480), S( 256,  505), S( 263,  524), S( 273,  565), S( 280,  582)},
+        {},
+    },
+
+    // PassedPawnBonus / ConnectedPawnBonus (by relative rank)
+    {S(0, 0), S(12, 28), S(24, 66), S(36, 88), S(72, 170), S(133, 294), S(217, 467), S(0, 0)},
+    {S(0, 0), S(18, 0), S(38, 18), S(29, 7), S(27, 39), S(109, 82), S(169, 115), S(0, 0)},
+
+    S(69, -15), // RookOpenFileBonus
+    S(48,  19), // RookSemiOpenFileBonus
+    S(72,  55), // KnightOutpostBonus
+    S(43,  22), // BishopOutpostBonus
+    S(-50,  0), // TrappedRookByKingPenalty
+    S(75, 120), // BishopPair
+
+    {S(48, 8), S(34, 9)},                              // PawnShieldBonus
+    {S(0, 0), S(18, 0), S(60, 0), S(97, 0), S(24, 0)}, // PawnStormPenalty
+
+    S(-23,  0), // SemiOpenFileNearKing
+    S(-53,  0), // OpenFileNearKing
+    S(-17, -3), // UndefendedKingZoneSq
+
+    // KingSafeSqPenalty (by count of safe king-move squares)
+    {S(-121, -14), S(23, -8), S(39, -3), S(-18, 0), S(-10, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+
+    S( -4, -25), // IsolatedPawnPenalty
+    S(-24, -55), // DoubledPawnPenalty
+    S(-24, -41), // BackwardPawnPenalty
 };
+// clang-format on
 
 EvalParams evalParams = kDefaultEvalParams;
 
