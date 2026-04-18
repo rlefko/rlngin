@@ -334,34 +334,6 @@ int qsearchScore(const Board &board) {
     return quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
 }
 
-Board qsearchLeafBoard(const Board &root) {
-    // Clear TT so the post-search walk only follows entries that this
-    // call wrote. Not thread-safe: the tuner must run this step
-    // sequentially before the multi-threaded loss loop starts.
-    tt.clear();
-
-    SearchState state;
-    state.startTime = std::chrono::steady_clock::now();
-    state.allocatedTimeMs = std::numeric_limits<int64_t>::max();
-    Board copy = root;
-    quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
-
-    // Walk the best-move chain. Qsearch writes a zero move for pure
-    // stand-pat returns; walking stops when no move, a non-capture, or
-    // a TT miss is seen. The cap on iterations guards against any
-    // pathological cycle we might observe under perturbation.
-    Board cur = root;
-    for (int iter = 0; iter < 32; iter++) {
-        TTEntry entry;
-        if (!tt.probe(cur.key, entry, 0)) break;
-        Move m = entry.best_move;
-        if (m.from == 0 && m.to == 0 && m.promotion == None) break;
-        if (!isCapture(cur, m)) break;
-        cur.makeMove(m);
-    }
-    return cur;
-}
-
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {
     uint64_t key = board.key;
     int hmc = board.halfmoveClock;

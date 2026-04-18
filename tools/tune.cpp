@@ -89,70 +89,6 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("BadBishopPenalty", &evalParams.BadBishopPenalty);
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
-    // --- Material (skip None and King; both are structurally zero) ---
-    for (int pt = Pawn; pt <= Queen; pt++)
-        addMgEg("PieceScore[" + std::to_string(pt) + "]", &evalParams.PieceScore[pt]);
-
-    // --- Piece-square tables. Each PST has 64 squares; skip the back/
-    // front ranks of the pawn PST because they are always zero. King
-    // PST squares stay tunable because the king appears on them.
-    auto addPST = [&](const std::string &name, Score *arr, int start, int end) {
-        for (int sq = start; sq < end; sq++) {
-            addMgEg(name + "[" + std::to_string(sq) + "]", &arr[sq]);
-        }
-    };
-    addPST("PawnPST", evalParams.PawnPST, 8, 56);
-    addPST("KnightPST", evalParams.KnightPST, 0, 64);
-    addPST("BishopPST", evalParams.BishopPST, 0, 64);
-    addPST("RookPST", evalParams.RookPST, 0, 64);
-    addPST("QueenPST", evalParams.QueenPST, 0, 64);
-    addPST("KingPST", evalParams.KingPST, 0, 64);
-
-    // --- Mobility bonuses (only Knight..Queen rows carry values) ---
-    static const int mobilityCounts[7] = {0, 0, 9, 14, 15, 28, 0};
-    for (int pt = Knight; pt <= Queen; pt++) {
-        for (int i = 0; i < mobilityCounts[pt]; i++) {
-            addMgEg("MobilityBonus[" + std::to_string(pt) + "][" + std::to_string(i) + "]",
-                    &evalParams.MobilityBonus[pt][i]);
-        }
-    }
-
-    // --- Passed pawn base bonus and connected pawn bonus (ranks 1..6
-    // carry non-zero defaults; rank 0/7 stay at zero). ---
-    for (int r = 1; r <= 6; r++)
-        addMgEg("PassedPawnBonus[" + std::to_string(r) + "]", &evalParams.PassedPawnBonus[r]);
-    for (int r = 1; r <= 6; r++)
-        addMgEg("ConnectedPawnBonus[" + std::to_string(r) + "]", &evalParams.ConnectedPawnBonus[r]);
-
-    // --- Rook files, outposts, trapped rook ---
-    addMgEg("RookOpenFileBonus", &evalParams.RookOpenFileBonus);
-    addMgEg("RookSemiOpenFileBonus", &evalParams.RookSemiOpenFileBonus);
-    addMgEg("KnightOutpostBonus", &evalParams.KnightOutpostBonus);
-    addMgEg("BishopOutpostBonus", &evalParams.BishopOutpostBonus);
-    addMgEg("TrappedRookByKingPenalty", &evalParams.TrappedRookByKingPenalty, true,
-            false); // mg only
-
-    // --- Bishop pair ---
-    addMgEg("BishopPair", &evalParams.BishopPair);
-
-    // --- Pawn shield and storm, king-zone scalars ---
-    for (int i = 0; i < 2; i++)
-        addMgEg("PawnShieldBonus[" + std::to_string(i) + "]", &evalParams.PawnShieldBonus[i]);
-    for (int i = 0; i < 5; i++)
-        addMgEg("PawnStormPenalty[" + std::to_string(i) + "]", &evalParams.PawnStormPenalty[i],
-                true, false); // mg only
-    addMgEg("SemiOpenFileNearKing", &evalParams.SemiOpenFileNearKing, true, false);
-    addMgEg("OpenFileNearKing", &evalParams.OpenFileNearKing, true, false);
-    addMgEg("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq);
-    for (int i = 0; i < 9; i++)
-        addMgEg("KingSafeSqPenalty[" + std::to_string(i) + "]",
-                &evalParams.KingSafeSqPenalty[i]);
-
-    // --- Pawn-structure penalties ---
-    addMgEg("IsolatedPawnPenalty", &evalParams.IsolatedPawnPenalty);
-    addMgEg("DoubledPawnPenalty", &evalParams.DoubledPawnPenalty);
-    addMgEg("BackwardPawnPenalty", &evalParams.BackwardPawnPenalty);
-
     return out;
 }
 
@@ -187,13 +123,12 @@ static double sigmoid(double x, double K) {
 
 static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
                           int numThreads) {
-    // Positions here already hold qsearch-resolved leaf boards, so the
-    // inner loop only needs static evaluate(). The pawn and material
-    // hashes still cache per-eval-param state, so clear them on each
-    // loss evaluation; threads within a single loss call race on the
-    // shared hash writes, which we accept as tuner noise.
-    clearPawnHash();
-    clearMaterialHash();
+    // The qsearch leaf score is the Texel target (see qsearchScore); it
+    // reads and writes a shared TT. Clearing between loss computations
+    // ensures stale entries from earlier parameter values do not bias
+    // the score once parameters move. Within a single computeLoss call
+    // threads race on TT writes, which is acceptable tuner noise.
+    clearTT();
     size_t n = positions.size();
     std::vector<double> partial(numThreads, 0.0);
     std::vector<std::thread> threads;
@@ -204,14 +139,11 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
         threads.emplace_back([&, start, end, t]() {
             double sum = 0.0;
             for (size_t i = start; i < end; i++) {
-                Board board = positions[i].board;
-                int raw = evaluate(board);
-                // evaluate returns side-to-move relative; convert to
-                // White POV so the tuner can compare to the White-POV
-                // game result. The leaf's side-to-move may differ from
-                // the root if an odd number of captures were resolved
-                // during qsearch.
-                if (board.sideToMove == Black) raw = -raw;
+                int raw = qsearchScore(positions[i].board);
+                // qsearchScore returns side-to-move relative; convert to
+                // White POV so the tuner can compare directly to the
+                // White-POV game result.
+                if (positions[i].board.sideToMove == Black) raw = -raw;
                 double pred = sigmoid(static_cast<double>(raw), K);
                 double err = pred - positions[i].result;
                 sum += err * err;
@@ -225,23 +157,6 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
     for (double p : partial)
         total += p;
     return total / static_cast<double>(n);
-}
-
-// Replace each training position's root board with its qsearch-resolved
-// leaf so the loss loop can use a fast static evaluate() call. Runs
-// sequentially because qsearchLeafBoard clears and rewrites the global
-// TT per position.
-static void precomputeLeaves(std::vector<LabeledPosition> &positions) {
-    std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions...\n";
-    size_t reported = 0;
-    for (size_t i = 0; i < positions.size(); i++) {
-        positions[i].board = qsearchLeafBoard(positions[i].board);
-        if (i - reported >= 50000) {
-            std::cerr << "  " << i << " leaves computed\n";
-            reported = i;
-        }
-    }
-    std::cerr << "  done\n";
 }
 
 static double findBestK(const std::vector<LabeledPosition> &positions, int numThreads) {
@@ -284,14 +199,12 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
 
     // Relative improvement threshold -- changes smaller than this are
     // treated as noise, preventing coordinate descent from running away
-    // on parameters that barely appear in the dataset. The per-pass
-    // step cap stays tight; the total-drift cap is scaled by the
-    // magnitude of each scalar's starting value because PST entries
-    // routinely begin at |100|+ and legitimately move by tens per tune.
+    // on parameters that barely appear in the dataset. Also cap how far
+    // a single parameter can move in one pass and in total so no one
+    // scalar explodes when the loss surface is noisy.
     const double relThreshold = 1e-5;
     const int maxStepsPerPass = 20;
-    const int baseDriftCap = 80;
-    const int magnitudeDriftDiv = 3; // extra cap = |start| / magnitudeDriftDiv
+    const int maxTotalDrift = 80;
 
     for (int pass = 0; pass < maxPasses; pass++) {
         bool improved = false;
@@ -302,9 +215,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
 
             double threshold = bestLoss * relThreshold;
 
-            int driftCap = baseDriftCap + std::abs(start) / magnitudeDriftDiv;
             auto withinCap = [&](int candidate) {
-                return std::abs(candidate - start) <= driftCap;
+                return std::abs(candidate - start) <= maxTotalDrift;
             };
 
             int best = original;
@@ -369,130 +281,37 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     }
 }
 
-static std::string fmtScore(Score s) {
-    return "S(" + std::to_string(mg_value(s)) + ", " + std::to_string(eg_value(s)) + ")";
-}
-
-static void printArr8(const std::string &indent, Score arr[8]) {
-    std::cout << indent << "{";
-    for (int i = 0; i < 8; i++) {
-        std::cout << fmtScore(arr[i]);
-        if (i < 7) std::cout << ", ";
-    }
-    std::cout << "},\n";
-}
-
-static void printPST(const std::string &name, Score arr[64]) {
-    std::cout << "    // " << name << "\n";
-    std::cout << "    {\n";
-    for (int row = 0; row < 8; row++) {
-        std::cout << "        ";
-        for (int col = 0; col < 8; col++) {
-            std::cout << fmtScore(arr[row * 8 + col]);
-            if (row != 7 || col != 7) std::cout << ",";
-            if (col < 7) std::cout << " ";
-        }
-        std::cout << "\n";
-    }
-    std::cout << "    },\n";
-}
-
 static void printCurrentValues() {
-    std::cout << "// Paste as the full body of kDefaultEvalParams in src/eval_params.cpp\n";
-    std::cout << "static const EvalParams kDefaultEvalParams = {\n";
+    std::cout << "// Updated evalParams (paste into src/eval_params.cpp)\n";
+    auto fmt = [](Score s) {
+        return "S(" + std::to_string(mg_value(s)) + ", " + std::to_string(eg_value(s)) + ")";
+    };
+    std::cout << "ThreatByPawn = " << fmt(evalParams.ThreatByPawn) << ";\n";
+    std::cout << "ThreatByMinor[Rook] = " << fmt(evalParams.ThreatByMinor[Rook]) << ";\n";
+    std::cout << "ThreatByMinor[Queen] = " << fmt(evalParams.ThreatByMinor[Queen]) << ";\n";
+    std::cout << "ThreatByRook[Queen] = " << fmt(evalParams.ThreatByRook[Queen]) << ";\n";
+    std::cout << "ThreatByKing = " << fmt(evalParams.ThreatByKing) << ";\n";
+    std::cout << "Hanging = " << fmt(evalParams.Hanging) << ";\n";
+    std::cout << "WeakQueen = " << fmt(evalParams.WeakQueen) << ";\n";
+    std::cout << "SafePawnPush = " << fmt(evalParams.SafePawnPush) << ";\n";
 
-    std::cout << "    " << fmtScore(evalParams.ThreatByPawn) << ", // ThreatByPawn\n";
-    std::cout << "    {";
-    for (int i = 0; i < 7; i++) {
-        std::cout << fmtScore(evalParams.ThreatByMinor[i]);
-        if (i < 6) std::cout << ", ";
-    }
-    std::cout << "},\n";
-    std::cout << "    {";
-    for (int i = 0; i < 7; i++) {
-        std::cout << fmtScore(evalParams.ThreatByRook[i]);
-        if (i < 6) std::cout << ", ";
-    }
-    std::cout << "},\n";
-    std::cout << "    " << fmtScore(evalParams.ThreatByKing) << ", // ThreatByKing\n";
-    std::cout << "    " << fmtScore(evalParams.Hanging) << ", // Hanging\n";
-    std::cout << "    " << fmtScore(evalParams.WeakQueen) << ", // WeakQueen\n";
-    std::cout << "    " << fmtScore(evalParams.SafePawnPush) << ", // SafePawnPush\n";
-
-    printArr8("    ", evalParams.PassedKingProxBonus);
-    printArr8("    ", evalParams.PassedEnemyKingProxPenalty);
-    printArr8("    ", evalParams.PassedBlockedPenalty);
-    printArr8("    ", evalParams.PassedSupportedBonus);
-    printArr8("    ", evalParams.ConnectedPassersBonus);
-
-    std::cout << "    " << fmtScore(evalParams.RookOn7thBonus) << ", // RookOn7thBonus\n";
-    std::cout << "    " << fmtScore(evalParams.BadBishopPenalty) << ", // BadBishopPenalty\n";
-    std::cout << "    " << fmtScore(evalParams.Tempo) << ", // Tempo\n";
-
-    // PieceScore
-    std::cout << "    {";
-    for (int i = 0; i < 7; i++) {
-        std::cout << fmtScore(evalParams.PieceScore[i]);
-        if (i < 6) std::cout << ", ";
-    }
-    std::cout << "}, // PieceScore\n";
-
-    printPST("PawnPST", evalParams.PawnPST);
-    printPST("KnightPST", evalParams.KnightPST);
-    printPST("BishopPST", evalParams.BishopPST);
-    printPST("RookPST", evalParams.RookPST);
-    printPST("QueenPST", evalParams.QueenPST);
-    printPST("KingPST", evalParams.KingPST);
-
-    // MobilityBonus
-    std::cout << "    {\n";
-    static const int mobilityCounts[7] = {0, 0, 9, 14, 15, 28, 0};
-    for (int pt = 0; pt < 7; pt++) {
-        std::cout << "        {";
-        for (int i = 0; i < mobilityCounts[pt]; i++) {
-            std::cout << fmtScore(evalParams.MobilityBonus[pt][i]);
-            if (i < mobilityCounts[pt] - 1) std::cout << ", ";
+    auto printArr = [&](const std::string &name, Score arr[8]) {
+        std::cout << name << " = { ";
+        for (int i = 0; i < 8; i++) {
+            std::cout << fmt(arr[i]);
+            if (i < 7) std::cout << ", ";
         }
-        std::cout << "},\n";
-    }
-    std::cout << "    },\n";
+        std::cout << " };\n";
+    };
+    printArr("PassedKingProxBonus", evalParams.PassedKingProxBonus);
+    printArr("PassedEnemyKingProxPenalty", evalParams.PassedEnemyKingProxPenalty);
+    printArr("PassedBlockedPenalty", evalParams.PassedBlockedPenalty);
+    printArr("PassedSupportedBonus", evalParams.PassedSupportedBonus);
+    printArr("ConnectedPassersBonus", evalParams.ConnectedPassersBonus);
 
-    printArr8("    ", evalParams.PassedPawnBonus);
-    printArr8("    ", evalParams.ConnectedPawnBonus);
-
-    std::cout << "    " << fmtScore(evalParams.RookOpenFileBonus) << ", // RookOpenFileBonus\n";
-    std::cout << "    " << fmtScore(evalParams.RookSemiOpenFileBonus)
-              << ", // RookSemiOpenFileBonus\n";
-    std::cout << "    " << fmtScore(evalParams.KnightOutpostBonus) << ", // KnightOutpostBonus\n";
-    std::cout << "    " << fmtScore(evalParams.BishopOutpostBonus) << ", // BishopOutpostBonus\n";
-    std::cout << "    " << fmtScore(evalParams.TrappedRookByKingPenalty)
-              << ", // TrappedRookByKingPenalty\n";
-    std::cout << "    " << fmtScore(evalParams.BishopPair) << ", // BishopPair\n";
-
-    std::cout << "    {" << fmtScore(evalParams.PawnShieldBonus[0]) << ", "
-              << fmtScore(evalParams.PawnShieldBonus[1]) << "}, // PawnShieldBonus\n";
-    std::cout << "    {";
-    for (int i = 0; i < 5; i++) {
-        std::cout << fmtScore(evalParams.PawnStormPenalty[i]);
-        if (i < 4) std::cout << ", ";
-    }
-    std::cout << "}, // PawnStormPenalty\n";
-    std::cout << "    " << fmtScore(evalParams.SemiOpenFileNearKing)
-              << ", // SemiOpenFileNearKing\n";
-    std::cout << "    " << fmtScore(evalParams.OpenFileNearKing) << ", // OpenFileNearKing\n";
-    std::cout << "    " << fmtScore(evalParams.UndefendedKingZoneSq)
-              << ", // UndefendedKingZoneSq\n";
-    std::cout << "    {";
-    for (int i = 0; i < 9; i++) {
-        std::cout << fmtScore(evalParams.KingSafeSqPenalty[i]);
-        if (i < 8) std::cout << ", ";
-    }
-    std::cout << "}, // KingSafeSqPenalty\n";
-
-    std::cout << "    " << fmtScore(evalParams.IsolatedPawnPenalty) << ", // IsolatedPawnPenalty\n";
-    std::cout << "    " << fmtScore(evalParams.DoubledPawnPenalty) << ", // DoubledPawnPenalty\n";
-    std::cout << "    " << fmtScore(evalParams.BackwardPawnPenalty) << ", // BackwardPawnPenalty\n";
-    std::cout << "};\n";
+    std::cout << "RookOn7thBonus = " << fmt(evalParams.RookOn7thBonus) << ";\n";
+    std::cout << "BadBishopPenalty = " << fmt(evalParams.BadBishopPenalty) << ";\n";
+    std::cout << "Tempo = " << fmt(evalParams.Tempo) << ";\n";
 }
 
 } // namespace
@@ -515,8 +334,6 @@ int main(int argc, char **argv) {
     std::cerr << "loading " << dataset << "...\n";
     auto positions = loadDataset(dataset);
     std::cerr << "loaded " << positions.size() << " positions\n";
-
-    precomputeLeaves(positions);
 
     std::cerr << "finding K...\n";
     double K = findBestK(positions, numThreads);
