@@ -1,0 +1,26 @@
+SPSA: 20 scalars, 300 iterations, concurrency 6
+  RazorBase: c0=26.69 cN=15.00 a0=554.1102 aN=133.4291 default=300 bounds=[150,500]
+  RazorDepth: c0=26.69 cN=15.00 a0=554.1102 aN=133.4291 default=250 bounds=[100,400]
+  RfpBase: c0=26.69 cN=15.00 a0=554.1102 aN=133.4291 default=290 bounds=[150,450]
+  RfpImproving: c0=17.79 cN=10.00 a0=295.5255 aN=71.1622 default=145 bounds=[50,300]
+  NmpBase: c0=0.89 cN=0.50 a0=0.9235 aN=0.2224 default=3 bounds=[2,5]
+  NmpEvalDiv: c0=44.48 cN=25.00 a0=1477.6273 aN=355.8109 default=483 bounds=[200,800]
+  FpBase: c0=26.69 cN=15.00 a0=554.1102 aN=133.4291 default=241 bounds=[100,400]
+  FpDepth: c0=26.69 cN=15.00 a0=554.1102 aN=133.4291 default=193 bounds=[75,350]
+  SeeCaptureCoef: c0=8.90 cN=5.00 a0=73.8814 aN=17.7905 default=48 bounds=[15,120]
+  SeeQuietCoef: c0=17.79 cN=10.00 a0=295.5255 aN=71.1622 default=121 bounds=[40,250]
+  LmrBase: c0=8.90 cN=5.00 a0=73.8814 aN=17.7905 default=75 bounds=[40,110]
+  LmrDivisor: c0=17.79 cN=10.00 a0=295.5255 aN=71.1622 default=225 bounds=[150,350]
+  TempoMg: c0=14.23 cN=8.00 a0=177.3153 aN=42.6973 default=24 bounds=[0,200]
+  ThreatByPawnMg: c0=26.69 cN=15.00 a0=554.1102 aN=133.4291 default=177 bounds=[0,400]
+  ThreatByPawnEg: c0=26.69 cN=15.00 a0=554.1102 aN=133.4291 default=126 bounds=[0,400]
+  HangingMg: c0=21.35 cN=12.00 a0=354.6305 aN=85.3946 default=29 bounds=[0,300]
+  HangingEg: c0=21.35 cN=12.00 a0=354.6305 aN=85.3946 default=0 bounds=[0,300]
+  SafePawnPushMg: c0=17.79 cN=10.00 a0=295.5255 aN=71.1622 default=53 bounds=[0,250]
+  SafePawnPushEg: c0=17.79 cN=10.00 a0=295.5255 aN=71.1622 default=29 bounds=[0,250]
+  RookOn7thBonusEg: c0=17.79 cN=10.00 a0=295.5255 aN=71.1622 default=46 bounds=[0,200]
+  iter 10/300: y=+0.167 (5W/4D/3L), games=120, elapsed=794s
+  iter 20/300: y=+0.167 (6W/2D/4L), games=240, elapsed=1630s
+  iter 30/300: y=+0.167 (5W/4D/3L), games=360, elapsed=2420s
+  iter 40/300: y=+0.083 (5W/3D/4L), games=480, elapsed=3299s
+  iter 50/300: y=+0.167 (6W/2D/4L), games=600, elapsed=4099s
