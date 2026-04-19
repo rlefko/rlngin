@@ -211,7 +211,7 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
-static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
+int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
 
@@ -317,6 +317,50 @@ static int quiescence(Board &board, int alpha, int beta, int ply, SearchState &s
     }
 
     return bestScore;
+}
+
+int qsearchScore(const Board &board) {
+    // Quiet-target helper for the Texel tuner. We run qsearch with a
+    // fresh state and an effectively unlimited time budget, then return
+    // the side-to-move POV leaf score. Using qsearch (instead of raw
+    // evaluate()) ensures every labeled position is scored on its quiet
+    // continuation, which is the Texel premise. The shared TT is read
+    // and written during the qsearch; when the tuner calls this from
+    // multiple threads, rare TT races are acceptable noise and are
+    // mitigated by clearing the TT between loss computations.
+    SearchState state;
+    state.startTime = std::chrono::steady_clock::now();
+    state.allocatedTimeMs = std::numeric_limits<int64_t>::max();
+    Board copy = board;
+    return quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
+}
+
+Board qsearchLeafBoard(const Board &root) {
+    // Clear TT so the post-search walk only follows entries that this
+    // call wrote. Not thread-safe: the tuner must run this step
+    // sequentially before the multi-threaded loss loop starts.
+    tt.clear();
+
+    SearchState state;
+    state.startTime = std::chrono::steady_clock::now();
+    state.allocatedTimeMs = std::numeric_limits<int64_t>::max();
+    Board copy = root;
+    quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
+
+    // Walk the best-move chain. Qsearch writes a zero move for pure
+    // stand-pat returns; walking stops when no move, a non-capture, or
+    // a TT miss is seen. The cap on iterations guards against any
+    // pathological cycle we might observe under perturbation.
+    Board cur = root;
+    for (int iter = 0; iter < 32; iter++) {
+        TTEntry entry;
+        if (!tt.probe(cur.key, entry, 0)) break;
+        Move m = entry.best_move;
+        if (m.from == 0 && m.to == 0 && m.promotion == None) break;
+        if (!isCapture(cur, m)) break;
+        cur.makeMove(m);
+    }
+    return cur;
 }
 
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {

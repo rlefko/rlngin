@@ -72,4 +72,16 @@ void clearTT();
 int getHashfull();
 void clearHistory(SearchState &state);
 
+// Quiescence-resolved static evaluation for use outside the search (e.g. the
+// Texel tuner). Runs qsearch from the given position with an empty state and
+// returns the side-to-move POV score.
+int qsearchScore(const Board &board);
+
+// Run qsearch from `root` and walk the resulting TT's best-move chain to
+// return the quiet leaf position. Clears the TT internally so the walk
+// only follows entries written by this call. Intended for Texel tuner
+// dataset preparation: tuning against pre-resolved leaves lets the loss
+// loop run cheap static evaluate() calls instead of full qsearch.
+Board qsearchLeafBoard(const Board &root);
+
 #endif
