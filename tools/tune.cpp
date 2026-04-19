@@ -15,11 +15,13 @@
 #include "types.h"
 #include "zobrist.h"
 
+#include <algorithm>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
 #include <cstring>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -33,11 +35,15 @@ struct LabeledPosition {
     double result; // 1.0 / 0.5 / 0.0 from White POV
 };
 
-// Accessor for a single mg/eg half of a Score field.
+// Accessor for a single mg/eg half of a Score field. `allow` returns
+// whether a proposed new value respects the chess-prior constraints
+// attached to this scalar (sign, monotonicity). Unconstrained params
+// carry a predicate that always returns true.
 struct ParamRef {
     std::string name;
     Score *target;
     bool isMg; // true = modify mg half, false = eg half
+    std::function<bool(int)> allow = [](int) { return true; };
 
     int read() const {
         return isMg ? mg_value(*target) : eg_value(*target);
@@ -53,11 +59,25 @@ struct ParamRef {
     }
 };
 
+// Convenience predicates for the constraint catalog.
+static auto nonPositive() {
+    return [](int v) { return v <= 0; };
+}
+static auto nonNegative() {
+    return [](int v) { return v >= 0; };
+}
+
 static std::vector<ParamRef> collectParams() {
     std::vector<ParamRef> out;
     auto addMgEg = [&](const std::string &name, Score *s, bool mg = true, bool eg = true) {
         if (mg) out.push_back({name + ".mg", s, true});
         if (eg) out.push_back({name + ".eg", s, false});
+    };
+    // Overload that stamps the same predicate on both halves.
+    auto addMgEgConstr = [&](const std::string &name, Score *s, std::function<bool(int)> allow,
+                             bool mg = true, bool eg = true) {
+        if (mg) out.push_back({name + ".mg", s, true, allow});
+        if (eg) out.push_back({name + ".eg", s, false, allow});
     };
 
     // --- Threats ---
@@ -77,8 +97,8 @@ static std::vector<ParamRef> collectParams() {
                 &evalParams.PassedKingProxBonus[r], false, true); // eg only
         addMgEg("PassedEnemyKingProxPenalty[" + std::to_string(r) + "]",
                 &evalParams.PassedEnemyKingProxPenalty[r], false, true);
-        addMgEg("PassedBlockedPenalty[" + std::to_string(r) + "]",
-                &evalParams.PassedBlockedPenalty[r]);
+        addMgEgConstr("PassedBlockedPenalty[" + std::to_string(r) + "]",
+                      &evalParams.PassedBlockedPenalty[r], nonPositive());
         addMgEg("PassedSupportedBonus[" + std::to_string(r) + "]",
                 &evalParams.PassedSupportedBonus[r]);
         addMgEg("ConnectedPassersBonus[" + std::to_string(r) + "]",
@@ -86,7 +106,7 @@ static std::vector<ParamRef> collectParams() {
     }
 
     addMgEg("RookOn7thBonus", &evalParams.RookOn7thBonus);
-    addMgEg("BadBishopPenalty", &evalParams.BadBishopPenalty);
+    addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, nonPositive());
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
     // --- Material (skip None and King; both are structurally zero) ---
@@ -129,8 +149,8 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("RookSemiOpenFileBonus", &evalParams.RookSemiOpenFileBonus);
     addMgEg("KnightOutpostBonus", &evalParams.KnightOutpostBonus);
     addMgEg("BishopOutpostBonus", &evalParams.BishopOutpostBonus);
-    addMgEg("TrappedRookByKingPenalty", &evalParams.TrappedRookByKingPenalty, true,
-            false); // mg only
+    out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
+                   nonPositive()}); // mg only, must stay a penalty
 
     // --- Bishop pair ---
     addMgEg("BishopPair", &evalParams.BishopPair);
@@ -139,19 +159,41 @@ static std::vector<ParamRef> collectParams() {
     for (int i = 0; i < 2; i++)
         addMgEg("PawnShieldBonus[" + std::to_string(i) + "]", &evalParams.PawnShieldBonus[i]);
     for (int i = 0; i < 5; i++)
-        addMgEg("PawnStormPenalty[" + std::to_string(i) + "]", &evalParams.PawnStormPenalty[i],
-                true, false); // mg only
-    addMgEg("SemiOpenFileNearKing", &evalParams.SemiOpenFileNearKing, true, false);
-    addMgEg("OpenFileNearKing", &evalParams.OpenFileNearKing, true, false);
-    addMgEg("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq);
-    for (int i = 0; i < 9; i++)
-        addMgEg("KingSafeSqPenalty[" + std::to_string(i) + "]",
-                &evalParams.KingSafeSqPenalty[i]);
+        // Consumed with `scores -= PawnStormPenalty[idx]`, so magnitudes must
+        // stay non-negative to preserve the "enemy advance hurts us" prior.
+        out.push_back({"PawnStormPenalty[" + std::to_string(i) + "].mg",
+                       &evalParams.PawnStormPenalty[i], true, nonNegative()});
+    out.push_back({"SemiOpenFileNearKing.mg", &evalParams.SemiOpenFileNearKing, true,
+                   nonPositive()});
+    out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, nonPositive()});
+    addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, nonPositive());
+    // KingSafeSqPenalty: each slot must stay a penalty (<= 0), and the
+    // chain is monotonically non-decreasing -- more safe king-move
+    // squares can never score lower than fewer. Predicate closes over
+    // the index so it can consult the live neighboring Score values.
+    for (int i = 0; i < 9; i++) {
+        auto mgChain = [i](int v) {
+            if (v > 0) return false;
+            if (i > 0 && v < mg_value(evalParams.KingSafeSqPenalty[i - 1])) return false;
+            if (i < 8 && v > mg_value(evalParams.KingSafeSqPenalty[i + 1])) return false;
+            return true;
+        };
+        auto egChain = [i](int v) {
+            if (v > 0) return false;
+            if (i > 0 && v < eg_value(evalParams.KingSafeSqPenalty[i - 1])) return false;
+            if (i < 8 && v > eg_value(evalParams.KingSafeSqPenalty[i + 1])) return false;
+            return true;
+        };
+        out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].mg",
+                       &evalParams.KingSafeSqPenalty[i], true, mgChain});
+        out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].eg",
+                       &evalParams.KingSafeSqPenalty[i], false, egChain});
+    }
 
     // --- Pawn-structure penalties ---
-    addMgEg("IsolatedPawnPenalty", &evalParams.IsolatedPawnPenalty);
-    addMgEg("DoubledPawnPenalty", &evalParams.DoubledPawnPenalty);
-    addMgEg("BackwardPawnPenalty", &evalParams.BackwardPawnPenalty);
+    addMgEgConstr("IsolatedPawnPenalty", &evalParams.IsolatedPawnPenalty, nonPositive());
+    addMgEgConstr("DoubledPawnPenalty", &evalParams.DoubledPawnPenalty, nonPositive());
+    addMgEgConstr("BackwardPawnPenalty", &evalParams.BackwardPawnPenalty, nonPositive());
 
     return out;
 }
@@ -263,11 +305,47 @@ static double findBestK(const std::vector<LabeledPosition> &positions, int numTh
     return (lo + hi) / 2.0;
 }
 
+// Snap every constrained scalar into its feasible region so coordinate
+// descent starts inside the constraint set. Monotone-chain constraints
+// on KingSafeSqPenalty are resolved pass-by-pass: sweep the chain until
+// it stabilizes, re-reading each entry's predicate after upstream
+// neighbors move. The previous-tune violations we need to fix are
+// KingSafeSqPenalty sign-flips and the UndefendedKingZoneSq / PawnStorm
+// sign drifts, all of which collapse to at most a few chain sweeps.
+static void clampToConstraints(std::vector<ParamRef> &params) {
+    int snapped = 0;
+    for (int sweep = 0; sweep < 20; sweep++) {
+        bool changed = false;
+        for (auto &p : params) {
+            int v = p.read();
+            if (p.allow(v)) continue;
+            // Sign-only predicates: walk the value toward zero until
+            // legal. Monotone-chain predicates: walk toward the nearest
+            // legal neighbor bound.
+            int dir = v > 0 ? -1 : 1;
+            int probe = v;
+            while (!p.allow(probe) && std::abs(probe - v) < 10000) {
+                probe += dir;
+            }
+            if (p.allow(probe)) {
+                std::cerr << "  clamp " << p.name << ": " << v << " -> " << probe << "\n";
+                p.write(probe);
+                snapped++;
+                changed = true;
+            }
+        }
+        if (!changed) break;
+    }
+    std::cerr << "clamped " << snapped << " scalars into the constraint region\n";
+}
+
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
                  int maxPasses) {
     auto params = collectParams();
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
+
+    clampToConstraints(params);
 
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
@@ -277,8 +355,9 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     // the loss; repeat until a full pass makes no change. Strict +/-1
     // steps with no drift cap and no per-pass step extension. A tiny
     // relative threshold keeps double-precision noise from being
-    // mistaken for progress. maxPasses caps runtime when convergence
-    // stalls on the largest corpora.
+    // mistaken for progress. Constrained scalars skip any direction
+    // that would leave their feasible region (sign / monotonicity).
+    // maxPasses caps runtime when convergence stalls on large corpora.
     const double relThreshold = 1e-8;
 
     for (int pass = 0; pass < maxPasses; pass++) {
@@ -288,24 +367,28 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             int original = p.read();
             double threshold = bestLoss * relThreshold;
 
-            p.write(original + 1);
-            double lossUp = computeLoss(positions, K, numThreads);
-            if (bestLoss - lossUp > threshold) {
-                bestLoss = lossUp;
-                improved = true;
-                std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
-                          << (original + 1) << " loss=" << bestLoss << "\n";
-                continue;
+            if (p.allow(original + 1)) {
+                p.write(original + 1);
+                double lossUp = computeLoss(positions, K, numThreads);
+                if (bestLoss - lossUp > threshold) {
+                    bestLoss = lossUp;
+                    improved = true;
+                    std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
+                              << (original + 1) << " loss=" << bestLoss << "\n";
+                    continue;
+                }
             }
 
-            p.write(original - 1);
-            double lossDown = computeLoss(positions, K, numThreads);
-            if (bestLoss - lossDown > threshold) {
-                bestLoss = lossDown;
-                improved = true;
-                std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
-                          << (original - 1) << " loss=" << bestLoss << "\n";
-                continue;
+            if (p.allow(original - 1)) {
+                p.write(original - 1);
+                double lossDown = computeLoss(positions, K, numThreads);
+                if (bestLoss - lossDown > threshold) {
+                    bestLoss = lossDown;
+                    improved = true;
+                    std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
+                              << (original - 1) << " loss=" << bestLoss << "\n";
+                    continue;
+                }
             }
 
             p.write(original);
