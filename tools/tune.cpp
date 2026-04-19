@@ -269,99 +269,46 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
 
-    // Snapshot starting values so we can bound how far any one parameter
-    // may drift over the whole run. Without this cap, weakly-signaled
-    // scalars (tempo, hanging-style terms) can run away when the corpus
-    // has label noise, inflating each pass's coordinate-descent step by
-    // maxStepsPerPass even though the true optimum is far closer.
-    std::vector<int> startingValues(params.size());
-    for (size_t pi = 0; pi < params.size(); pi++) {
-        startingValues[pi] = params[pi].read();
-    }
-
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
 
-    // Relative improvement threshold -- changes smaller than this are
-    // treated as noise, preventing coordinate descent from running away
-    // on parameters that barely appear in the dataset. The per-pass
-    // step cap stays tight; the total-drift cap is scaled by the
-    // magnitude of each scalar's starting value because PST entries
-    // routinely begin at |100|+ and legitimately move by tens per tune.
-    const double relThreshold = 1e-5;
-    const int maxStepsPerPass = 20;
-    const int baseDriftCap = 80;
-    const int magnitudeDriftDiv = 3; // extra cap = |start| / magnitudeDriftDiv
+    // Texel's Tuning Method, pseudocode verbatim from chessprogramming.org:
+    // for each parameter, try +1 then -1 and keep any change that reduces
+    // the loss; repeat until a full pass makes no change. Strict +/-1
+    // steps with no drift cap and no per-pass step extension. A tiny
+    // relative threshold keeps double-precision noise from being
+    // mistaken for progress. maxPasses caps runtime when convergence
+    // stalls on the largest corpora.
+    const double relThreshold = 1e-8;
 
     for (int pass = 0; pass < maxPasses; pass++) {
         bool improved = false;
         for (size_t pi = 0; pi < params.size(); pi++) {
             auto &p = params[pi];
             int original = p.read();
-            int start = startingValues[pi];
-
             double threshold = bestLoss * relThreshold;
 
-            int driftCap = baseDriftCap + std::abs(start) / magnitudeDriftDiv;
-            auto withinCap = [&](int candidate) {
-                return std::abs(candidate - start) <= driftCap;
-            };
-
-            int best = original;
-            double bestHere = bestLoss;
-
-            // Try +1; if it improves, keep stepping up while inside the cap.
-            if (withinCap(original + 1)) {
-                p.write(original + 1);
-                double lossUp = computeLoss(positions, K, numThreads);
-                if (bestHere - lossUp > threshold) {
-                    bestHere = lossUp;
-                    best = original + 1;
-                    int steps = 1;
-                    while (steps < maxStepsPerPass && withinCap(best + 1)) {
-                        p.write(best + 1);
-                        double l = computeLoss(positions, K, numThreads);
-                        if (bestHere - l > threshold) {
-                            bestHere = l;
-                            best = best + 1;
-                            steps++;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            // If +1 did not improve, try -1 (subject to the cap). Stepping
-            // down uses the same per-pass limit.
-            if (best == original && withinCap(original - 1)) {
-                p.write(original - 1);
-                double lossDown = computeLoss(positions, K, numThreads);
-                if (bestHere - lossDown > threshold) {
-                    bestHere = lossDown;
-                    best = original - 1;
-                    int steps = 1;
-                    while (steps < maxStepsPerPass && withinCap(best - 1)) {
-                        p.write(best - 1);
-                        double l = computeLoss(positions, K, numThreads);
-                        if (bestHere - l > threshold) {
-                            bestHere = l;
-                            best = best - 1;
-                            steps++;
-                        } else {
-                            break;
-                        }
-                    }
-                }
-            }
-
-            p.write(best);
-            if (best != original) {
-                bestLoss = bestHere;
+            p.write(original + 1);
+            double lossUp = computeLoss(positions, K, numThreads);
+            if (bestLoss - lossUp > threshold) {
+                bestLoss = lossUp;
                 improved = true;
                 std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
-                          << best << " loss=" << bestLoss << "\n";
+                          << (original + 1) << " loss=" << bestLoss << "\n";
+                continue;
             }
+
+            p.write(original - 1);
+            double lossDown = computeLoss(positions, K, numThreads);
+            if (bestLoss - lossDown > threshold) {
+                bestLoss = lossDown;
+                improved = true;
+                std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
+                          << (original - 1) << " loss=" << bestLoss << "\n";
+                continue;
+            }
+
+            p.write(original);
         }
         std::cerr << "pass " << pass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
