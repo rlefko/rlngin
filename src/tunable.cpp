@@ -15,13 +15,18 @@ int clampInt(int v, int lo, int hi) {
 }
 
 // Build a spec that reads and writes a plain int field of `searchParams`.
-TunableSpec makeIntSpec(std::string name, int *target, int minValue, int maxValue, int defaultValue,
-                        double cEnd, double rEnd, std::function<void()> afterWrite = nullptr) {
+// The default reported over UCI and via the `tune` command is the live
+// value clamped into [minValue, maxValue] so the SPSA driver never starts
+// theta in the infeasible region. The live storage is untouched, so any
+// startup behaviour that depended on a drifted default stays intact until
+// the driver issues its first setoption.
+TunableSpec makeIntSpec(std::string name, int *target, int minValue, int maxValue, double cEnd,
+                        double rEnd, std::function<void()> afterWrite = nullptr) {
     TunableSpec s;
     s.name = std::move(name);
     s.minValue = minValue;
     s.maxValue = maxValue;
-    s.defaultValue = defaultValue;
+    s.defaultValue = clampInt(*target, minValue, maxValue);
     s.cEnd = cEnd;
     s.rEnd = rEnd;
     s.get = [target]() { return *target; };
@@ -34,13 +39,15 @@ TunableSpec makeIntSpec(std::string name, int *target, int minValue, int maxValu
 
 // Build a spec that reads and writes a single mg/eg half of an eval Score.
 // `isMg` selects which half is exposed; the other half is preserved on write.
+// Default reporting uses the live-clamped half (see makeIntSpec rationale).
 TunableSpec makeScoreHalfSpec(std::string name, Score *target, bool isMg, int minValue,
-                              int maxValue, int defaultValue, double cEnd, double rEnd) {
+                              int maxValue, double cEnd, double rEnd) {
     TunableSpec s;
     s.name = std::move(name);
     s.minValue = minValue;
     s.maxValue = maxValue;
-    s.defaultValue = defaultValue;
+    int liveHalf = isMg ? mg_value(*target) : eg_value(*target);
+    s.defaultValue = clampInt(liveHalf, minValue, maxValue);
     s.cEnd = cEnd;
     s.rEnd = rEnd;
     s.get = [target, isMg]() { return isMg ? mg_value(*target) : eg_value(*target); };
@@ -57,45 +64,57 @@ TunableSpec makeScoreHalfSpec(std::string name, Score *target, bool isMg, int mi
     return s;
 }
 
+// Every scalar in this registry carries a chess-prior sign / magnitude
+// constraint baked into its [minValue, maxValue] bounds:
+//   * Search margins, divisors, and LMR coefficients are structurally
+//     positive (a negative razor margin, say, would flip its comparator).
+//   * SEE*Coef fields are stored as positive magnitudes; the negation to
+//     form the pruning threshold happens at the call site in search.cpp,
+//     so the stored value must stay non-negative.
+//   * Every eval term in this list is a "Bonus" or "ThreatBy" scalar,
+//     which the engine adds with a positive sign. Locking min >= 0 keeps
+//     SPSA from driving a bonus across zero and accidentally turning it
+//     into a penalty (the "bonuses stay bonuses" prior that the Texel
+//     tuner enforces for symmetrically-named penalties).
+// No scalar in the current list is a "Penalty", so no non-positive bounds
+// are needed here; that side of the constraint catalog lives in the Texel
+// tuner instead.
 std::vector<TunableSpec> buildRegistry() {
     std::vector<TunableSpec> out;
     out.reserve(20);
 
     // --- Search pruning and reduction scalars ---
-    out.push_back(makeIntSpec("RazorBase", &searchParams.RazorBase, 150, 500, 300, 15.0, 5.0));
-    out.push_back(makeIntSpec("RazorDepth", &searchParams.RazorDepth, 100, 400, 250, 15.0, 5.0));
-    out.push_back(makeIntSpec("RfpBase", &searchParams.RfpBase, 150, 450, 290, 15.0, 5.0));
-    out.push_back(makeIntSpec("RfpImproving", &searchParams.RfpImproving, 50, 300, 145, 10.0, 4.0));
-    out.push_back(makeIntSpec("NmpBase", &searchParams.NmpBase, 2, 5, 3, 0.5, 0.25));
-    out.push_back(makeIntSpec("NmpEvalDiv", &searchParams.NmpEvalDiv, 200, 800, 483, 25.0, 8.0));
-    out.push_back(makeIntSpec("FpBase", &searchParams.FpBase, 100, 400, 241, 15.0, 5.0));
-    out.push_back(makeIntSpec("FpDepth", &searchParams.FpDepth, 75, 350, 193, 15.0, 5.0));
-    out.push_back(
-        makeIntSpec("SeeCaptureCoef", &searchParams.SeeCaptureCoef, 15, 120, 48, 5.0, 2.0));
-    out.push_back(makeIntSpec("SeeQuietCoef", &searchParams.SeeQuietCoef, 40, 250, 121, 10.0, 4.0));
+    out.push_back(makeIntSpec("RazorBase", &searchParams.RazorBase, 150, 500, 15.0, 5.0));
+    out.push_back(makeIntSpec("RazorDepth", &searchParams.RazorDepth, 100, 400, 15.0, 5.0));
+    out.push_back(makeIntSpec("RfpBase", &searchParams.RfpBase, 150, 450, 15.0, 5.0));
+    out.push_back(makeIntSpec("RfpImproving", &searchParams.RfpImproving, 50, 300, 10.0, 4.0));
+    out.push_back(makeIntSpec("NmpBase", &searchParams.NmpBase, 2, 5, 0.5, 0.25));
+    out.push_back(makeIntSpec("NmpEvalDiv", &searchParams.NmpEvalDiv, 200, 800, 25.0, 8.0));
+    out.push_back(makeIntSpec("FpBase", &searchParams.FpBase, 100, 400, 15.0, 5.0));
+    out.push_back(makeIntSpec("FpDepth", &searchParams.FpDepth, 75, 350, 15.0, 5.0));
+    out.push_back(makeIntSpec("SeeCaptureCoef", &searchParams.SeeCaptureCoef, 15, 120, 5.0, 2.0));
+    out.push_back(makeIntSpec("SeeQuietCoef", &searchParams.SeeQuietCoef, 40, 250, 10.0, 4.0));
 
     // --- LMR table coefficients (scaled x100, table is rebuilt on write) ---
     out.push_back(
-        makeIntSpec("LmrBase", &searchParams.LmrBase, 40, 110, 75, 5.0, 2.0, rebuildLmrTable));
-    out.push_back(makeIntSpec("LmrDivisor", &searchParams.LmrDivisor, 150, 350, 225, 10.0, 4.0,
-                              rebuildLmrTable));
+        makeIntSpec("LmrBase", &searchParams.LmrBase, 40, 110, 5.0, 2.0, rebuildLmrTable));
+    out.push_back(
+        makeIntSpec("LmrDivisor", &searchParams.LmrDivisor, 150, 350, 10.0, 4.0, rebuildLmrTable));
 
-    // --- Eval Score halves ---
-    out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 96, 8.0, 3.0));
-    out.push_back(makeScoreHalfSpec("ThreatByPawnMg", &evalParams.ThreatByPawn, true, 50, 400, 204,
-                                    15.0, 5.0));
-    out.push_back(makeScoreHalfSpec("ThreatByPawnEg", &evalParams.ThreatByPawn, false, 50, 400, 245,
-                                    15.0, 5.0));
+    // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
+    out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
     out.push_back(
-        makeScoreHalfSpec("HangingMg", &evalParams.Hanging, true, 0, 300, 158, 12.0, 4.0));
+        makeScoreHalfSpec("ThreatByPawnMg", &evalParams.ThreatByPawn, true, 0, 400, 15.0, 5.0));
     out.push_back(
-        makeScoreHalfSpec("HangingEg", &evalParams.Hanging, false, 0, 300, 148, 12.0, 4.0));
-    out.push_back(makeScoreHalfSpec("SafePawnPushMg", &evalParams.SafePawnPush, true, 0, 250, 107,
-                                    10.0, 4.0));
-    out.push_back(makeScoreHalfSpec("SafePawnPushEg", &evalParams.SafePawnPush, false, 0, 250, 37,
-                                    10.0, 4.0));
+        makeScoreHalfSpec("ThreatByPawnEg", &evalParams.ThreatByPawn, false, 0, 400, 15.0, 5.0));
+    out.push_back(makeScoreHalfSpec("HangingMg", &evalParams.Hanging, true, 0, 300, 12.0, 4.0));
+    out.push_back(makeScoreHalfSpec("HangingEg", &evalParams.Hanging, false, 0, 300, 12.0, 4.0));
+    out.push_back(
+        makeScoreHalfSpec("SafePawnPushMg", &evalParams.SafePawnPush, true, 0, 250, 10.0, 4.0));
+    out.push_back(
+        makeScoreHalfSpec("SafePawnPushEg", &evalParams.SafePawnPush, false, 0, 250, 10.0, 4.0));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
-                                    69, 10.0, 4.0));
+                                    10.0, 4.0));
 
     return out;
 }
