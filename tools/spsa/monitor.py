@@ -131,34 +131,40 @@ def render(live: Dict[str, Any], history_tail: List[List[str]], history_header: 
     return "\n".join(out) + "\n"
 
 
+def render_once(out: Path) -> str:
+    live = read_json(out / "live.json")
+    if live is None:
+        return (
+            f"Waiting for {out / 'live.json'} ...\n"
+            "Is the SPSA driver running?\n"
+        )
+    rows = read_history_tail(out / "history.csv", 6)
+    header = rows[0] if rows else []
+    tail = rows[1:] if rows else []
+    return render(live, tail, header)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("output_dir", nargs="?", default="tuning/spsa")
     ap.add_argument("--interval", type=float, default=2.0,
-                    help="refresh interval in seconds")
+                    help="refresh interval in seconds (ignored with --once)")
+    ap.add_argument("--once", action="store_true",
+                    help="render the dashboard once and exit; pair with the `watch` utility "
+                    "(scripts/spsa-monitor.sh does exactly this) for a clean in-place refresh")
     args = ap.parse_args()
 
     out = Path(args.output_dir)
-    live_path = out / "live.json"
-    history_path = out / "history.csv"
+
+    if args.once:
+        sys.stdout.write(render_once(out))
+        return 0
 
     try:
         while True:
-            live = read_json(live_path)
-            if live is None:
-                clear()
-                sys.stdout.write(
-                    f"Waiting for {live_path} ...\n"
-                    "Is the SPSA driver running?\n"
-                )
-                sys.stdout.flush()
-            else:
-                rows = read_history_tail(history_path, 6)
-                header = rows[0] if rows else []
-                tail = rows[1:] if rows else []
-                clear()
-                sys.stdout.write(render(live, tail, header))
-                sys.stdout.flush()
+            clear()
+            sys.stdout.write(render_once(out))
+            sys.stdout.flush()
             time.sleep(args.interval)
     except KeyboardInterrupt:
         sys.stdout.write("\n")
