@@ -8,3 +8,13 @@ fastchess-*
 openings/
 results/
 tools/spsa/__pycache__/
+
+# Live SPSA run artifacts. The driver continuously writes these files
+# while tuning, which would otherwise show up as dirty tracked files and
+# block the auto-apply sidecar's `git pull --rebase`. The final snapshot
+# ships in the apply-values commit via `git add -f`.
+tuning/spsa/history.csv
+tuning/spsa/theta.json
+tuning/spsa/live.json
+tuning/spsa/run.log
+tuning/spsa/auto-apply.log
