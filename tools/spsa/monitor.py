@@ -18,7 +18,7 @@ import json
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 
 def read_json(path: Path) -> Optional[Dict[str, Any]]:
@@ -26,15 +26,6 @@ def read_json(path: Path) -> Optional[Dict[str, Any]]:
         return json.loads(path.read_text())
     except (FileNotFoundError, json.JSONDecodeError):
         return None
-
-
-def read_history_tail(path: Path, n: int) -> List[List[str]]:
-    if not path.exists():
-        return []
-    # Small files, tail via full read is fine; history caps at a few thousand rows.
-    with path.open(newline="") as f:
-        rows = list(csv.reader(f))
-    return rows[-n:] if len(rows) > n else rows
 
 
 def format_duration(sec: float) -> str:
@@ -107,7 +98,14 @@ def render(live: Dict[str, Any], history_tail: List[List[str]], history_header: 
         out.append("")
 
     if history_tail and history_header:
-        out.append("Last iterations (iter / wins / draws / losses / y):")
+        claim_iter = live.get("iter", -1)
+        last_logged = int(history_tail[-1][0]) if history_tail and history_tail[-1] else -1
+        gap = claim_iter - last_logged
+        gap_note = f" (history flushed through iter {last_logged}; {gap} behind live)" \
+            if gap > 0 else ""
+        out.append(
+            f"Last iterations (iter / wins / draws / losses / y){gap_note}:"
+        )
         try:
             iter_col = history_header.index("iter")
             w_col = history_header.index("wins")
@@ -120,7 +118,7 @@ def render(live: Dict[str, Any], history_tail: List[List[str]], history_header: 
             l_col = 2
             d_col = 3
             y_col = 4
-        for row in history_tail[-5:]:
+        for row in history_tail[-10:]:
             if len(row) > max(iter_col, w_col, l_col, d_col, y_col):
                 out.append(
                     f"  {row[iter_col]:>4}  "
@@ -131,6 +129,23 @@ def render(live: Dict[str, Any], history_tail: List[List[str]], history_header: 
     return "\n".join(out) + "\n"
 
 
+def read_history(path: Path) -> Tuple[List[str], List[List[str]]]:
+    """Read the CSV header and every data row as lists of strings.
+
+    Reading the full file keeps the panel visibly in sync with the driver
+    even when the `watch` cadence races a mid-iteration write -- we never
+    show the header as data by accident, and a short history still shows
+    every iteration rather than a slice.
+    """
+    if not path.exists():
+        return [], []
+    with path.open(newline="") as f:
+        rows = list(csv.reader(f))
+    if not rows:
+        return [], []
+    return rows[0], rows[1:]
+
+
 def render_once(out: Path) -> str:
     live = read_json(out / "live.json")
     if live is None:
@@ -138,9 +153,7 @@ def render_once(out: Path) -> str:
             f"Waiting for {out / 'live.json'} ...\n"
             "Is the SPSA driver running?\n"
         )
-    rows = read_history_tail(out / "history.csv", 6)
-    header = rows[0] if rows else []
-    tail = rows[1:] if rows else []
+    header, tail = read_history(out / "history.csv")
     return render(live, tail, header)
 
 
