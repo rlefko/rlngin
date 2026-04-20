@@ -535,9 +535,23 @@ def main() -> int:
                   f"\tc_end={s.c_end}\tr_end={s.r_end}")
         return 0
 
+    # Pre-read the resume checkpoint so its metadata can feed defaults for
+    # fields that weren't explicitly overridden on the command line. The
+    # most important of these is `params_scope`: if the original session
+    # was launched with `--params A,B,C`, we want the resume to keep
+    # perturbing the same subset, not silently expand to every tunable
+    # the engine exposes.
+    resumed_checkpoint: Optional[Dict[str, Any]] = None
+    resumed_meta: Dict[str, Any] = {}
+    if args.resume:
+        resumed_checkpoint = json.loads(Path(args.resume).read_text())
+        resumed_meta = resumed_checkpoint.get("meta", {})
+
     params_scope: Optional[List[str]] = None
     if args.params:
         params_scope = [p.strip() for p in args.params.split(",") if p.strip()]
+    elif resumed_meta.get("params_scope"):
+        params_scope = list(resumed_meta["params_scope"])
     specs = filter_specs(all_specs, params_scope)
 
     # Fresh-run initial state.
@@ -550,19 +564,17 @@ def main() -> int:
     session_count = 1
     iterations_target = args.iterations
 
-    if args.resume:
-        resumed = json.loads(Path(args.resume).read_text())
-        for name, value in resumed.get("params", {}).items():
+    if resumed_checkpoint is not None:
+        for name, value in resumed_checkpoint.get("params", {}).items():
             if name in theta:
                 theta[name] = float(value)
-        meta = resumed.get("meta", {})
-        start_iter = int(meta.get("next_iter", 0))
-        if "rng_state" in meta:
-            rng.setstate(rng_state_from_json(meta["rng_state"]))
-        elapsed_cumulative = float(meta.get("elapsed_sec_cumulative", 0.0))
-        games_cumulative = int(meta.get("games_total_cumulative", 0))
-        session_count = int(meta.get("session_count", 0)) + 1
-        iterations_target = int(meta.get("iterations_target", iterations_target))
+        start_iter = int(resumed_meta.get("next_iter", 0))
+        if "rng_state" in resumed_meta:
+            rng.setstate(rng_state_from_json(resumed_meta["rng_state"]))
+        elapsed_cumulative = float(resumed_meta.get("elapsed_sec_cumulative", 0.0))
+        games_cumulative = int(resumed_meta.get("games_total_cumulative", 0))
+        session_count = int(resumed_meta.get("session_count", 0)) + 1
+        iterations_target = int(resumed_meta.get("iterations_target", iterations_target))
 
         if start_iter >= iterations_target:
             sys.stderr.write(
