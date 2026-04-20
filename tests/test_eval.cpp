@@ -9,7 +9,7 @@ TEST_CASE("Eval: starting position equals the tempo bonus", "[eval]") {
     Board board;
     // The positional half of startpos is zero by symmetry, so the score
     // reduces to the middlegame tempo bonus for the side to move.
-    CHECK(evaluate(board) == 17);
+    CHECK(evaluate(board) == 13);
 }
 
 TEST_CASE("Eval: kings only is 0", "[eval]") {
@@ -141,7 +141,7 @@ TEST_CASE("Eval: symmetric positions equal the tempo bonus", "[eval]") {
     // middlegame tempo contribution (scaled by the full startpos phase of
     // 24) is left for the side to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1");
-    CHECK(evaluate(board) == 17);
+    CHECK(evaluate(board) == 13);
 }
 
 // --- King safety tests ---
@@ -205,12 +205,12 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // Fully symmetric position with pawns: positional half cancels and the
     // score reduces to the tempo contribution for whoever is to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    CHECK(evaluate(board) == 17);
+    CHECK(evaluate(board) == 13);
 
     // Symmetric with castled kings. Phase is reduced (no queens: 24 - 8 = 16)
     // but the tempo contribution scales with the middlegame weight.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 15);
+    CHECK(evaluate(board) == 11);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
