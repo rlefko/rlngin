@@ -17,21 +17,21 @@
 
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
-    S(144, 107), // ThreatByPawn  (SPSA iter 52: mg 177->144, eg 126->107)
+    S(162, 103), // ThreatByPawn  (SPSA iter 104: mg 177->162, eg 126->103)
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(131, 57), S(131, 88), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(168, 138), S(0, 0)},
     S(124, 62), // ThreatByKing
-    S(19, -5),  // Hanging       (SPSA iter 52: mg 29->19; eg left at Texel's -5)
+    S(15, 7),   // Hanging       (SPSA iter 104: mg 29->15, eg -5->7 now that SPSA cleared the clamp)
     S(53, 29),  // WeakQueen
-    S(81, 27),  // SafePawnPush  (SPSA iter 52: mg 53->81, eg 29->27)
+    S(93, 19),  // SafePawnPush  (SPSA iter 104: mg 53->93, eg 29->19)
     {S(0, 0), S(0, 0), S(0, 0), S(0, 45), S(0, 67), S(0, 68), S(0, 63), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 32), S(0, 62), S(0, 93), S(0, 123), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(-33, -40), S(-4, -57), S(-40, -77), S(-114, -160), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(24, 46), S(20, 77), S(73, 141), S(127, 210), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(-8, -4), S(28, 0), S(78, 87), S(84, 88), S(0, 0)},
-    S(-31, 44), // RookOn7thBonus (SPSA iter 52: eg 46->44; mg left at Texel's -31)
+    S(-31, 38), // RookOn7thBonus (SPSA iter 104: eg 46->38; mg left at Texel's -31)
     S(-7, -16), // BadBishopPenalty
-    S(23, 0),   // Tempo         (SPSA iter 52: mg 24->23)
+    S(20, 0),   // Tempo         (SPSA iter 104: mg 24->20)
 
     // PieceScore
     {S(0, 0), S(133, 298), S(854, 887), S(884, 869), S(1428, 1428), S(2656, 2695), S(0, 0)},

@@ -24,3 +24,8 @@ SPSA: 20 scalars, 300 iterations, concurrency 6
   iter 30/300: y=+0.167 (5W/4D/3L), games=360, elapsed=2420s
   iter 40/300: y=+0.083 (5W/3D/4L), games=480, elapsed=3299s
   iter 50/300: y=+0.167 (6W/2D/4L), games=600, elapsed=4099s
+  iter 60/300: y=-0.083 (4W/3D/5L), games=720, elapsed=4839s
+  iter 70/300: y=-0.167 (4W/2D/6L), games=840, elapsed=5629s
+  iter 80/300: y=-0.167 (4W/2D/6L), games=960, elapsed=6422s
+  iter 90/300: y=+0.250 (5W/5D/2L), games=1080, elapsed=7216s
+  iter 100/300: y=+0.083 (4W/5D/3L), games=1200, elapsed=8022s
