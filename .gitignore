@@ -7,3 +7,4 @@ fastchess
 fastchess-*
 openings/
 results/
+tools/spsa/__pycache__/

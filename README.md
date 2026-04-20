@@ -3,10 +3,10 @@
 <!-- BENCHMARK:START -->
 ## Latest Benchmark
 
-![Elo](https://img.shields.io/static/v1?label=Elo&message=41.89%20%2B%2F-%2052.63&color=brightgreen) ![LOS](https://img.shields.io/static/v1?label=LOS&message=94.38%25&color=yellow) ![LLR](https://img.shields.io/static/v1?label=LLR&message=N%2FA&color=gray) ![W/D/L](https://img.shields.io/static/v1?label=W/D/L&message=36%20%2F%2040%20%2F%2024&color=lightgray) ![Score](https://img.shields.io/static/v1?label=Score&message=56.0%20%2F%20100%20%2856.00%25%29&color=blue) ![Draws](https://img.shields.io/static/v1?label=Draws&message=40.00%25&color=lightgray)
+![Elo](https://img.shields.io/static/v1?label=Elo&message=27.85%20%2B%2F-%2037.28&color=brightgreen) ![LOS](https://img.shields.io/static/v1?label=LOS&message=93.01%25&color=yellow) ![LLR](https://img.shields.io/static/v1?label=LLR&message=N%2FA&color=gray) ![W/D/L](https://img.shields.io/static/v1?label=W/D/L&message=79%20%2F%2058%20%2F%2063&color=lightgray) ![Score](https://img.shields.io/static/v1?label=Score&message=108.0%20%2F%20200%20%2854.00%25%29&color=blue) ![Draws](https://img.shields.io/static/v1?label=Draws&message=43.00%25&color=lightgray)
 
-Ptnml(0-2): `[4, 6, 20, 14, 6]`
-100 games (50 pairs) | tc=10+0.1 | UHO_Lichess_4852_v1.epd
+Ptnml(0-2): `[6, 19, 43, 17, 15]`
+200 games (100 pairs) | tc=10+0.1 | UHO_Lichess_4852_v1.epd
 <!-- BENCHMARK:END -->
 
 A chess engine, made with love.

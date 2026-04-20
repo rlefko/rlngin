@@ -17,21 +17,21 @@
 
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
-    S(177, 126), // ThreatByPawn
+    S(177, 126), // ThreatByPawn  (Texel-tuned; SPSA's proposal was reverted)
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(131, 57), S(131, 88), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(168, 138), S(0, 0)},
     S(124, 62), // ThreatByKing
-    S(29, -5),  // Hanging
+    S(29, -5),  // Hanging       (Texel-tuned; SPSA's proposal was reverted)
     S(53, 29),  // WeakQueen
-    S(53, 29),  // SafePawnPush
+    S(53, 29),  // SafePawnPush  (Texel-tuned; SPSA's proposal was reverted)
     {S(0, 0), S(0, 0), S(0, 0), S(0, 45), S(0, 67), S(0, 68), S(0, 63), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 32), S(0, 62), S(0, 93), S(0, 123), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(-33, -40), S(-4, -57), S(-40, -77), S(-114, -160), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(24, 46), S(20, 77), S(73, 141), S(127, 210), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(-8, -4), S(28, 0), S(78, 87), S(84, 88), S(0, 0)},
-    S(-31, 46), // RookOn7thBonus
+    S(-31, 46), // RookOn7thBonus (Texel-tuned; SPSA's proposal was reverted)
     S(-7, -16), // BadBishopPenalty
-    S(24, 0),   // Tempo
+    S(24, 0),   // Tempo         (Texel-tuned; SPSA's proposal was reverted)
 
     // PieceScore
     {S(0, 0), S(133, 298), S(854, 887), S(884, 869), S(1428, 1428), S(2656, 2695), S(0, 0)},

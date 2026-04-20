@@ -2,6 +2,7 @@
 #include "bitboard.h"
 #include "eval.h"
 #include "movegen.h"
+#include "search_params.h"
 #include "see.h"
 #include "tt.h"
 #include <algorithm>
@@ -495,7 +496,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // margin still cannot reach alpha, the position is losing badly enough that
     // a full search is unlikely to recover. Drop straight to qsearch instead.
     if (!pvNode && !inCheck && depth <= 2 && alpha > -MATE_SCORE + MAX_PLY) {
-        int razorMargin = 300 + 250 * depth;
+        int razorMargin = searchParams.RazorBase + searchParams.RazorDepth * depth;
         if (corrEval + razorMargin <= alpha) {
             return quiescence(board, alpha, beta, ply, state);
         }
@@ -504,7 +505,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // Reverse futility pruning: if static eval is far above beta at shallow depth,
     // assume this node will fail high
     if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
-        int rfpMargin = (290 - 145 * improving) * depth;
+        int rfpMargin = (searchParams.RfpBase - searchParams.RfpImproving * improving) * depth;
         if (corrEval - rfpMargin >= beta) {
             return corrEval - rfpMargin;
         }
@@ -518,7 +519,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         Bitboard nonPawnMaterial = board.byColor[us] & ~board.byPiece[Pawn] & ~board.byPiece[King];
         if (nonPawnMaterial) {
             // Dynamic reduction: base depth component + eval-based bonus
-            int R = 3 + depth / 3 + std::clamp((corrEval - beta) / 483, 0, 3);
+            int R = searchParams.NmpBase + depth / 3 +
+                    std::clamp((corrEval - beta) / searchParams.NmpEvalDiv, 0, 3);
             R = std::min(R, depth - 1);
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
@@ -645,7 +647,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // SEE pruning: skip captures with very negative SEE at non-PV nodes
         if (!pvNode && !inCheck && moveIndex > 0 && capture && !isPromotion &&
             bestScore > -MATE_SCORE + MAX_PLY) {
-            if (!seeGE(board, m, -48 * depth * depth)) {
+            if (!seeGE(board, m, -searchParams.SeeCaptureCoef * depth * depth)) {
                 continue;
             }
         }
@@ -653,7 +655,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // SEE pruning: skip quiet moves to heavily attacked squares at shallow depth
         if (!pvNode && !inCheck && moveIndex > 0 && !capture && !isPromotion && depth <= 8 &&
             bestScore > -MATE_SCORE + MAX_PLY) {
-            if (!seeGE(board, m, -121 * depth)) {
+            if (!seeGE(board, m, -searchParams.SeeQuietCoef * depth)) {
                 continue;
             }
         }
@@ -689,7 +691,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
             alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
-            int fpMargin = 241 + 193 * depth;
+            int fpMargin = searchParams.FpBase + searchParams.FpDepth * depth;
             if (corrEval + fpMargin <= alpha) {
                 board.unmakeMove(m, undo);
                 continue;
@@ -1093,14 +1095,20 @@ void clearHistory(SearchState &state) {
     }
 }
 
-void initSearch() {
+void rebuildLmrTable() {
+    double base = searchParams.LmrBase / 100.0;
+    double div = searchParams.LmrDivisor / 100.0;
     for (int d = 0; d < MAX_PLY; d++) {
         for (int m = 0; m < MAX_LMR_MOVES; m++) {
             if (d == 0 || m == 0) {
                 lmrReductions[d][m] = 0;
             } else {
-                lmrReductions[d][m] = static_cast<int>(0.75 + std::log(d) * std::log(m) / 2.25);
+                lmrReductions[d][m] = static_cast<int>(base + std::log(d) * std::log(m) / div);
             }
         }
     }
+}
+
+void initSearch() {
+    rebuildLmrTable();
 }

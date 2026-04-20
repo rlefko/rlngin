@@ -88,15 +88,15 @@ jobs:
       - name: Download opening book
         run: make fetch-openings
 
-      - name: Run screen (50 pairs, 10+0.1)
-        run: ENGINE_DEV=./build/rlngin ENGINE_BASE=./build/rlngin-base ./scripts/screen.sh 50 10+0.1 2
+      - name: Run screen (100 pairs, 10+0.1)
+        run: ENGINE_DEV=./build/rlngin ENGINE_BASE=./build/rlngin-base ./scripts/screen.sh 100 10+0.1 2
 
       - name: Format results
         id: results
         run: |
           {
             echo "comment<<EOF"
-            ./scripts/format-screen-comment.sh results/screen.log "100 games (50 pairs)" "10+0.1"
+            ./scripts/format-screen-comment.sh results/screen.log "200 games (100 pairs)" "10+0.1"
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
@@ -107,7 +107,7 @@ jobs:
           message: ${{ steps.results.outputs.comment }}
 
       - name: Update README benchmark
-        run: ./scripts/update-readme-benchmark.sh results/screen.log "100 games (50 pairs)" "10+0.1"
+        run: ./scripts/update-readme-benchmark.sh results/screen.log "200 games (100 pairs)" "10+0.1"
 
       - name: Push README update
         run: |

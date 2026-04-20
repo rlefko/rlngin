@@ -1,0 +1,35 @@
+{
+  "meta": {
+    "concurrency": 6,
+    "elapsed_sec": 24047.293379068375,
+    "engine": "./build/rlngin",
+    "games_total": 3600,
+    "iterations": 300,
+    "nodes": null,
+    "openings": "openings/UHO_Lichess_4852_v1.epd",
+    "seed": 1,
+    "tc": "10+0.1"
+  },
+  "params": {
+    "FpBase": 227,
+    "FpDepth": 223,
+    "HangingEg": 1,
+    "HangingMg": 20,
+    "LmrBase": 73,
+    "LmrDivisor": 199,
+    "NmpBase": 3,
+    "NmpEvalDiv": 484,
+    "RazorBase": 282,
+    "RazorDepth": 288,
+    "RfpBase": 286,
+    "RfpImproving": 161,
+    "RookOn7thBonusEg": 48,
+    "SafePawnPushEg": 7,
+    "SafePawnPushMg": 87,
+    "SeeCaptureCoef": 34,
+    "SeeQuietCoef": 121,
+    "TempoMg": 15,
+    "ThreatByPawnEg": 98,
+    "ThreatByPawnMg": 193
+  }
+}

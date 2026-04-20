@@ -2,6 +2,7 @@
 #include "board.h"
 #include "eval.h"
 #include "search.h"
+#include "tunable.h"
 #include <iostream>
 #include <sstream>
 #include <string>
@@ -85,11 +86,26 @@ void uciLoop() {
             std::cout << "id name rlngin" << std::endl;
             std::cout << "id author Ryan Lefkowitz" << std::endl;
             std::cout << "option name Hash type spin default 16 min 1 max 1024" << std::endl;
+            for (const TunableSpec &spec : tunables()) {
+                std::cout << "option name " << spec.name << " type spin default "
+                          << spec.defaultValue << " min " << spec.minValue << " max "
+                          << spec.maxValue << std::endl;
+            }
             std::cout << "uciok" << std::endl;
         } else if (command == "isready") {
             joinSearch();
             std::cout << "readyok" << std::endl;
+        } else if (command == "tune") {
+            // Non-standard UCI extension used by the SPSA driver to discover
+            // the spec for every registered tunable.
+            for (const TunableSpec &spec : tunables()) {
+                std::cout << "tune " << spec.name << " int " << spec.defaultValue << " "
+                          << spec.minValue << " " << spec.maxValue << " " << spec.cEnd << " "
+                          << spec.rEnd << std::endl;
+            }
+            std::cout << "tuneok" << std::endl;
         } else if (command == "setoption") {
+            joinSearch();
             std::string token, name;
             ss >> token; // "name"
             ss >> name;
@@ -98,6 +114,11 @@ void uciLoop() {
                 int value;
                 ss >> valueToken >> value; // "value" <number>
                 setHashSize(static_cast<size_t>(value));
+            } else if (const TunableSpec *spec = findTunable(name)) {
+                std::string valueToken;
+                int value;
+                ss >> valueToken >> value; // "value" <number>
+                spec->set(value);
             }
         } else if (command == "ucinewgame") {
             joinSearch();
