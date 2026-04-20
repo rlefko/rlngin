@@ -13,6 +13,28 @@ static void ensureInit() {
     }
 }
 
+TEST_CASE("Search: heuristic firing counters increment", "[search][instrument]") {
+    ensureInit();
+    clearTT();
+
+    Board board;
+    board.setFen("r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4");
+
+    SearchLimits limits;
+    limits.depth = 6;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    // At depth 6 on an open tactical midgame, at least one of the big
+    // pruning / reduction heuristics must fire. If none do, the
+    // instrumentation is unwired.
+    CHECK(state.nodes > 0);
+    int64_t totalFires = state.stats.rfpFires + state.stats.futilityPrunes +
+                         state.stats.lmrApplied + state.stats.seeCapturePrunes +
+                         state.stats.seeQuietPrunes + state.stats.nmpFires;
+    CHECK(totalFires > 0);
+}
+
 TEST_CASE("Search: captures hanging queen", "[search]") {
     ensureInit();
     Board board;

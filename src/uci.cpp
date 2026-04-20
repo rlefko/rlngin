@@ -135,9 +135,23 @@ void uciLoop() {
             SearchLimits limits = parseGoParams(ss);
             searchState.stopped = false;
             searchState.nodes = 0;
+            searchState.stats = SearchStats{};
             searchState.bestMove = {0, 0, None};
             searchThread = std::thread([board, limits, &searchState, posHistory]() {
                 startSearch(board, limits, searchState, posHistory);
+                // Heuristic firing-rate dump. The fields are raw cumulative
+                // counters for this search; the consumer (tools/spsa/
+                // aggregate_stats.py) computes rates versus the same search's
+                // node count. Non-standard "info string" is ignored by GUIs.
+                const SearchStats &st = searchState.stats;
+                std::cout << "info string stats nodes=" << searchState.nodes
+                          << " razor=" << st.razorFires << " rfp=" << st.rfpFires
+                          << " nmp=" << st.nmpFires << " nmp_verify=" << st.nmpVerifies
+                          << " probcut=" << st.probcutFires << " probcut_cut=" << st.probcutCutoffs
+                          << " fp=" << st.futilityPrunes << " lmp=" << st.lmpPrunes
+                          << " see_cap=" << st.seeCapturePrunes
+                          << " see_quiet=" << st.seeQuietPrunes << " lmr=" << st.lmrApplied
+                          << " lmr_research=" << st.lmrResearches << std::endl;
                 Move best = searchState.bestMove;
                 if (best.from == best.to) {
                     std::cout << "bestmove 0000" << std::endl;
