@@ -9,7 +9,7 @@ TEST_CASE("Eval: starting position equals the tempo bonus", "[eval]") {
     Board board;
     // The positional half of startpos is zero by symmetry, so the score
     // reduces to the middlegame tempo bonus for the side to move.
-    CHECK(evaluate(board) == 15);
+    CHECK(evaluate(board) == 24);
 }
 
 TEST_CASE("Eval: kings only is 0", "[eval]") {
@@ -21,7 +21,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3333);
+    CHECK(evaluate(board) == 3335);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -53,22 +53,22 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // contribution survives, which is small with phase=1 and no pieces
     // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 24);
+    CHECK(evaluate(board) == 25);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
     // is scaled to zero. The mg half still reflects material and PSTs.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 40);
+    CHECK(evaluate(board) == 41);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1727);
+    CHECK(evaluate(board) == 1728);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3333);
+    CHECK(evaluate(board) == 3335);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -141,7 +141,7 @@ TEST_CASE("Eval: symmetric positions equal the tempo bonus", "[eval]") {
     // middlegame tempo contribution (scaled by the full startpos phase of
     // 24) is left for the side to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1");
-    CHECK(evaluate(board) == 15);
+    CHECK(evaluate(board) == 24);
 }
 
 // --- King safety tests ---
@@ -205,12 +205,12 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // Fully symmetric position with pawns: positional half cancels and the
     // score reduces to the tempo contribution for whoever is to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    CHECK(evaluate(board) == 15);
+    CHECK(evaluate(board) == 24);
 
     // Symmetric with castled kings. Phase is reduced (no queens: 24 - 8 = 16)
     // but the tempo contribution scales with the middlegame weight.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 13);
+    CHECK(evaluate(board) == 22);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {

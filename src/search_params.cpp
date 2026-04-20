@@ -4,24 +4,29 @@
 // `searchParams` instance is initialized from this struct and
 // `resetSearchParams()` snaps it back if ever needed.
 //
-// Values below are the completed output of a 300-iteration SPSA self-play
-// run at 10+0.1, concurrency 6, seed 1 (3,600 games total, ~6.7 hours on
-// a 14-core machine). Spall gain sequence: alpha=0.602, gamma=0.101,
-// A = 0.1 * iterations. NmpBase did not move because its [2,5] integer
-// range is too tight for a c_end of 0.5 to produce meaningful
-// perturbations; the rest converged naturally.
+// Values below combine the pre-SPSA defaults with the subset of the
+// 300-iteration SPSA self-play run (10+0.1, concurrency 6, seed 1, 3,600
+// games, Spall alpha=0.602 / gamma=0.101 / A=0.1*iterations) that we
+// chose to apply. Eight of the twelve scalars carry the SPSA-converged
+// values; `RazorBase` and `RazorDepth` were reverted because razoring
+// drops straight into qsearch at shallow depth and any mistuning shows
+// up as a tactical blunder, and `NmpBase` / `SeeQuietCoef` never moved
+// during the run (NmpBase's [2,5] integer range is too tight for
+// c_end=0.5 to produce a perturbation, and SeeQuietCoef showed no
+// gradient signal). The full SPSA output sits alongside this file in
+// `tuning/spsa/theta.json` for reference.
 
 static const SearchParams kDefaultSearchParams = {
-    282, // RazorBase         (300 -> 282)
-    288, // RazorDepth        (250 -> 288)
+    300, // RazorBase         (SPSA proposed 282; reverted -- tactical impact)
+    250, // RazorDepth        (SPSA proposed 288; reverted -- tactical impact)
     286, // RfpBase           (290 -> 286)
     161, // RfpImproving      (145 -> 161)
-    3,   // NmpBase           (unchanged; integer-range trap)
+    3,   // NmpBase           (integer-range trap; no SPSA movement)
     484, // NmpEvalDiv        (483 -> 484)
     227, // FpBase            (241 -> 227)
     223, // FpDepth           (193 -> 223)
     34,  // SeeCaptureCoef    (48  -> 34)
-    121, // SeeQuietCoef      (121 -> 121)
+    121, // SeeQuietCoef      (no SPSA gradient signal)
     73,  // LmrBase           (75  -> 73; scaled x100, table uses 0.73)
     199, // LmrDivisor        (225 -> 199; scaled x100, table uses 1.99)
 };
