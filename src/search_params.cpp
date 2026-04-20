@@ -4,37 +4,31 @@
 // `searchParams` instance is initialized from this struct and
 // `resetSearchParams()` snaps it back if ever needed.
 //
-// Values below keep only the subset of the 300-iteration SPSA self-play
-// run output (10+0.1, concurrency 6, seed 1, 3,600 games, Spall
-// alpha=0.602 / gamma=0.101 / A=0.1*iterations) that survived two
-// filters: the SPSA move had to be large enough to outrun the noise
-// floor (greater than ~5 percent of the original default) AND the
-// parameter had to sit behind a research-at-full-depth fallback so a
-// mistuned value costs nodes rather than missed tactics. That leaves
-// four kept scalars (RfpImproving, FpBase, FpDepth, LmrDivisor) and
-// eight reverted back to their pre-SPSA values: RazorBase and RazorDepth
-// were rejected because razoring drops straight into qsearch (tactical
-// hard prune); SeeCaptureCoef was rejected for the same reason (hard
-// skip of low-SEE captures); NmpBase did not move during the run
-// because its [2,5] integer range is too tight for c_end=0.5 to produce
-// a perturbation; RfpBase, NmpEvalDiv, LmrBase, and SeeQuietCoef moved
-// by magnitudes at or below the noise floor. The full SPSA output sits
+// These are the starting points for a focused 1000-iteration SPSA retune
+// at 10+0.1, concurrency 6. The first-pass 300-iter run (see PR #38) fed
+// four kept moves (RfpImproving, FpBase, FpDepth, LmrDivisor) and
+// several reverts; this file preserves those carry-over values and
+// adjusts one: `LmrDivisor` is nudged back from 199 to 215 so the retune
+// starts closer to the STC/LTC-balanced zone. 199 was the STC-aggressive
+// end and a 10+0.1 SPSA is likely to bias toward it again; 215 gives the
+// Spall schedule room to push in either direction without the starting
+// point forcing an STC-over-fit answer. The remaining 11 fields match
+// PR #38's final selection; the full SPSA output from that run sits
 // alongside this file in `tuning/spsa/theta.json` for reference.
 
 static const SearchParams kDefaultSearchParams = {
-    300, // RazorBase         (SPSA proposed 282; reverted -- tactical hard prune)
-    250, // RazorDepth        (SPSA proposed 288; reverted -- tactical hard prune)
-    290, // RfpBase           (SPSA proposed 286; reverted -- 1% move is noise)
-    161, // RfpImproving      (145 -> 161)
-    3,   // NmpBase           (integer-range trap; no SPSA movement)
-    483, // NmpEvalDiv        (SPSA proposed 484; reverted -- 0.2% move is noise)
-    227, // FpBase            (241 -> 227)
-    223, // FpDepth           (193 -> 223)
-    48,  // SeeCaptureCoef    (SPSA proposed 34; reverted -- tactical hard prune)
-    121, // SeeQuietCoef      (no SPSA gradient signal)
-    75,  // LmrBase           (SPSA proposed 73; reverted -- sub-rounding change; scaled x100, table
-         // uses 0.75)
-    199, // LmrDivisor        (225 -> 199; scaled x100, table uses 1.99)
+    300, // RazorBase         (Texel default; out of SPSA scope -- tactical hard prune)
+    250, // RazorDepth        (Texel default; out of SPSA scope -- tactical hard prune)
+    290, // RfpBase           (Texel default; SPSA retune candidate)
+    161, // RfpImproving      (PR #38 SPSA keep)
+    3,   // NmpBase           (integer-range trap; likely dropped from the retune scope)
+    483, // NmpEvalDiv        (Texel default; SPSA retune candidate)
+    227, // FpBase            (PR #38 SPSA keep)
+    223, // FpDepth           (PR #38 SPSA keep)
+    48,  // SeeCaptureCoef    (Texel default; SPSA retune candidate)
+    121, // SeeQuietCoef      (Texel default; SPSA retune candidate)
+    75,  // LmrBase           (Texel default; SPSA retune candidate; scaled x100)
+    215, // LmrDivisor        (retune start; nudged 199 -> 215 to balance STC vs LTC)
 };
 
 SearchParams searchParams = kDefaultSearchParams;
