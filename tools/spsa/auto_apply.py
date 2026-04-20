@@ -204,7 +204,12 @@ def main() -> int:
                     help="how often to re-read the checkpoint")
     ap.add_argument("--once", action="store_true",
                     help="apply once (or not at all) and exit")
+    ap.add_argument("--force", action="store_true",
+                    help="apply the current theta regardless of milestone (implies --once); "
+                    "useful for ad-hoc commits triggered between automatic milestones")
     args = ap.parse_args()
+    if args.force:
+        args.once = True
 
     theta_path = Path(args.output_dir) / "theta.json"
     source_path = Path(args.source)
@@ -238,9 +243,11 @@ def main() -> int:
             continue
 
         # Boundary arithmetic: apply at every N-iter multiple strictly after
-        # the last one we applied, plus at target completion.
+        # the last one we applied, plus at target completion. --force skips
+        # the boundary check so the caller can commit the current theta
+        # regardless of where the next milestone sits.
         milestone = (next_iter // args.every) * args.every
-        should_apply = (
+        should_apply = args.force or (
             milestone > last_applied and milestone > 0
         ) or (next_iter >= target and last_applied < target)
 
