@@ -104,6 +104,12 @@ struct EvalParams {
     // easy target for a rook lift, so unopposed weakness is strictly
     // worse than opposed weakness.
     Score WeakUnopposedPenalty;
+
+    // Extra penalty when a pawn is both doubled and isolated. The joint
+    // case is strictly worse than either alone: the doubled pair cannot
+    // be defended by a friendly pawn from any file, and losing the lead
+    // pawn leaves the trailing pawn equally defenseless.
+    Score DoubledIsolatedPenalty;
 };
 
 extern EvalParams evalParams;

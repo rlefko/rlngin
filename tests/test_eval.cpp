@@ -403,6 +403,24 @@ TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][
     CHECK(connected > disconnected);
 }
 
+TEST_CASE("Eval: doubled isolated pawns are worse than plain doubled pawns", "[eval][pawn]") {
+    Board board;
+
+    // White a2 and a3 are doubled on the a file and have no friend on the
+    // b file, so they are both doubled and isolated.
+    board.setFen("4k3/8/8/8/8/P7/P7/4K3 w - - 0 1");
+    int doubledIsolated = evaluate(board);
+
+    // Same doubled pair, but now there is a friend on the b file, so the
+    // a pawns are doubled but no longer isolated. The extra DoubledIsolated
+    // penalty should disappear even though the plain Doubled penalty and
+    // the extra b2 pawn's own material both shift the score.
+    board.setFen("4k3/8/8/8/8/P7/PP6/4K3 w - - 0 1");
+    int doubledSupported = evaluate(board);
+
+    CHECK(doubledSupported > doubledIsolated);
+}
+
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {
     Board board;
 

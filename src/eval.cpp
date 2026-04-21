@@ -313,6 +313,13 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 if (!opposed) {
                     score += sign * evalParams.WeakUnopposedPenalty;
                 }
+                // Doubled and isolated together is the worst structural
+                // configuration a pawn can sit in -- no rank neighbour,
+                // no file neighbour that can defend it, and the rear
+                // pawn inherits every weakness when the leader falls.
+                if (isDoubled) {
+                    score += sign * evalParams.DoubledIsolatedPenalty;
+                }
             }
 
             // Connected pawn: phalanx (same rank, adjacent file) or defended by friendly pawn
