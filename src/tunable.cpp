@@ -132,6 +132,41 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 
+    // --- King safety scalars feeding the king-danger accumulator. The mg
+    // halves carry the dominant signal because the quadratic mapping
+    // amplifies mg; the eg halves stay bonus-signed so the bonus-stays-
+    // bonus invariant applies to both. ---
+    out.push_back(makeScoreHalfSpec("KingAttackByKnightMg", &evalParams.KingAttackByKnight, true, 0,
+                                    120, 8.0, 3.0));
+    out.push_back(makeScoreHalfSpec("KingAttackByKnightEg", &evalParams.KingAttackByKnight, false,
+                                    0, 40, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("KingAttackByBishopMg", &evalParams.KingAttackByBishop, true, 0,
+                                    120, 8.0, 3.0));
+    out.push_back(makeScoreHalfSpec("KingAttackByBishopEg", &evalParams.KingAttackByBishop, false,
+                                    0, 40, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("KingAttackByRookMg", &evalParams.KingAttackByRook, true, 0,
+                                    160, 10.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingAttackByRookEg", &evalParams.KingAttackByRook, false, 0,
+                                    40, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("KingAttackByQueenMg", &evalParams.KingAttackByQueen, true, 0,
+                                    200, 10.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingAttackByQueenEg", &evalParams.KingAttackByQueen, false, 0,
+                                    60, 5.0, 2.0));
+
+    out.push_back(makeScoreHalfSpec("KingSafeCheckKnightMg", &evalParams.KingSafeCheck[Knight],
+                                    true, 0, 200, 10.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckBishopMg", &evalParams.KingSafeCheck[Bishop],
+                                    true, 0, 200, 10.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckRookMg", &evalParams.KingSafeCheck[Rook], true, 0,
+                                    200, 10.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckQueenMg", &evalParams.KingSafeCheck[Queen], true,
+                                    0, 240, 12.0, 4.0));
+
+    out.push_back(makeScoreHalfSpec("KingRingWeakWeightMg", &evalParams.KingRingWeakWeight, true, 0,
+                                    60, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("KingNoQueenDiscountMg", &evalParams.KingNoQueenDiscount, true,
+                                    0, 200, 10.0, 4.0));
+
     return out;
 }
 
