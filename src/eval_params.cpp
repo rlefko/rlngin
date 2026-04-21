@@ -164,6 +164,7 @@ static const EvalParams kDefaultEvalParams = {
     S(-13, -36), // BackwardPawnPenalty
     S( -5, -10), // WeakUnopposedPenalty
     S( -8, -15), // DoubledIsolatedPenalty
+    {S(-5, -2), S(-2, -1)}, // BlockedPawnPenalty (rel rank 5, 6)
 };
 // clang-format on
 

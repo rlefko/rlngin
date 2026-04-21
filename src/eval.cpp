@@ -744,6 +744,31 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
     }
 }
 
+// Penalize non-passer pawns whose stop square is occupied by an enemy
+// piece and which sit on relative rank 5 or 6. Passers already receive
+// PassedBlockedPenalty via evaluatePassedPawnExtras, so this term skips
+// them and only reports on "stuck" pawns that never had the passer
+// upside to begin with. Lives outside the pawn hash because blocker
+// identity depends on non-pawn pieces.
+static void evaluateBlockedPawns(const Board &board, const Bitboard passers[2], Score scores[2]) {
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
+        Bitboard blockedCandidates = ourPawns & ~passers[us];
+
+        while (blockedCandidates) {
+            int sq = popLsb(blockedCandidates);
+            int relRank = relativeRank(us, sq);
+            if (relRank < 4 || relRank > 5) continue;
+
+            int stopSq = (us == White) ? sq + 8 : sq - 8;
+            if (board.byColor[us ^ 1] & squareBB(stopSq)) {
+                scores[us] += evalParams.BlockedPawnPenalty[relRank - 4];
+            }
+        }
+    }
+}
+
 // Endgame scale factor in [0, 64]. Applied to the eg half of the tapered
 // score before blending with mg: at 64 the eg value passes through
 // unchanged, at 0 the eg contribution disappears entirely. Used to push
@@ -912,6 +937,7 @@ int evaluate(const Board &board) {
 
     evaluatePieces(board, ctx, scores);
     evaluatePassedPawnExtras(board, ctx, passers, scores);
+    evaluateBlockedPawns(board, passers, scores);
     evaluateThreats(board, ctx, scores);
     evaluateSpace(board, ctx, scores);
     evaluateKingSafety(board, ctx, scores);
@@ -995,6 +1021,10 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluatePassedPawnExtras(board, ctx, passers, passerExtrasScores);
     Score passerExtrasScore = passerExtrasScores[White] - passerExtrasScores[Black];
 
+    Score blockedPawnScores[2] = {0, 0};
+    evaluateBlockedPawns(board, passers, blockedPawnScores);
+    Score blockedPawnScore = blockedPawnScores[White] - blockedPawnScores[Black];
+
     Score threatScores[2] = {0, 0};
     evaluateThreats(board, ctx, threatScores);
     Score threatScore = threatScores[White] - threatScores[Black];
@@ -1007,8 +1037,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score total = pstScore + matScore + pieceScore + passerExtrasScore + threatScore + spaceScore +
-                  kingSafetyScore + pawnScore;
+    Score total = pstScore + matScore + pieceScore + passerExtrasScore + blockedPawnScore +
+                  threatScore + spaceScore + kingSafetyScore + pawnScore;
     int mg = mg_value(total);
     int eg = eg_value(total);
 
@@ -1046,6 +1076,7 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     formatTerm(os, "Pawns", pawnScore);
     formatTerm(os, "Pieces", pieceScore);
     formatTerm(os, "Passed extras", passerExtrasScore);
+    formatTerm(os, "Blocked pawns", blockedPawnScore);
     formatTerm(os, "Threats", threatScore);
     formatTerm(os, "Space", spaceScore);
     formatTerm(os, "King safety", kingSafetyScore);

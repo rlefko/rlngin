@@ -403,6 +403,46 @@ TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][
     CHECK(connected > disconnected);
 }
 
+TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pawn]") {
+    Board board;
+
+    auto blockedPawnsLine = [](const Board &b) {
+        std::ostringstream os;
+        evaluateVerbose(b, os);
+        const std::string text = os.str();
+        size_t pos = text.find("Blocked pawns");
+        REQUIRE(pos != std::string::npos);
+        size_t eol = text.find('\n', pos);
+        return text.substr(pos, eol - pos);
+    };
+
+    // No pawn is blocked on either side: both the "Blocked pawns" mg and
+    // eg halves print as zero.
+    board.setFen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+    CHECK(blockedPawnsLine(board).find("mg=     0 eg=     0") != std::string::npos);
+
+    // White e5 pawn sits directly behind a black knight on e6 (blocker) and
+    // a black e7 pawn keeps e5 from passing. This is the rank 5 slot of
+    // BlockedPawnPenalty, so the breakdown should show a negative entry for
+    // white (reported as white perspective, so both halves are negative).
+    board.setFen("4k3/4p3/4n3/4P3/8/8/8/4K3 w - - 0 1");
+    {
+        std::string line = blockedPawnsLine(board);
+        CHECK(line.find("mg=    -5") != std::string::npos);
+        CHECK(line.find("eg=    -2") != std::string::npos);
+    }
+
+    // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
+    // keeping e6 non-passed. This is the rank 6 slot of BlockedPawnPenalty,
+    // which at default values is smaller in magnitude than the rank 5 slot.
+    board.setFen("4k3/3pn3/4P3/8/8/8/8/4K3 w - - 0 1");
+    {
+        std::string line = blockedPawnsLine(board);
+        CHECK(line.find("mg=    -2") != std::string::npos);
+        CHECK(line.find("eg=    -1") != std::string::npos);
+    }
+}
+
 TEST_CASE("Eval: doubled isolated pawns are worse than plain doubled pawns", "[eval][pawn]") {
     Board board;
 

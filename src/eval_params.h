@@ -110,6 +110,13 @@ struct EvalParams {
     // be defended by a friendly pawn from any file, and losing the lead
     // pawn leaves the trailing pawn equally defenseless.
     Score DoubledIsolatedPenalty;
+
+    // Penalty for a non-passer pawn whose stop square is occupied by an
+    // enemy piece (including an enemy pawn), indexed by relative rank
+    // minus 5, so entry [0] is rank 5 and entry [1] is rank 6. Captures
+    // the over-extended-but-stuck pattern that passers already get via
+    // PassedBlockedPenalty.
+    Score BlockedPawnPenalty[2];
 };
 
 extern EvalParams evalParams;
