@@ -1,34 +1,26 @@
 #include "search_params.h"
 
-// Compiled-in defaults for the tunable search parameters. The in-memory
+// Compiled-in defaults for the search parameters. The in-memory
 // `searchParams` instance is initialized from this struct and
 // `resetSearchParams()` snaps it back if ever needed.
 //
-// These are the starting points for a focused 1000-iteration SPSA retune
-// at 10+0.1, concurrency 6. The first-pass 300-iter run (see PR #38) fed
-// four kept moves (RfpImproving, FpBase, FpDepth, LmrDivisor) and
-// several reverts; this file preserves those carry-over values and
-// adjusts one: `LmrDivisor` is nudged back from 199 to 215 so the retune
-// starts closer to the STC/LTC-balanced zone. 199 was the STC-aggressive
-// end and a 10+0.1 SPSA is likely to bias toward it again; 215 gives the
-// Spall schedule room to push in either direction without the starting
-// point forcing an STC-over-fit answer. The remaining 11 fields match
-// PR #38's final selection; the full SPSA output from that run sits
-// alongside this file in `tuning/spsa/theta.json` for reference.
+// Final values from the 1000-iteration focused SPSA retune at 10+0.1,
+// concurrency 6, 9-scalar scope. Razor margins and NmpBase were excluded
+// from the scope (tactical hard-prune; integer-range trap, respectively).
 
 static const SearchParams kDefaultSearchParams = {
-    300, // RazorBase         (Texel default; out of SPSA scope -- tactical hard prune)
-    250, // RazorDepth        (Texel default; out of SPSA scope -- tactical hard prune)
-    307, // RfpBase           (Texel default; SPSA retune candidate)
-    185, // RfpImproving      (PR #38 SPSA keep)
-    3,   // NmpBase           (integer-range trap; likely dropped from the retune scope)
-    429, // NmpEvalDiv        (Texel default; SPSA retune candidate)
-    158, // FpBase            (PR #38 SPSA keep)
-    246, // FpDepth           (PR #38 SPSA keep)
-    38,  // SeeCaptureCoef    (Texel default; SPSA retune candidate)
-    97, // SeeQuietCoef      (Texel default; SPSA retune candidate)
-    74,  // LmrBase           (Texel default; SPSA retune candidate; scaled x100)
-    181, // LmrDivisor        (retune start; nudged 199 -> 215 to balance STC vs LTC)
+    300, // RazorBase
+    250, // RazorDepth
+    307, // RfpBase
+    185, // RfpImproving
+    3,   // NmpBase
+    429, // NmpEvalDiv
+    158, // FpBase
+    246, // FpDepth
+    38,  // SeeCaptureCoef
+    97,  // SeeQuietCoef
+    74,  // LmrBase           (scaled x100; 0.74 in LMR formula)
+    181, // LmrDivisor        (scaled x100; 1.81 in LMR formula)
 };
 
 SearchParams searchParams = kDefaultSearchParams;

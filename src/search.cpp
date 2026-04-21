@@ -498,7 +498,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (!pvNode && !inCheck && depth <= 2 && alpha > -MATE_SCORE + MAX_PLY) {
         int razorMargin = searchParams.RazorBase + searchParams.RazorDepth * depth;
         if (corrEval + razorMargin <= alpha) {
-            state.stats.razorFires++;
             return quiescence(board, alpha, beta, ply, state);
         }
     }
@@ -508,7 +507,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (!inCheck && depth <= 3 && beta - alpha == 1 && beta > -MATE_SCORE + MAX_PLY) {
         int rfpMargin = (searchParams.RfpBase - searchParams.RfpImproving * improving) * depth;
         if (corrEval - rfpMargin >= beta) {
-            state.stats.rfpFires++;
             return corrEval - rfpMargin;
         }
     }
@@ -524,7 +522,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             int R = searchParams.NmpBase + depth / 3 +
                     std::clamp((corrEval - beta) / searchParams.NmpEvalDiv, 0, 3);
             R = std::min(R, depth - 1);
-            state.stats.nmpFires++;
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
             int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
@@ -533,7 +530,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             if (nullScore >= beta) {
                 // Verification search at high depths to guard against zugzwang
                 if (depth >= 8) {
-                    state.stats.nmpVerifies++;
                     int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false);
                     if (state.stopped) return 0;
                     if (verifyScore >= beta) return beta;
@@ -548,7 +544,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // search would produce a beta cutoff
     if (!pvNode && !inCheck && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
         std::abs(beta) < MATE_SCORE - MAX_PLY) {
-        state.stats.probcutFires++;
         int probcutBeta = beta + 483 - 145 * improving;
         int probcutDepth = depth - 4;
 
@@ -578,7 +573,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             if (state.stopped) return 0;
 
             if (pcScore >= probcutBeta) {
-                state.stats.probcutCutoffs++;
                 int storedEval = inCheck ? TT_NO_EVAL : staticEval;
                 tt.store(board.key, pcScore, storedEval, depth, TT_LOWER_BOUND, pcMove, ply);
                 return probcutBeta;
@@ -654,7 +648,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         if (!pvNode && !inCheck && moveIndex > 0 && capture && !isPromotion &&
             bestScore > -MATE_SCORE + MAX_PLY) {
             if (!seeGE(board, m, -searchParams.SeeCaptureCoef * depth * depth)) {
-                state.stats.seeCapturePrunes++;
                 continue;
             }
         }
@@ -663,7 +656,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         if (!pvNode && !inCheck && moveIndex > 0 && !capture && !isPromotion && depth <= 8 &&
             bestScore > -MATE_SCORE + MAX_PLY) {
             if (!seeGE(board, m, -searchParams.SeeQuietCoef * depth)) {
-                state.stats.seeQuietPrunes++;
                 continue;
             }
         }
@@ -701,7 +693,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
             int fpMargin = searchParams.FpBase + searchParams.FpDepth * depth;
             if (corrEval + fpMargin <= alpha) {
-                state.stats.futilityPrunes++;
                 board.unmakeMove(m, undo);
                 continue;
             }
@@ -713,7 +704,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             alpha > -MATE_SCORE + MAX_PLY && beta < MATE_SCORE - MAX_PLY) {
             int moveCountThreshold = (3 + depth * depth) / (2 - improving);
             if (moveIndex >= moveCountThreshold) {
-                state.stats.lmpPrunes++;
                 board.unmakeMove(m, undo);
                 continue;
             }
@@ -744,14 +734,11 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 
-            if (reduction > 0) state.stats.lmrApplied++;
-
             // Reduced null-window search
             score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state);
 
             // Re-search at full depth if reduced search beats alpha
             if (reduction > 0 && score > alpha) {
-                state.stats.lmrResearches++;
                 score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state);
             }
 

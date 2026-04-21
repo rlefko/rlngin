@@ -34,7 +34,7 @@ TUNE_TARGET := $(BUILDDIR)/tune
 TUNE_SRC := tools/tune.cpp
 TUNE_OBJ := $(BUILDDIR)/tune.o
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa instrument
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa
 
 build: $(TARGET)
 
@@ -125,5 +125,3 @@ spsa: build
 	    --openings $(OPENINGS_FILE) \
 	    --seed 1
 
-instrument: build
-	@./scripts/instrument.sh | python3 tools/spsa/aggregate_stats.py

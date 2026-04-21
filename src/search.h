@@ -20,31 +20,9 @@ struct SearchLimits {
     bool infinite = false;
 };
 
-// Per-search counters for each pruning / reduction heuristic. Written
-// inside the hot search loop at every fire site and read back after the
-// search completes so the operator (or the SPSA instrumentation script)
-// can inspect firing rates relative to total nodes. The counters add a
-// single int64_t increment per fire -- negligible cost at the ~1M nps
-// this engine operates at.
-struct SearchStats {
-    int64_t razorFires = 0;
-    int64_t rfpFires = 0;
-    int64_t nmpFires = 0;
-    int64_t nmpVerifies = 0;
-    int64_t probcutFires = 0;
-    int64_t probcutCutoffs = 0;
-    int64_t futilityPrunes = 0;
-    int64_t lmpPrunes = 0;
-    int64_t seeCapturePrunes = 0;
-    int64_t seeQuietPrunes = 0;
-    int64_t lmrApplied = 0;
-    int64_t lmrResearches = 0;
-};
-
 struct SearchState {
     std::atomic<bool> stopped{false};
     int64_t nodes = 0;
-    SearchStats stats = {};
     int seldepth = 0;
     Move bestMove = {0, 0, None};
     Move ponderMove = {0, 0, None};
