@@ -868,10 +868,11 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
 }
 
 static void printSearchInfo(int depth, const SearchState &state, int score, int64_t timeMs,
-                            BoundType bound) {
+                            BoundType bound, int multiPV) {
     int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
 
-    std::cout << "info depth " << depth << " seldepth " << state.seldepth;
+    std::cout << "info depth " << depth << " seldepth " << state.seldepth << " multipv "
+              << multiPV;
 
     if (std::abs(score) >= MATE_SCORE - 100) {
         int matePly = MATE_SCORE - std::abs(score);
@@ -1015,14 +1016,14 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     state.pv[0][0] = currentBest;
                     state.pvLength[0] = 1;
                 }
-                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_UPPER);
+                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_UPPER, 1);
                 beta = (alpha + beta) / 2;
                 alpha = std::max(currentBestScore - delta, -INF_SCORE);
                 delta *= 4;
             } else if (currentBestScore >= beta) {
                 // Fail-high: score is above the window, widen upward
                 state.bestMove = currentBest;
-                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER);
+                printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER, 1);
                 beta = std::min(currentBestScore + delta, INF_SCORE);
                 delta *= 4;
             } else {
@@ -1058,7 +1059,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         int64_t timeMs =
             std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime).count();
 
-        printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT);
+        printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT, 1);
 
         if (std::abs(currentBestScore) >= MATE_SCORE - 100) break;
     }
