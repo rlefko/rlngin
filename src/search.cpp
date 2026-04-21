@@ -18,6 +18,12 @@ static constexpr int PAWN_CORR_SIZE = 16384;
 // Internal eval divisor; with the rescaled material units (~228 per pawn) a
 // saturated entry contributes ~56 cp, well inside the ~60 cp design cap.
 static constexpr int PAWN_CORR_SCALE = 128;
+// Non-pawn correction: one entry per (stm, pieceColor, key). Divisor is larger
+// than the pawn table's because the two color terms sum into the total, so
+// each individual contribution needs to stay smaller.
+static constexpr int MAX_NON_PAWN_CORR = 16384;
+static constexpr int NON_PAWN_CORR_SIZE = 16384;
+static constexpr int NON_PAWN_CORR_SCALE = 256;
 static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
@@ -65,34 +71,58 @@ static int contHistoryScore(const SearchState &state, int ply, PieceType currPt,
     return score;
 }
 
-// Adjust a raw static eval by the pawn-structure correction for the side to
-// move. Mate-range scores are returned untouched so the correction cannot
+// Adjust a raw static eval by the accumulated correction history for the side
+// to move. Mate-range scores are returned untouched so the correction cannot
 // accidentally push a non-mate eval into mate territory.
 static int correctedEval(int staticEval, const Board &board, const SearchState &state) {
     if (staticEval <= -MATE_SCORE + MAX_PLY || staticEval >= MATE_SCORE - MAX_PLY) {
         return staticEval;
     }
-    int idx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
-    int correction = state.historyTables->pawnCorrHist[board.sideToMove][idx] / PAWN_CORR_SCALE;
+    int stm = board.sideToMove;
+    int pawnIdx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
+    int correction = state.historyTables->pawnCorrHist[stm][pawnIdx] / PAWN_CORR_SCALE;
+    int whiteIdx = static_cast<int>(board.nonPawnKey[White] % NON_PAWN_CORR_SIZE);
+    int blackIdx = static_cast<int>(board.nonPawnKey[Black] % NON_PAWN_CORR_SIZE);
+    correction +=
+        state.historyTables->nonPawnCorrHist[stm][White][whiteIdx] / NON_PAWN_CORR_SCALE;
+    correction +=
+        state.historyTables->nonPawnCorrHist[stm][Black][blackIdx] / NON_PAWN_CORR_SCALE;
     return staticEval + correction;
 }
 
-// Fold the gap between the node's search result and its raw static eval into
-// the correction table, scaled by depth. Gated by the caller to fire only on
-// quiet bestMove cutoffs/exact bounds outside singular exclusion.
-static void updatePawnCorrHist(const Board &board, SearchState &state, int staticEval,
-                               int bestValue, int depth) {
-    if (staticEval == -INF_SCORE) return;
-    int idx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
+// Shared scaled bonus used by every correction-history table: the gap between
+// the node's search result and its raw static eval, scaled by depth and
+// clamped so a single update cannot saturate the entry.
+static int corrHistBonus(int staticEval, int bestValue, int depth, int max) {
     int diff = bestValue - staticEval;
     int bonus = diff * depth / 8;
-    int cap = MAX_PAWN_CORR / 4;
+    int cap = max / 4;
     if (bonus > cap)
         bonus = cap;
     else if (bonus < -cap)
         bonus = -cap;
-    applyHistoryBonus(state.historyTables->pawnCorrHist[board.sideToMove][idx], bonus,
-                      MAX_PAWN_CORR);
+    return bonus;
+}
+
+// Fold the gap between the node's search result and its raw static eval into
+// every correction table. Gated by the caller to fire only on quiet bestMove
+// cutoffs/exact bounds outside singular exclusion.
+static void updateCorrectionHistories(const Board &board, SearchState &state, int staticEval,
+                                      int bestValue, int depth) {
+    if (staticEval == -INF_SCORE) return;
+    int stm = board.sideToMove;
+
+    int pawnBonus = corrHistBonus(staticEval, bestValue, depth, MAX_PAWN_CORR);
+    int pawnIdx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
+    applyHistoryBonus(state.historyTables->pawnCorrHist[stm][pawnIdx], pawnBonus, MAX_PAWN_CORR);
+
+    int nonPawnBonus = corrHistBonus(staticEval, bestValue, depth, MAX_NON_PAWN_CORR);
+    int whiteIdx = static_cast<int>(board.nonPawnKey[White] % NON_PAWN_CORR_SIZE);
+    int blackIdx = static_cast<int>(board.nonPawnKey[Black] % NON_PAWN_CORR_SIZE);
+    applyHistoryBonus(state.historyTables->nonPawnCorrHist[stm][White][whiteIdx], nonPawnBonus,
+                      MAX_NON_PAWN_CORR);
+    applyHistoryBonus(state.historyTables->nonPawnCorrHist[stm][Black][blackIdx], nonPawnBonus,
+                      MAX_NON_PAWN_CORR);
 }
 
 // Apply the same bonus to every tier of continuation history for this move.
@@ -833,17 +863,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         int storedEval = inCheck ? TT_NO_EVAL : staticEval;
         tt.store(board.key, bestScore, storedEval, depth, flag, bestMove, ply);
 
-        // Fold the search result into the pawn correction table whenever we have
-        // a quiet best move and a bound that actually informs the correction:
-        // exact, a passing lower bound, or a failing upper bound. Captures and
-        // promotions skew the correction target so we omit them.
+        // Fold the search result into every correction-history table whenever
+        // we have a quiet best move and a bound that actually informs the
+        // correction: exact, a passing lower bound, or a failing upper bound.
+        // Captures and promotions skew the correction target so we omit them.
         if (!inCheck && depth >= 2 && bestMove.from != bestMove.to && !isCapture(board, bestMove) &&
             bestMove.promotion == None) {
             bool boundUseful = (flag == TT_EXACT) ||
                                (flag == TT_LOWER_BOUND && bestScore >= beta) ||
                                (flag == TT_UPPER_BOUND && bestScore <= origAlpha);
             if (boundUseful) {
-                updatePawnCorrHist(board, state, staticEval, bestScore, depth);
+                updateCorrectionHistories(board, state, staticEval, bestScore, depth);
             }
         }
     }

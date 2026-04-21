@@ -43,6 +43,10 @@ struct SearchState {
         // here is that for a given pawn structure, the search score tends to
         // diverge from the static eval in a particular direction.
         int16_t pawnCorrHist[2][16384] = {};
+        // Non-pawn-keyed static eval correction: `[stm][pieceColor][nonPawnKey % N]`.
+        // Each color's piece placement contributes an independent term so that
+        // e.g. a white kingside-fianchetto bias is separable from black's.
+        int16_t nonPawnCorrHist[2][2][16384] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 
