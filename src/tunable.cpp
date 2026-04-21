@@ -123,9 +123,9 @@ std::vector<TunableSpec> buildRegistry() {
     // and a bit over a pawn, matching the magnitude range Stockfish-style
     // correction tables are known to work in. Grain bounds keep the overall
     // correction scale within a sensible band even under extreme weights.
-    out.push_back(makeIntSpec("PawnCorrWeight", &searchParams.PawnCorrWeight, 32, 256, 8.0, 3.0));
+    out.push_back(makeIntSpec("PawnCorrWeight", &searchParams.PawnCorrWeight, 0, 256, 8.0, 3.0));
     out.push_back(
-        makeIntSpec("NonPawnCorrWeight", &searchParams.NonPawnCorrWeight, 16, 256, 8.0, 3.0));
+        makeIntSpec("NonPawnCorrWeight", &searchParams.NonPawnCorrWeight, 0, 256, 8.0, 3.0));
     out.push_back(makeIntSpec("MinorCorrWeight", &searchParams.MinorCorrWeight, 0, 256, 8.0, 3.0));
     out.push_back(makeIntSpec("ContCorrWeight", &searchParams.ContCorrWeight, 0, 256, 8.0, 3.0));
     out.push_back(
