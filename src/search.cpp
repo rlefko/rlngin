@@ -869,7 +869,10 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
 
 static void printSearchInfo(int depth, const SearchState &state, int score, int64_t timeMs,
                             BoundType bound, int multiPV) {
-    int64_t nps = (timeMs > 0) ? (state.nodes * 1000 / timeMs) : state.nodes;
+    // Floor the reported time at 1 ms so shallow iterations do not emit
+    // "time 0" or a degenerate nps derived from zero elapsed time.
+    int64_t reportedTimeMs = std::max<int64_t>(timeMs, 1);
+    int64_t nps = state.nodes * 1000 / reportedTimeMs;
 
     std::cout << "info depth " << depth << " seldepth " << state.seldepth << " multipv " << multiPV;
 
@@ -892,8 +895,11 @@ static void printSearchInfo(int depth, const SearchState &state, int score, int6
         std::cout << " upperbound";
     }
 
-    std::cout << " nodes " << state.nodes << " nps " << nps << " time " << timeMs << " hashfull "
-              << getHashfull() << " pv";
+    // Field order mirrors Stockfish so GUIs regression-tested against it see
+    // a byte-identical shape. tbhits is stubbed at 0 since we never probe
+    // tablebases.
+    std::cout << " nodes " << state.nodes << " nps " << nps << " hashfull " << getHashfull()
+              << " tbhits 0 time " << reportedTimeMs << " pv";
     for (int i = 0; i < state.pvLength[0]; i++) {
         std::cout << " " << moveToString(state.pv[0][i]);
     }
