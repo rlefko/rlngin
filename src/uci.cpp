@@ -9,6 +9,10 @@
 #include <thread>
 #include <vector>
 
+#ifndef ENGINE_VERSION
+#define ENGINE_VERSION "dev"
+#endif
+
 static void handlePosition(Board &board, std::vector<uint64_t> &posHistory,
                            std::istringstream &ss) {
     std::string token;
@@ -75,6 +79,8 @@ void uciLoop() {
         }
     };
 
+    std::cout << "rlngin " << ENGINE_VERSION << " by Ryan Lefkowitz" << std::endl;
+
     std::string line;
 
     while (std::getline(std::cin, line)) {
@@ -83,9 +89,13 @@ void uciLoop() {
         ss >> command;
 
         if (command == "uci") {
-            std::cout << "id name rlngin" << std::endl;
+            std::cout << "id name rlngin " << ENGINE_VERSION << std::endl;
             std::cout << "id author Ryan Lefkowitz" << std::endl;
             std::cout << "option name Hash type spin default 16 min 1 max 1024" << std::endl;
+            std::cout << "option name Threads type spin default 1 min 1 max 1" << std::endl;
+            std::cout << "option name MultiPV type spin default 1 min 1 max 256" << std::endl;
+            std::cout << "option name Ponder type check default false" << std::endl;
+            std::cout << "option name UCI_Chess960 type check default false" << std::endl;
             std::cout << "uciok" << std::endl;
         } else if (command == "isready") {
             joinSearch();
@@ -109,6 +119,11 @@ void uciLoop() {
                 int value;
                 ss >> valueToken >> value; // "value" <number>
                 setHashSize(static_cast<size_t>(value));
+            } else if (name == "MultiPV") {
+                std::string valueToken;
+                int value;
+                ss >> valueToken >> value; // "value" <number>
+                setMultiPV(value);
             } else if (const TunableSpec *spec = findTunable(name)) {
                 std::string valueToken;
                 int value;

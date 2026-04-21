@@ -1,5 +1,15 @@
 CXX := g++
 CXXFLAGS := -std=c++17 -Wall -Wextra -O2 -pthread
+
+GIT_SHA := $(shell git rev-parse --short HEAD 2>/dev/null)
+GIT_DATE := $(shell git log -1 --format=%cd --date=format:%Y%m%d 2>/dev/null)
+ifeq ($(strip $(GIT_SHA)),)
+ENGINE_VERSION := dev
+else
+ENGINE_VERSION := dev-$(GIT_DATE)-$(GIT_SHA)
+endif
+CXXFLAGS += '-DENGINE_VERSION="$(ENGINE_VERSION)"'
+
 SRCDIR := src
 BUILDDIR := build
 TARGET := $(BUILDDIR)/rlngin
