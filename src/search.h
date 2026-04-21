@@ -47,6 +47,10 @@ struct SearchState {
         // Each color's piece placement contributes an independent term so that
         // e.g. a white kingside-fianchetto bias is separable from black's.
         int16_t nonPawnCorrHist[2][2][16384] = {};
+        // Minor-piece-keyed static eval correction: `[stm][minorKey % N]`.
+        // Captures positional bias that depends on the bishop / knight layout
+        // independent of the heavier pieces and pawn structure.
+        int16_t minorCorrHist[2][16384] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 

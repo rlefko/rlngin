@@ -24,6 +24,12 @@ static constexpr int PAWN_CORR_SCALE = 128;
 static constexpr int MAX_NON_PAWN_CORR = 16384;
 static constexpr int NON_PAWN_CORR_SIZE = 16384;
 static constexpr int NON_PAWN_CORR_SCALE = 256;
+// Minor-piece correction: indexed by the minor-piece layout. Divisor keeps the
+// per-term magnitude well under the pawn correction's so layering adds signal
+// without saturating the total.
+static constexpr int MAX_MINOR_CORR = 16384;
+static constexpr int MINOR_CORR_SIZE = 16384;
+static constexpr int MINOR_CORR_SCALE = 384;
 static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
@@ -87,6 +93,8 @@ static int correctedEval(int staticEval, const Board &board, const SearchState &
         state.historyTables->nonPawnCorrHist[stm][White][whiteIdx] / NON_PAWN_CORR_SCALE;
     correction +=
         state.historyTables->nonPawnCorrHist[stm][Black][blackIdx] / NON_PAWN_CORR_SCALE;
+    int minorIdx = static_cast<int>(board.minorKey % MINOR_CORR_SIZE);
+    correction += state.historyTables->minorCorrHist[stm][minorIdx] / MINOR_CORR_SCALE;
     return staticEval + correction;
 }
 
@@ -123,6 +131,11 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
                       MAX_NON_PAWN_CORR);
     applyHistoryBonus(state.historyTables->nonPawnCorrHist[stm][Black][blackIdx], nonPawnBonus,
                       MAX_NON_PAWN_CORR);
+
+    int minorBonus = corrHistBonus(staticEval, bestValue, depth, MAX_MINOR_CORR);
+    int minorIdx = static_cast<int>(board.minorKey % MINOR_CORR_SIZE);
+    applyHistoryBonus(state.historyTables->minorCorrHist[stm][minorIdx], minorBonus,
+                      MAX_MINOR_CORR);
 }
 
 // Apply the same bonus to every tier of continuation history for this move.
