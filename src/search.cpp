@@ -1088,6 +1088,18 @@ int getHashfull() {
     return tt.hashfull();
 }
 
+static int g_multiPV = 1;
+
+void setMultiPV(int n) {
+    if (n < 1) n = 1;
+    if (n > 256) n = 256;
+    g_multiPV = n;
+}
+
+int getMultiPV() {
+    return g_multiPV;
+}
+
 void clearHistory(SearchState &state) {
     memset(state.captureHistory, 0, sizeof(state.captureHistory));
     if (state.historyTables) {

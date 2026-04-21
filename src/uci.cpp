@@ -92,6 +92,7 @@ void uciLoop() {
             std::cout << "id name rlngin " << ENGINE_VERSION << std::endl;
             std::cout << "id author Ryan Lefkowitz" << std::endl;
             std::cout << "option name Hash type spin default 16 min 1 max 1024" << std::endl;
+            std::cout << "option name MultiPV type spin default 1 min 1 max 256" << std::endl;
             for (const TunableSpec &spec : tunables()) {
                 std::cout << "option name " << spec.name << " type spin default "
                           << spec.defaultValue << " min " << spec.minValue << " max "
@@ -120,6 +121,11 @@ void uciLoop() {
                 int value;
                 ss >> valueToken >> value; // "value" <number>
                 setHashSize(static_cast<size_t>(value));
+            } else if (name == "MultiPV") {
+                std::string valueToken;
+                int value;
+                ss >> valueToken >> value; // "value" <number>
+                setMultiPV(value);
             } else if (const TunableSpec *spec = findTunable(name)) {
                 std::string valueToken;
                 int value;
