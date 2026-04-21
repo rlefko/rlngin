@@ -13,28 +13,11 @@
 
 static constexpr int MAX_HISTORY = 16384;
 static constexpr int MAX_CONT_HISTORY = 16384;
-static constexpr int MAX_PAWN_CORR = 16384;
-static constexpr int PAWN_CORR_SIZE = 16384;
-// Internal eval divisor; with the rescaled material units (~228 per pawn) a
-// saturated entry contributes ~56 cp, well inside the ~60 cp design cap.
-static constexpr int PAWN_CORR_SCALE = 128;
-// Non-pawn correction: one entry per (stm, pieceColor, key). Divisor is larger
-// than the pawn table's because the two color terms sum into the total, so
-// each individual contribution needs to stay smaller.
-static constexpr int MAX_NON_PAWN_CORR = 16384;
-static constexpr int NON_PAWN_CORR_SIZE = 16384;
-static constexpr int NON_PAWN_CORR_SCALE = 256;
-// Minor-piece correction: indexed by the minor-piece layout. Divisor keeps the
-// per-term magnitude well under the pawn correction's so layering adds signal
-// without saturating the total.
-static constexpr int MAX_MINOR_CORR = 16384;
-static constexpr int MINOR_CORR_SIZE = 16384;
-static constexpr int MINOR_CORR_SCALE = 384;
-// Continuation correction: indexed only by the previous move's piece and
-// destination, so it is small and quickly responsive. Divisor is modest
-// because the table is dense enough that aliasing is minimal.
-static constexpr int MAX_CONT_CORR = 16384;
-static constexpr int CONT_CORR_SCALE = 256;
+// Every correction-history table shares the same clamp magnitude and modulo
+// size. Per-table weighting is handled by SearchParams.*CorrWeight so the
+// relative contribution of each signal is tunable without changing storage.
+static constexpr int MAX_CORR_HIST = 16384;
+static constexpr int CORR_HIST_SIZE = 16384;
 static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
@@ -83,28 +66,37 @@ static int contHistoryScore(const SearchState &state, int ply, PieceType currPt,
 }
 
 // Adjust a raw static eval by the accumulated correction history for the side
-// to move. Mate-range scores are returned untouched so the correction cannot
+// to move. Every table contributes via a tunable weight, divided by a shared
+// grain so SPSA can trade correction magnitude between signals cleanly.
+// Mate-range scores are returned untouched so the correction cannot
 // accidentally push a non-mate eval into mate territory.
 static int correctedEval(int staticEval, const Board &board, const SearchState &state, int ply) {
     if (staticEval <= -MATE_SCORE + MAX_PLY || staticEval >= MATE_SCORE - MAX_PLY) {
         return staticEval;
     }
     int stm = board.sideToMove;
-    int pawnIdx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
-    int correction = state.historyTables->pawnCorrHist[stm][pawnIdx] / PAWN_CORR_SCALE;
-    int whiteIdx = static_cast<int>(board.nonPawnKey[White] % NON_PAWN_CORR_SIZE);
-    int blackIdx = static_cast<int>(board.nonPawnKey[Black] % NON_PAWN_CORR_SIZE);
-    correction +=
-        state.historyTables->nonPawnCorrHist[stm][White][whiteIdx] / NON_PAWN_CORR_SCALE;
-    correction +=
-        state.historyTables->nonPawnCorrHist[stm][Black][blackIdx] / NON_PAWN_CORR_SCALE;
-    int minorIdx = static_cast<int>(board.minorKey % MINOR_CORR_SIZE);
-    correction += state.historyTables->minorCorrHist[stm][minorIdx] / MINOR_CORR_SCALE;
+    const auto &h = *state.historyTables;
+
+    int pawnIdx = static_cast<int>(board.pawnKey % CORR_HIST_SIZE);
+    int whiteIdx = static_cast<int>(board.nonPawnKey[White] % CORR_HIST_SIZE);
+    int blackIdx = static_cast<int>(board.nonPawnKey[Black] % CORR_HIST_SIZE);
+    int minorIdx = static_cast<int>(board.minorKey % CORR_HIST_SIZE);
+
+    long weighted = 0;
+    weighted += static_cast<long>(searchParams.PawnCorrWeight) * h.pawnCorrHist[stm][pawnIdx];
+    weighted +=
+        static_cast<long>(searchParams.NonPawnCorrWeight) * h.nonPawnCorrHist[stm][White][whiteIdx];
+    weighted +=
+        static_cast<long>(searchParams.NonPawnCorrWeight) * h.nonPawnCorrHist[stm][Black][blackIdx];
+    weighted += static_cast<long>(searchParams.MinorCorrWeight) * h.minorCorrHist[stm][minorIdx];
     if (ply >= 1) {
         PieceType prevPt = state.movedPiece[ply - 1];
         int prevTo = state.moveStack[ply - 1].to;
-        correction += state.historyTables->contCorrHist[stm][prevPt][prevTo] / CONT_CORR_SCALE;
+        weighted +=
+            static_cast<long>(searchParams.ContCorrWeight) * h.contCorrHist[stm][prevPt][prevTo];
     }
+
+    int correction = static_cast<int>(weighted / searchParams.CorrHistGrain);
     return staticEval + correction;
 }
 
@@ -124,35 +116,30 @@ static int corrHistBonus(int staticEval, int bestValue, int depth, int max) {
 
 // Fold the gap between the node's search result and its raw static eval into
 // every correction table. Gated by the caller to fire only on quiet bestMove
-// cutoffs/exact bounds outside singular exclusion.
+// cutoffs/exact bounds outside singular exclusion. Every table shares the
+// same storage bound, so the per-table bonus is also shared.
 static void updateCorrectionHistories(const Board &board, SearchState &state, int ply,
                                       int staticEval, int bestValue, int depth) {
     if (staticEval == -INF_SCORE) return;
     int stm = board.sideToMove;
+    int bonus = corrHistBonus(staticEval, bestValue, depth, MAX_CORR_HIST);
+    auto &h = *state.historyTables;
 
-    int pawnBonus = corrHistBonus(staticEval, bestValue, depth, MAX_PAWN_CORR);
-    int pawnIdx = static_cast<int>(board.pawnKey % PAWN_CORR_SIZE);
-    applyHistoryBonus(state.historyTables->pawnCorrHist[stm][pawnIdx], pawnBonus, MAX_PAWN_CORR);
+    int pawnIdx = static_cast<int>(board.pawnKey % CORR_HIST_SIZE);
+    applyHistoryBonus(h.pawnCorrHist[stm][pawnIdx], bonus, MAX_CORR_HIST);
 
-    int nonPawnBonus = corrHistBonus(staticEval, bestValue, depth, MAX_NON_PAWN_CORR);
-    int whiteIdx = static_cast<int>(board.nonPawnKey[White] % NON_PAWN_CORR_SIZE);
-    int blackIdx = static_cast<int>(board.nonPawnKey[Black] % NON_PAWN_CORR_SIZE);
-    applyHistoryBonus(state.historyTables->nonPawnCorrHist[stm][White][whiteIdx], nonPawnBonus,
-                      MAX_NON_PAWN_CORR);
-    applyHistoryBonus(state.historyTables->nonPawnCorrHist[stm][Black][blackIdx], nonPawnBonus,
-                      MAX_NON_PAWN_CORR);
+    int whiteIdx = static_cast<int>(board.nonPawnKey[White] % CORR_HIST_SIZE);
+    int blackIdx = static_cast<int>(board.nonPawnKey[Black] % CORR_HIST_SIZE);
+    applyHistoryBonus(h.nonPawnCorrHist[stm][White][whiteIdx], bonus, MAX_CORR_HIST);
+    applyHistoryBonus(h.nonPawnCorrHist[stm][Black][blackIdx], bonus, MAX_CORR_HIST);
 
-    int minorBonus = corrHistBonus(staticEval, bestValue, depth, MAX_MINOR_CORR);
-    int minorIdx = static_cast<int>(board.minorKey % MINOR_CORR_SIZE);
-    applyHistoryBonus(state.historyTables->minorCorrHist[stm][minorIdx], minorBonus,
-                      MAX_MINOR_CORR);
+    int minorIdx = static_cast<int>(board.minorKey % CORR_HIST_SIZE);
+    applyHistoryBonus(h.minorCorrHist[stm][minorIdx], bonus, MAX_CORR_HIST);
 
     if (ply >= 1) {
-        int contBonus = corrHistBonus(staticEval, bestValue, depth, MAX_CONT_CORR);
         PieceType prevPt = state.movedPiece[ply - 1];
         int prevTo = state.moveStack[ply - 1].to;
-        applyHistoryBonus(state.historyTables->contCorrHist[stm][prevPt][prevTo], contBonus,
-                          MAX_CONT_CORR);
+        applyHistoryBonus(h.contCorrHist[stm][prevPt][prevTo], bonus, MAX_CORR_HIST);
     }
 }
 
