@@ -295,7 +295,8 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             // Passed pawn: no enemy pawns ahead on same or adjacent files,
             // and no friendly pawn ahead on the same file (rear doubled pawns
             // are not passed)
-            if (!isDoubled && !(PassedPawnMask[c][sq] & theirPawns)) {
+            bool isPassed = !isDoubled && !(PassedPawnMask[c][sq] & theirPawns);
+            if (isPassed) {
                 score += sign * evalParams.PassedPawnBonus[relRank];
                 if (c == White)
                     whitePassers |= squareBB(sq);
@@ -309,8 +310,12 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 score += sign * evalParams.IsolatedPawnPenalty;
                 // An isolated pawn with an open file behind it is an
                 // easy rook target, so it absorbs an extra penalty on
-                // top of the plain isolated cost.
-                if (!opposed) {
+                // top of the plain isolated cost. Skip when the pawn is
+                // already passed: "no enemy pawn on the file ahead" is
+                // exactly the feature the passed bonus rewards, so
+                // double-counting it as a penalty here fights the passer
+                // reward and mis-scores winning king-and-pawn endings.
+                if (!opposed && !isPassed) {
                     score += sign * evalParams.WeakUnopposedPenalty;
                 }
                 // Doubled and isolated together is the worst structural
