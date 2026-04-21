@@ -97,6 +97,13 @@ struct EvalParams {
     Score IsolatedPawnPenalty;
     Score DoubledPawnPenalty;
     Score BackwardPawnPenalty;
+
+    // Extra penalty on top of IsolatedPawnPenalty or BackwardPawnPenalty
+    // when the pawn is "unopposed", meaning no enemy pawn sits on the
+    // same file ahead of it. An open file behind a weak pawn makes it an
+    // easy target for a rook lift, so unopposed weakness is strictly
+    // worse than opposed weakness.
+    Score WeakUnopposedPenalty;
 };
 
 extern EvalParams evalParams;

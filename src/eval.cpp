@@ -286,6 +286,12 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 score += sign * evalParams.DoubledPawnPenalty;
             }
 
+            // "Unopposed" is the absence of any enemy pawn on the same
+            // file ahead of this pawn. It is used by the weak-pawn term
+            // below, and potentially by future pawn-structure signals, so
+            // it is computed once here and reused.
+            bool opposed = (ForwardFileBB[c][sq] & theirPawns) != 0;
+
             // Passed pawn: no enemy pawns ahead on same or adjacent files,
             // and no friendly pawn ahead on the same file (rear doubled pawns
             // are not passed)
@@ -301,6 +307,12 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             bool isolated = !(AdjacentFilesBB[f] & ourPawns);
             if (isolated) {
                 score += sign * evalParams.IsolatedPawnPenalty;
+                // An isolated pawn with an open file behind it is an
+                // easy rook target, so it absorbs an extra penalty on
+                // top of the plain isolated cost.
+                if (!opposed) {
+                    score += sign * evalParams.WeakUnopposedPenalty;
+                }
             }
 
             // Connected pawn: phalanx (same rank, adjacent file) or defended by friendly pawn
@@ -318,6 +330,13 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                     int stopSq = (c == White) ? sq + 8 : sq - 8;
                     if (PawnAttacks[c][stopSq] & theirPawns) {
                         score += sign * evalParams.BackwardPawnPenalty;
+                        // Same "open file behind a weak pawn" logic as the
+                        // isolated case: a backward pawn with no opposing
+                        // pawn on its file is the easiest heavy-piece target
+                        // of all.
+                        if (!opposed) {
+                            score += sign * evalParams.WeakUnopposedPenalty;
+                        }
                     }
                 }
             }

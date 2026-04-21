@@ -44,9 +44,11 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     Board board;
 
     // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
-    // (isolated penalty, passed bonus) collapse into this expected score.
+    // (isolated penalty, passed bonus, and the weak-unopposed surcharge
+    // since the a file has no black pawn ahead) collapse into this
+    // expected score.
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 377);
+    CHECK(evaluate(board) == 367);
 
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
@@ -399,6 +401,23 @@ TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][
     int disconnected = evaluate(board);
 
     CHECK(connected > disconnected);
+}
+
+TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {
+    Board board;
+
+    // White a2 is isolated and blocked from being a passer by a black b3
+    // pawn on the adjacent file, but nothing sits on the a file ahead of
+    // it, so the a pawn is "weak unopposed".
+    board.setFen("4k3/8/8/8/8/1p6/P7/4K3 w - - 0 1");
+    int unopposed = evaluate(board);
+
+    // Same idea, but the blocker now lives on the a file, so white's a
+    // pawn is opposed and the weak-unopposed surcharge no longer fires.
+    board.setFen("4k3/p7/8/8/8/8/P7/4K3 w - - 0 1");
+    int opposed = evaluate(board);
+
+    CHECK(opposed > unopposed);
 }
 
 TEST_CASE("Eval: backward pawn scores lower than non-backward pawn", "[eval][pawn]") {
