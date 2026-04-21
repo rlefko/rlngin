@@ -21,10 +21,10 @@ static const SearchParams kDefaultSearchParams = {
     97,    // SeeQuietCoef
     74,    // LmrBase           (scaled x100; 0.74 in LMR formula)
     181,   // LmrDivisor        (scaled x100; 1.81 in LMR formula)
-    128,   // PawnCorrWeight    (reproduces the pre-unified entry / 128 term)
-    64,    // NonPawnCorrWeight (reproduces entry / 256 per color term)
-    43,    // MinorCorrWeight   (reproduces the pre-unified entry / 384 term)
-    64,    // ContCorrWeight    (reproduces entry / 256 term)
+    128,   // PawnCorrWeight    (full-strength baseline, matches the prior pawn-only term)
+    32,    // NonPawnCorrWeight (per color term; two copies summed, so ~half the pawn weight)
+    16,    // MinorCorrWeight   (small refinement on top of the non-pawn signal)
+    32,    // ContCorrWeight    (dense table; modest weight keeps it from swamping the rest)
     16384, // CorrHistGrain     (shared denominator; also the per-table clamp max)
 };
 
