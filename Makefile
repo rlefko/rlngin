@@ -134,3 +134,4 @@ spsa: build
 	    --fastchess ./fastchess \
 	    --openings $(OPENINGS_FILE) \
 	    --seed 1
+

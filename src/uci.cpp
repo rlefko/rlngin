@@ -96,11 +96,6 @@ void uciLoop() {
             std::cout << "option name MultiPV type spin default 1 min 1 max 256" << std::endl;
             std::cout << "option name Ponder type check default false" << std::endl;
             std::cout << "option name UCI_Chess960 type check default false" << std::endl;
-            for (const TunableSpec &spec : tunables()) {
-                std::cout << "option name " << spec.name << " type spin default "
-                          << spec.defaultValue << " min " << spec.minValue << " max "
-                          << spec.maxValue << std::endl;
-            }
             std::cout << "uciok" << std::endl;
         } else if (command == "isready") {
             joinSearch();

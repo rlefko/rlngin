@@ -84,22 +84,38 @@ std::vector<TunableSpec> buildRegistry() {
     out.reserve(20);
 
     // --- Search pruning and reduction scalars ---
+    //
+    // Per-axis (min, max, c_end, r_end) tightened for the focused retune.
+    // c_end is chosen per parameter so the final-iteration perturbation
+    // crosses at least one engine decision boundary: for most scalars that
+    // is a few-unit shift in the margin at the depths where the heuristic
+    // fires; for LMR coefficients it has to cross the integer rounding
+    // floor in the reduction table. Razor and the SEE* hard-prune scalars
+    // stay exposed at the same specs they had in PR #38 so manual UCI
+    // experimentation still works; the SPSA driver selects the retune
+    // subset via --params.
     out.push_back(makeIntSpec("RazorBase", &searchParams.RazorBase, 150, 500, 15.0, 5.0));
     out.push_back(makeIntSpec("RazorDepth", &searchParams.RazorDepth, 100, 400, 15.0, 5.0));
-    out.push_back(makeIntSpec("RfpBase", &searchParams.RfpBase, 150, 450, 15.0, 5.0));
-    out.push_back(makeIntSpec("RfpImproving", &searchParams.RfpImproving, 50, 300, 10.0, 4.0));
+    out.push_back(makeIntSpec("RfpBase", &searchParams.RfpBase, 200, 400, 10.0, 4.0));
+    out.push_back(makeIntSpec("RfpImproving", &searchParams.RfpImproving, 80, 250, 8.0, 3.0));
     out.push_back(makeIntSpec("NmpBase", &searchParams.NmpBase, 2, 5, 0.5, 0.25));
-    out.push_back(makeIntSpec("NmpEvalDiv", &searchParams.NmpEvalDiv, 200, 800, 25.0, 8.0));
-    out.push_back(makeIntSpec("FpBase", &searchParams.FpBase, 100, 400, 15.0, 5.0));
-    out.push_back(makeIntSpec("FpDepth", &searchParams.FpDepth, 75, 350, 15.0, 5.0));
-    out.push_back(makeIntSpec("SeeCaptureCoef", &searchParams.SeeCaptureCoef, 15, 120, 5.0, 2.0));
-    out.push_back(makeIntSpec("SeeQuietCoef", &searchParams.SeeQuietCoef, 40, 250, 10.0, 4.0));
+    out.push_back(makeIntSpec("NmpEvalDiv", &searchParams.NmpEvalDiv, 300, 700, 30.0, 10.0));
+    out.push_back(makeIntSpec("FpBase", &searchParams.FpBase, 150, 350, 10.0, 4.0));
+    out.push_back(makeIntSpec("FpDepth", &searchParams.FpDepth, 120, 300, 10.0, 4.0));
+    out.push_back(makeIntSpec("SeeCaptureCoef", &searchParams.SeeCaptureCoef, 25, 90, 4.0, 1.5));
+    out.push_back(makeIntSpec("SeeQuietCoef", &searchParams.SeeQuietCoef, 60, 200, 8.0, 3.0));
 
     // --- LMR table coefficients (scaled x100, table is rebuilt on write) ---
+    // c_end values here are deliberately larger than the prior spec: LmrBase
+    // contributes LmrBase/100 to the final int-cast of the reduction, so
+    // sub-unit perturbations never cross rounding and show up as no-ops
+    // in self-play. LmrDivisor bounds are narrowed ([180, 280]) for LTC
+    // safety -- the STC-aggressive lower end past 180 meaningfully hurts
+    // deep-tc play and no 10+0.1 SPSA signal justifies pushing there.
     out.push_back(
-        makeIntSpec("LmrBase", &searchParams.LmrBase, 40, 110, 5.0, 2.0, rebuildLmrTable));
+        makeIntSpec("LmrBase", &searchParams.LmrBase, 55, 100, 15.0, 5.0, rebuildLmrTable));
     out.push_back(
-        makeIntSpec("LmrDivisor", &searchParams.LmrDivisor, 150, 350, 10.0, 4.0, rebuildLmrTable));
+        makeIntSpec("LmrDivisor", &searchParams.LmrDivisor, 180, 280, 25.0, 8.0, rebuildLmrTable));
 
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));

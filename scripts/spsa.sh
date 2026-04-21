@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: spsa.sh [iterations] [tc] [concurrency] [seed]
+# Usage: spsa.sh [iterations] [tc] [concurrency] [seed] [-- <extra spsa.py flags>]
 #
-# Thin wrapper around tools/spsa/spsa.py so ad hoc runs share one
-# entry point with make spsa.
+# Thin wrapper around tools/spsa/spsa.py so ad hoc runs share one entry
+# point with make spsa. Anything after an optional `--` separator is
+# forwarded verbatim to the Python driver, which lets the caller pass
+# through `--params`, `--stop-after`, etc. without bloating the wrapper.
 #
 # Environment variables:
 #   ENGINE:    path to the engine (default: ./build/rlngin)
@@ -16,6 +18,11 @@ ITERS="${1:-300}"
 TC="${2:-10+0.1}"
 CONCURRENCY="${3:-6}"
 SEED="${4:-1}"
+shift $(( $# < 4 ? $# : 4 ))
+if [ "${1:-}" = "--" ]; then
+    shift
+fi
+EXTRA_ARGS=("$@")
 
 ENGINE="${ENGINE:-./build/rlngin}"
 FASTCHESS="${FASTCHESS:-./fastchess}"
@@ -47,4 +54,5 @@ exec python3 tools/spsa/spsa.py \
     --engine "$ENGINE" \
     --fastchess "$FASTCHESS" \
     --openings "$OPENINGS" \
-    --output-dir "$OUTPUT"
+    --output-dir "$OUTPUT" \
+    "${EXTRA_ARGS[@]}"
