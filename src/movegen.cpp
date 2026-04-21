@@ -1,6 +1,35 @@
 #include "movegen.h"
 #include "bitboard.h"
 
+#include <algorithm>
+
+// Stable sort key that orders a move list independently of the side to move.
+// `popLsb` over the friendly-piece bitboards iterates absolute squares
+// ascending, which is back-rank-first for White but forward-rank-first for
+// Black, so the raw move list is mirror-asymmetric. Sorting by
+// (pieceType, relativeRank(from), file(from), relativeRank(to), file(to),
+// promotion) gives an order that depends only on the moving side's frame of
+// reference, so a position and its color mirror produce element-wise
+// mirrored move lists. Leading with `pieceType` keeps the
+// pawn -> knight -> bishop -> rook -> queen -> king progression that the
+// rest of the engine has been tuned around.
+static int moveOrderKey(const Move &m, const Board &board) {
+    Color us = board.sideToMove;
+    int pt = static_cast<int>(board.squares[m.from].type);
+    int rrFrom = relativeRank(us, m.from);
+    int fFrom = squareFile(m.from);
+    int rrTo = relativeRank(us, m.to);
+    int fTo = squareFile(m.to);
+    return (pt << 15) | (rrFrom << 12) | (fFrom << 9) | (rrTo << 6) | (fTo << 3) |
+           static_cast<int>(m.promotion);
+}
+
+static void sortMirrorInvariant(std::vector<Move> &moves, const Board &board) {
+    std::sort(moves.begin(), moves.end(), [&](const Move &a, const Move &b) {
+        return moveOrderKey(a, board) < moveOrderKey(b, board);
+    });
+}
+
 bool isSquareAttacked(const Board &board, int sq, Color byColor) {
     Bitboard them = board.byColor[byColor];
     if (KnightAttacks[sq] & board.byPiece[Knight] & them) return true;
@@ -288,6 +317,7 @@ std::vector<Move> generateLegalCaptures(Board &board) {
             legal.push_back(m);
         }
     }
+    sortMirrorInvariant(legal, board);
     return legal;
 }
 
@@ -305,5 +335,6 @@ std::vector<Move> generateLegalMoves(Board &board) {
             legal.push_back(m);
         }
     }
+    sortMirrorInvariant(legal, board);
     return legal;
 }

@@ -28,7 +28,11 @@ enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
 // Pairs a move with its ordering score so the sort comparator does not
 // re-evaluate scoreMove on every comparison. The quiet history portion is
-// captured alongside so the LMR reduction term can read it directly.
+// captured alongside so the LMR reduction term can read it directly. Mirror
+// invariance is provided upstream: generateLegalMoves returns moves in a
+// side-to-move-relative order, and the std::stable_sort calls below preserve
+// that order for any moves that tie on `score`. So no secondary key is
+// needed here.
 struct ScoredMove {
     int score;
     int historyScore;
@@ -265,8 +269,8 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     for (const Move &m : moves) {
         scored.push_back({scoreMove(m, board, ttMove, -1, state), 0, m});
     }
-    std::sort(scored.begin(), scored.end(),
-              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
+    std::stable_sort(scored.begin(), scored.end(),
+                     [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 
     Move bestMove = {0, 0, None};
 
@@ -459,8 +463,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         int s = scoreMove(m, board, ttMove, ply, state, &hist);
         scored.push_back({s, hist, m});
     }
-    std::sort(scored.begin(), scored.end(),
-              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
+    std::stable_sort(scored.begin(), scored.end(),
+                     [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 
     bool inCheck = isInCheck(board);
 
@@ -555,8 +559,9 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         for (const Move &m : pcMoves) {
             pcScored.push_back({scoreMove(m, board, noTT, -1, state), 0, m});
         }
-        std::sort(pcScored.begin(), pcScored.end(),
-                  [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
+        std::stable_sort(
+            pcScored.begin(), pcScored.end(),
+            [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 
         for (const ScoredMove &sm : pcScored) {
             const Move &pcMove = sm.move;
