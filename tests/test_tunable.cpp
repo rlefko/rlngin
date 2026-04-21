@@ -10,9 +10,11 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // Twenty is the committed SPSA surface. If this count ever changes, the
-    // SPSA driver's iteration budget and the PR description should move too.
-    REQUIRE(specs.size() == 20);
+    // Thirty four is the committed SPSA surface: the original twenty plus
+    // fourteen king-safety scalars added alongside the king-danger rewrite.
+    // If this count ever changes, the SPSA driver's iteration budget and
+    // the PR description should move too.
+    REQUIRE(specs.size() == 34);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {

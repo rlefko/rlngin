@@ -183,7 +183,10 @@ TEST_CASE("Eval: king zone attacks reduce eval for defending side", "[eval][king
     int passive = evaluate(board);
 
     CHECK(attacking < passive);
-    CHECK(passive - attacking < 200);
+    // The king-danger quadratic keeps the delta bounded to around the
+    // capped per-side penalty so the term cannot swing the eval past a
+    // reasonable attack-magnitude contribution.
+    CHECK(passive - attacking < 600);
 }
 
 TEST_CASE("Eval: pawn storm penalizes defending side", "[eval][kingsafety]") {
@@ -227,6 +230,63 @@ TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]
     int unrestricted = evaluate(board);
 
     CHECK(unrestricted > restricted);
+}
+
+TEST_CASE("Eval: queen attackers penalize more than rook attackers", "[eval][kingsafety]") {
+    Board board;
+
+    // Two black queens sitting on f3 and g3 both attack the white king
+    // zone; so do two black rooks on the same squares. Attacker count is
+    // identical in both positions, but the per-piece king-attack weight
+    // for queens must dominate that of rooks, so the queen version has
+    // to score strictly worse for the defender.
+    board.setFen("6k1/5ppp/8/8/8/5qq1/6PP/6K1 w - - 0 1");
+    int queensAttacking = evaluate(board);
+
+    board.setFen("6k1/5ppp/8/8/8/5rr1/6PP/6K1 w - - 0 1");
+    int rooksAttacking = evaluate(board);
+
+    CHECK(queensAttacking < rooksAttacking);
+}
+
+TEST_CASE("Eval: safe checks increase king danger", "[eval][kingsafety]") {
+    Board board;
+
+    // Two attackers in both positions: a black knight on d4 and a black
+    // queen. Only the queen's square changes. From h5 the queen's attack
+    // set covers more squares on the king's check rays that our side
+    // does not defend (a "safe check" landing square) than from h3, so
+    // the h5 placement must carry a larger king-danger penalty.
+    board.setFen("6k1/5pp1/8/7q/3n4/8/5PPP/6K1 w - - 0 1");
+    int richSafeChecks = evaluate(board);
+
+    board.setFen("6k1/5pp1/8/8/3n4/7q/5PPP/6K1 w - - 0 1");
+    int sparseSafeChecks = evaluate(board);
+
+    CHECK(richSafeChecks < sparseSafeChecks);
+}
+
+TEST_CASE("Eval: multi-attacker gate still holds", "[eval][kingsafety]") {
+    Board board;
+
+    // A single queen reaching the king zone should not fire the
+    // quadratic king-danger penalty even though the undefended-zone
+    // linear term applies. Two queens, on the same squares that
+    // collectively attack the zone, cross the multi-attacker gate and
+    // trigger the quadratic. The two-queen evaluation must therefore
+    // sit far below the single-queen one -- much more than a purely
+    // linear weighting of attackers would produce.
+    board.setFen("6k1/5pp1/8/8/4q3/8/5PPP/6K1 w - - 0 1");
+    int loneQueen = evaluate(board);
+
+    board.setFen("6k1/5ppp/8/8/8/5qq1/6PP/6K1 w - - 0 1");
+    int twoQueens = evaluate(board);
+
+    // Two queens vs one queen adds one queen of material (roughly 2500
+    // internal units) but the king safety collapse drives the delta
+    // well past that purely material expectation.
+    int delta = loneQueen - twoQueens;
+    CHECK(delta > 3500);
 }
 
 TEST_CASE("Eval: undefended king zone squares penalize defender", "[eval][kingsafety]") {

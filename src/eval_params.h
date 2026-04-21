@@ -62,14 +62,36 @@ struct EvalParams {
     // Piece pair synergy.
     Score BishopPair;
 
-    // King-safety scalar tables (non-tuned attack-unit curve remains
-    // static const inside eval.cpp).
+    // King-safety scalar tables (structural divisors for the king-danger
+    // quadratic remain static const inside eval.cpp).
     Score PawnShieldBonus[2];
     Score PawnStormPenalty[5];
     Score SemiOpenFileNearKing;
     Score OpenFileNearKing;
     Score UndefendedKingZoneSq;
     Score KingSafeSqPenalty[9];
+
+    // Per-attacker weights contributed to the king-danger accumulator for
+    // every enemy piece of the given type whose attack set intersects our
+    // king zone.
+    Score KingAttackByKnight;
+    Score KingAttackByBishop;
+    Score KingAttackByRook;
+    Score KingAttackByQueen;
+
+    // King-danger weight per safe check an enemy piece of the given type
+    // can deliver from a square we do not defend. Indexed by victim piece
+    // type so the Pawn/King/None slots stay zero and the inner loop can
+    // read the table directly without a remap.
+    Score KingSafeCheck[7];
+
+    // Per-weak-ring-square weight folded into the king-danger accumulator.
+    // Orthogonal to the existing UndefendedKingZoneSq linear term.
+    Score KingRingWeakWeight;
+
+    // Flat discount subtracted from the king-danger accumulator when the
+    // attacking side has no queen on the board.
+    Score KingNoQueenDiscount;
 
     // Pawn-structure penalties.
     Score IsolatedPawnPenalty;
