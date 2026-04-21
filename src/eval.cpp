@@ -327,6 +327,14 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
             if (phalanx || defended) {
                 score += sign * evalParams.ConnectedPawnBonus[relRank];
+                // A phalanx is the more dynamic half of the connected
+                // family: the two pawns can advance together and cover
+                // each other's stop squares on the next rank. Layer a
+                // small additional bonus on top of the shared connected
+                // term for the phalanx case specifically.
+                if (phalanx) {
+                    score += sign * evalParams.PhalanxBonus;
+                }
             }
 
             // Backward pawn: not connected, not isolated, all adjacent friendly pawns

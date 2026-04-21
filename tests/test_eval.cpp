@@ -403,6 +403,25 @@ TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][
     CHECK(connected > disconnected);
 }
 
+TEST_CASE("Eval: phalanx connected pawns score higher than defended connected pawns",
+          "[eval][pawn]") {
+    Board board;
+
+    // White d4 and e4 sit side by side on the same rank: phalanx, and
+    // neither is defending the other from behind.
+    board.setFen("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
+    int phalanx = evaluate(board);
+
+    // White e4 defended by d3 from behind: connected but not phalanx. The
+    // pawns occupy the same files as the phalanx test and on adjacent
+    // ranks, so PST, material, and the shared ConnectedPawnBonus come out
+    // very close -- PhalanxBonus is the dominant remaining signal.
+    board.setFen("4k3/8/8/8/4P3/3P4/8/4K3 w - - 0 1");
+    int defendedOnly = evaluate(board);
+
+    CHECK(phalanx > defendedOnly);
+}
+
 TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pawn]") {
     Board board;
 

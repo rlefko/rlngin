@@ -117,6 +117,12 @@ struct EvalParams {
     // the over-extended-but-stuck pattern that passers already get via
     // PassedBlockedPenalty.
     Score BlockedPawnPenalty[2];
+
+    // Extra bonus layered on top of ConnectedPawnBonus when the connected
+    // pawn sits in a phalanx (same rank, adjacent file) rather than only
+    // being defended from behind. Phalanx pawns can advance in lockstep,
+    // which is strictly more dynamic than a merely supported pawn.
+    Score PhalanxBonus;
 };
 
 extern EvalParams evalParams;
