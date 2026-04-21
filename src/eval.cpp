@@ -47,15 +47,20 @@ static void ensureEvalInit() {
 static const int SpaceWeightDivisor = 16;
 static const int SpaceMinPieceCount = 2;
 
-// Structural divisors for the king-danger to taper mapping. The mg half
-// of the penalty is quadratic (danger^2 / KingDangerDivMg); the eg half
-// stays linear (danger / KingDangerDivEg) because deep endgames rarely
-// produce the runaway attack shapes the quadratic is designed to punish.
+// Structural divisors and clamps for the king-danger to taper mapping.
+// The mg half of the penalty is quadratic (danger^2 / KingDangerDivMg);
+// the eg half stays linear (danger / KingDangerDivEg) because deep
+// endgames rarely produce the runaway attack shapes the quadratic is
+// designed to punish. KingDangerMgCap bounds the quadratic input so
+// contrived positions with many safe-check squares cannot push the
+// penalty past the magnitude the old attack-unit curve used to emit.
 // Kept non-tunable following the SpaceWeightDivisor pattern: these set
 // the shape of the curve, while the per-term weights carry the SPSA
 // signal.
 static const int KingDangerDivMg = 32;
 static const int KingDangerDivEg = 8;
+static const int KingDangerMgCap = 240;
+static const int KingDangerEgCap = 96;
 
 // Stockfish-lineage quadratic imbalance tables. Indexed by [pt1][pt2] with
 // pt in { BishopPair=0, Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5 }. The
@@ -569,12 +574,16 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
 
         // Safe checks: squares from which an enemy piece of each type
         // would give check to our king. A check square is "safe" when it
-        // is reachable by the enemy piece, not blocked by another enemy
-        // piece, and not defended by any of our pieces. Pieces of the
-        // enemy side are allowed there only via capture of our piece on
-        // the square, which the allAttacks[us] exclusion already covers.
+        // is reachable by the enemy piece, not occupied by another enemy
+        // piece, and not defended by any of our non-king pieces. Squares
+        // defended only by the king itself are treated as weak because a
+        // supported attacker wins the capture: this is the classical
+        // king-danger definition of safe check.
         Bitboard theirOcc = board.byColor[them];
-        Bitboard safeSquares = ~friendlyDefense & ~theirOcc;
+        Bitboard nonKingDefense = ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] |
+                                  ctx.attackedBy[us][Bishop] | ctx.attackedBy[us][Rook] |
+                                  ctx.attackedBy[us][Queen];
+        Bitboard safeSquares = ~nonKingDefense & ~theirOcc;
         Bitboard knightCheckRays = KnightAttacks[kingSq];
         Bitboard bishopCheckRays = bishopAttacks(kingSq, occ);
         Bitboard rookCheckRays = rookAttacks(kingSq, occ);
@@ -602,10 +611,15 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         }
 
         // Only penalize when at least 2 pieces attack the zone: a single
-        // piece rarely creates a real mating threat on its own.
+        // piece rarely creates a real mating threat on its own. Clamp
+        // kingDanger to a non-negative bounded range before feeding the
+        // quadratic so open-file positions with many safe-check squares
+        // cannot compound into implausible penalties.
         if (attackerCount >= 2) {
             if (kingDangerMg < 0) kingDangerMg = 0;
             if (kingDangerEg < 0) kingDangerEg = 0;
+            if (kingDangerMg > KingDangerMgCap) kingDangerMg = KingDangerMgCap;
+            if (kingDangerEg > KingDangerEgCap) kingDangerEg = KingDangerEgCap;
             int mgPen = kingDangerMg * kingDangerMg / KingDangerDivMg;
             int egPen = kingDangerEg / KingDangerDivEg;
             scores[us] -= S(mgPen, egPen);

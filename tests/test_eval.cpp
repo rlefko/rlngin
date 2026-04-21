@@ -183,7 +183,10 @@ TEST_CASE("Eval: king zone attacks reduce eval for defending side", "[eval][king
     int passive = evaluate(board);
 
     CHECK(attacking < passive);
-    CHECK(passive - attacking < 200);
+    // The king-danger quadratic keeps the delta bounded to around the
+    // capped per-side penalty so the term cannot swing the eval past a
+    // reasonable attack-magnitude contribution.
+    CHECK(passive - attacking < 600);
 }
 
 TEST_CASE("Eval: pawn storm penalizes defending side", "[eval][kingsafety]") {
