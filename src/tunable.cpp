@@ -117,6 +117,20 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(
         makeIntSpec("LmrDivisor", &searchParams.LmrDivisor, 180, 280, 25.0, 8.0, rebuildLmrTable));
 
+    // --- Correction-history weights ---
+    // Each weight is divided by CorrHistGrain at read time. Bounds were picked
+    // so a saturated table entry can contribute between ~a handful of units
+    // and a bit over a pawn, matching the magnitude range Stockfish-style
+    // correction tables are known to work in. Grain bounds keep the overall
+    // correction scale within a sensible band even under extreme weights.
+    out.push_back(makeIntSpec("PawnCorrWeight", &searchParams.PawnCorrWeight, 32, 256, 8.0, 3.0));
+    out.push_back(
+        makeIntSpec("NonPawnCorrWeight", &searchParams.NonPawnCorrWeight, 16, 256, 8.0, 3.0));
+    out.push_back(makeIntSpec("MinorCorrWeight", &searchParams.MinorCorrWeight, 0, 256, 8.0, 3.0));
+    out.push_back(makeIntSpec("ContCorrWeight", &searchParams.ContCorrWeight, 0, 256, 8.0, 3.0));
+    out.push_back(
+        makeIntSpec("CorrHistGrain", &searchParams.CorrHistGrain, 4096, 65536, 512.0, 256.0));
+
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
     out.push_back(
