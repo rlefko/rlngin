@@ -19,16 +19,16 @@
 static const SearchParams kDefaultSearchParams = {
     300, // RazorBase         (Texel default; out of SPSA scope -- tactical hard prune)
     250, // RazorDepth        (Texel default; out of SPSA scope -- tactical hard prune)
-    323, // RfpBase           (Texel default; SPSA retune candidate)
+    327, // RfpBase           (Texel default; SPSA retune candidate)
     184, // RfpImproving      (PR #38 SPSA keep)
     3,   // NmpBase           (integer-range trap; likely dropped from the retune scope)
-    492, // NmpEvalDiv        (Texel default; SPSA retune candidate)
-    184, // FpBase            (PR #38 SPSA keep)
-    204, // FpDepth           (PR #38 SPSA keep)
-    45,  // SeeCaptureCoef    (Texel default; SPSA retune candidate)
-    104, // SeeQuietCoef      (Texel default; SPSA retune candidate)
-    76,  // LmrBase           (Texel default; SPSA retune candidate; scaled x100)
-    193, // LmrDivisor        (retune start; nudged 199 -> 215 to balance STC vs LTC)
+    473, // NmpEvalDiv        (Texel default; SPSA retune candidate)
+    182, // FpBase            (PR #38 SPSA keep)
+    202, // FpDepth           (PR #38 SPSA keep)
+    39,  // SeeCaptureCoef    (Texel default; SPSA retune candidate)
+    94, // SeeQuietCoef      (Texel default; SPSA retune candidate)
+    78,  // LmrBase           (Texel default; SPSA retune candidate; scaled x100)
+    183, // LmrDivisor        (retune start; nudged 199 -> 215 to balance STC vs LTC)
 };
 
 SearchParams searchParams = kDefaultSearchParams;
