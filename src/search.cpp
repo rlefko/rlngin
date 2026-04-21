@@ -30,6 +30,11 @@ static constexpr int NON_PAWN_CORR_SCALE = 256;
 static constexpr int MAX_MINOR_CORR = 16384;
 static constexpr int MINOR_CORR_SIZE = 16384;
 static constexpr int MINOR_CORR_SCALE = 384;
+// Continuation correction: indexed only by the previous move's piece and
+// destination, so it is small and quickly responsive. Divisor is modest
+// because the table is dense enough that aliasing is minimal.
+static constexpr int MAX_CONT_CORR = 16384;
+static constexpr int CONT_CORR_SCALE = 256;
 static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
@@ -80,7 +85,7 @@ static int contHistoryScore(const SearchState &state, int ply, PieceType currPt,
 // Adjust a raw static eval by the accumulated correction history for the side
 // to move. Mate-range scores are returned untouched so the correction cannot
 // accidentally push a non-mate eval into mate territory.
-static int correctedEval(int staticEval, const Board &board, const SearchState &state) {
+static int correctedEval(int staticEval, const Board &board, const SearchState &state, int ply) {
     if (staticEval <= -MATE_SCORE + MAX_PLY || staticEval >= MATE_SCORE - MAX_PLY) {
         return staticEval;
     }
@@ -95,6 +100,11 @@ static int correctedEval(int staticEval, const Board &board, const SearchState &
         state.historyTables->nonPawnCorrHist[stm][Black][blackIdx] / NON_PAWN_CORR_SCALE;
     int minorIdx = static_cast<int>(board.minorKey % MINOR_CORR_SIZE);
     correction += state.historyTables->minorCorrHist[stm][minorIdx] / MINOR_CORR_SCALE;
+    if (ply >= 1) {
+        PieceType prevPt = state.movedPiece[ply - 1];
+        int prevTo = state.moveStack[ply - 1].to;
+        correction += state.historyTables->contCorrHist[stm][prevPt][prevTo] / CONT_CORR_SCALE;
+    }
     return staticEval + correction;
 }
 
@@ -115,8 +125,8 @@ static int corrHistBonus(int staticEval, int bestValue, int depth, int max) {
 // Fold the gap between the node's search result and its raw static eval into
 // every correction table. Gated by the caller to fire only on quiet bestMove
 // cutoffs/exact bounds outside singular exclusion.
-static void updateCorrectionHistories(const Board &board, SearchState &state, int staticEval,
-                                      int bestValue, int depth) {
+static void updateCorrectionHistories(const Board &board, SearchState &state, int ply,
+                                      int staticEval, int bestValue, int depth) {
     if (staticEval == -INF_SCORE) return;
     int stm = board.sideToMove;
 
@@ -136,6 +146,14 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
     int minorIdx = static_cast<int>(board.minorKey % MINOR_CORR_SIZE);
     applyHistoryBonus(state.historyTables->minorCorrHist[stm][minorIdx], minorBonus,
                       MAX_MINOR_CORR);
+
+    if (ply >= 1) {
+        int contBonus = corrHistBonus(staticEval, bestValue, depth, MAX_CONT_CORR);
+        PieceType prevPt = state.movedPiece[ply - 1];
+        int prevTo = state.moveStack[ply - 1].to;
+        applyHistoryBonus(state.historyTables->contCorrHist[stm][prevPt][prevTo], contBonus,
+                          MAX_CONT_CORR);
+    }
 }
 
 // Apply the same bonus to every tier of continuation history for this move.
@@ -289,7 +307,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         // Read-only correction: qsearch consumes the corrected eval for its
         // stand-pat and delta pruning decisions but does not update the table,
         // since qsearch returns are the signal the correction is tracking.
-        standPat = correctedEval(rawStandPat, board, state);
+        standPat = correctedEval(rawStandPat, board, state, ply);
         bestScore = standPat;
         if (standPat >= beta) return standPat;
         if (standPat > alpha) alpha = standPat;
@@ -521,7 +539,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Pawn-structure correction folded on top of the raw static eval. The raw
     // value still drives improving detection and is what we store in TT.
-    int corrEval = inCheck ? -INF_SCORE : correctedEval(staticEval, board, state);
+    int corrEval = inCheck ? -INF_SCORE : correctedEval(staticEval, board, state, ply);
 
     // Determine if the position is improving (eval better than 2 plies ago)
     bool improving = false;
@@ -886,7 +904,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                                (flag == TT_LOWER_BOUND && bestScore >= beta) ||
                                (flag == TT_UPPER_BOUND && bestScore <= origAlpha);
             if (boundUseful) {
-                updateCorrectionHistories(board, state, staticEval, bestScore, depth);
+                updateCorrectionHistories(board, state, ply, staticEval, bestScore, depth);
             }
         }
     }

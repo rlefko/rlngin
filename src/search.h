@@ -51,6 +51,10 @@ struct SearchState {
         // Captures positional bias that depends on the bishop / knight layout
         // independent of the heavier pieces and pawn structure.
         int16_t minorCorrHist[2][16384] = {};
+        // Continuation correction: `[stm][prevPiece][prevTo]`. Small dense
+        // table indexed by the opponent's most recent move, letting the search
+        // learn that certain reply contexts systematically skew the eval.
+        int16_t contCorrHist[2][7][64] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 
