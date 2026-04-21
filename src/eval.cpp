@@ -47,25 +47,20 @@ static void ensureEvalInit() {
 static const int SpaceWeightDivisor = 16;
 static const int SpaceMinPieceCount = 2;
 
-// Attack units per piece type when it attacks the king zone. Kept
-// non-tunable because these are structural weights that the per-unit
-// KingAttackPenalty curve already consumes.
-static const int KingAttackUnits[] = {
-    0, // None
-    0, // Pawn (handled via pawn storm)
-    2, // Knight
-    2, // Bishop
-    3, // Rook
-    4, // Queen
-    0  // King
-};
-
-// Modest king-zone penalties indexed by attack units, capped at 12.
-// Kept non-tunable: the shape of this curve matters more than any one
-// entry, so SPSA is the better fit here.
-static const int KingAttackPenalty[13] = {
-    0,   0,   0,   29,  77,  145, 232, 338, 464, 608, 773, 956, 1159,
-};
+// Structural divisors and clamps for the king-danger to taper mapping.
+// The mg half of the penalty is quadratic (danger^2 / KingDangerDivMg);
+// the eg half stays linear (danger / KingDangerDivEg) because deep
+// endgames rarely produce the runaway attack shapes the quadratic is
+// designed to punish. KingDangerMgCap bounds the quadratic input so
+// contrived positions with many safe-check squares cannot push the
+// penalty past the magnitude the old attack-unit curve used to emit.
+// Kept non-tunable following the SpaceWeightDivisor pattern: these set
+// the shape of the curve, while the per-term weights carry the SPSA
+// signal.
+static const int KingDangerDivMg = 32;
+static const int KingDangerDivEg = 8;
+static const int KingDangerMgCap = 240;
+static const int KingDangerEgCap = 96;
 
 // Stockfish-lineage quadratic imbalance tables. Indexed by [pt1][pt2] with
 // pt in { BishopPair=0, Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5 }. The
@@ -521,65 +516,117 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             }
         }
 
-        // King zone attack evaluation. Enemy attacks are precomputed in
-        // ctx.allAttacks[them]; we still iterate enemy pieces to count how
-        // many distinct attackers reach the zone and sum their attack units.
+        // King zone attack evaluation. We accumulate both an integer
+        // kingDanger score (fed to a quadratic mg / linear eg mapping) and
+        // the per-attacker count the gate uses. All ingredients reuse the
+        // shared attack maps in EvalContext so no new attack generation
+        // runs here.
         Bitboard kZone = kingZoneBB(kingSq, us);
         int attackerCount = 0;
-        int attackUnits = 0;
-        bool attackingQueenPresent = false;
+        int kingDangerMg = 0;
+        int kingDangerEg = 0;
 
         Bitboard theirKnights = board.byPiece[Knight] & board.byColor[them];
         while (theirKnights) {
             if (KnightAttacks[popLsb(theirKnights)] & kZone) {
                 attackerCount++;
-                attackUnits += KingAttackUnits[Knight];
+                kingDangerMg += mg_value(evalParams.KingAttackByKnight);
+                kingDangerEg += eg_value(evalParams.KingAttackByKnight);
             }
         }
         Bitboard theirBishops = board.byPiece[Bishop] & board.byColor[them];
         while (theirBishops) {
             if (bishopAttacks(popLsb(theirBishops), occ) & kZone) {
                 attackerCount++;
-                attackUnits += KingAttackUnits[Bishop];
+                kingDangerMg += mg_value(evalParams.KingAttackByBishop);
+                kingDangerEg += eg_value(evalParams.KingAttackByBishop);
             }
         }
         Bitboard theirRooks = board.byPiece[Rook] & board.byColor[them];
         while (theirRooks) {
             if (rookAttacks(popLsb(theirRooks), occ) & kZone) {
                 attackerCount++;
-                attackUnits += KingAttackUnits[Rook];
+                kingDangerMg += mg_value(evalParams.KingAttackByRook);
+                kingDangerEg += eg_value(evalParams.KingAttackByRook);
             }
         }
         Bitboard theirQueens = board.byPiece[Queen] & board.byColor[them];
         while (theirQueens) {
             if (queenAttacks(popLsb(theirQueens), occ) & kZone) {
                 attackerCount++;
-                attackUnits += KingAttackUnits[Queen];
-                attackingQueenPresent = true;
+                kingDangerMg += mg_value(evalParams.KingAttackByQueen);
+                kingDangerEg += eg_value(evalParams.KingAttackByQueen);
             }
         }
 
         Bitboard enemyAttacks = ctx.allAttacks[them];
         Bitboard friendlyDefense = ctx.allAttacks[us];
 
-        // Undefended zone squares -- self-regulating: with no enemy piece
-        // attacking the zone this contributes zero, so no gate is needed
+        // Undefended zone squares: keep the existing Texel-tuned linear
+        // term as-is, and additionally feed the same popcount into the
+        // king-danger accumulator via KingRingWeakWeight so the quadratic
+        // sees ring pressure too.
         Bitboard undefAttacked = kZone & enemyAttacks & ~friendlyDefense;
         int undefCount = popcount(undefAttacked);
         scores[us] += undefCount * evalParams.UndefendedKingZoneSq;
+        kingDangerMg += undefCount * mg_value(evalParams.KingRingWeakWeight);
+        kingDangerEg += undefCount * eg_value(evalParams.KingRingWeakWeight);
 
-        // Only penalize when at least 2 pieces attack the zone -- a single
-        // piece rarely creates a real mating threat on its own
+        // Safe checks: squares from which an enemy piece of each type
+        // would give check to our king. A check square is "safe" when it
+        // is reachable by the enemy piece, not occupied by another enemy
+        // piece, and not defended by any of our non-king pieces. Squares
+        // defended only by the king itself are treated as weak because a
+        // supported attacker wins the capture: this is the classical
+        // king-danger definition of safe check.
+        Bitboard theirOcc = board.byColor[them];
+        Bitboard nonKingDefense = ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] |
+                                  ctx.attackedBy[us][Bishop] | ctx.attackedBy[us][Rook] |
+                                  ctx.attackedBy[us][Queen];
+        Bitboard safeSquares = ~nonKingDefense & ~theirOcc;
+        Bitboard knightCheckRays = KnightAttacks[kingSq];
+        Bitboard bishopCheckRays = bishopAttacks(kingSq, occ);
+        Bitboard rookCheckRays = rookAttacks(kingSq, occ);
+        Bitboard queenCheckRays = bishopCheckRays | rookCheckRays;
+
+        Bitboard safeKnightChecks = ctx.attackedBy[them][Knight] & knightCheckRays & safeSquares;
+        Bitboard safeBishopChecks = ctx.attackedBy[them][Bishop] & bishopCheckRays & safeSquares;
+        Bitboard safeRookChecks = ctx.attackedBy[them][Rook] & rookCheckRays & safeSquares;
+        Bitboard safeQueenChecks = ctx.attackedBy[them][Queen] & queenCheckRays & safeSquares;
+
+        kingDangerMg += popcount(safeKnightChecks) * mg_value(evalParams.KingSafeCheck[Knight]);
+        kingDangerEg += popcount(safeKnightChecks) * eg_value(evalParams.KingSafeCheck[Knight]);
+        kingDangerMg += popcount(safeBishopChecks) * mg_value(evalParams.KingSafeCheck[Bishop]);
+        kingDangerEg += popcount(safeBishopChecks) * eg_value(evalParams.KingSafeCheck[Bishop]);
+        kingDangerMg += popcount(safeRookChecks) * mg_value(evalParams.KingSafeCheck[Rook]);
+        kingDangerEg += popcount(safeRookChecks) * eg_value(evalParams.KingSafeCheck[Rook]);
+        kingDangerMg += popcount(safeQueenChecks) * mg_value(evalParams.KingSafeCheck[Queen]);
+        kingDangerEg += popcount(safeQueenChecks) * eg_value(evalParams.KingSafeCheck[Queen]);
+
+        // No-queen discount: the attack loses most of its bite when the
+        // attacking side has no queen left on the board.
+        if (!(board.byPiece[Queen] & board.byColor[them])) {
+            kingDangerMg -= mg_value(evalParams.KingNoQueenDiscount);
+            kingDangerEg -= eg_value(evalParams.KingNoQueenDiscount);
+        }
+
+        // Only penalize when at least 2 pieces attack the zone: a single
+        // piece rarely creates a real mating threat on its own. Clamp
+        // kingDanger to a non-negative bounded range before feeding the
+        // quadratic so open-file positions with many safe-check squares
+        // cannot compound into implausible penalties.
         if (attackerCount >= 2) {
-            int penalty = KingAttackPenalty[std::min(attackUnits, 12)];
-            if (!attackingQueenPresent) {
-                penalty /= 2;
-            }
-            scores[us] -= S(penalty, penalty / 8);
+            if (kingDangerMg < 0) kingDangerMg = 0;
+            if (kingDangerEg < 0) kingDangerEg = 0;
+            if (kingDangerMg > KingDangerMgCap) kingDangerMg = KingDangerMgCap;
+            if (kingDangerEg > KingDangerEgCap) kingDangerEg = KingDangerEgCap;
+            int mgPen = kingDangerMg * kingDangerMg / KingDangerDivMg;
+            int egPen = kingDangerEg / KingDangerDivEg;
+            scores[us] -= S(mgPen, egPen);
 
             // Gate the safe-square penalty on the same multi-attacker
-            // condition so that a king boxed in by its own pawns is not
-            // scored as if it were under attack
+            // condition so a king boxed in by its own pawns is not scored
+            // as if it were under attack.
             Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
             int safeCount = std::min(popcount(kingMoves & ~enemyAttacks), 8);
             scores[us] += evalParams.KingSafeSqPenalty[safeCount];

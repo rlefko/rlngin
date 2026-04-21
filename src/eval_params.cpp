@@ -140,6 +140,25 @@ static const EvalParams kDefaultEvalParams = {
     // KingSafeSqPenalty: non-decreasing chain, all <= 0
     {S(-25, -11), S(0, -1), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
 
+    // King-danger per-attacker weights. Starting magnitudes are
+    // deliberately conservative: the eval-level peak mg penalty under
+    // the quadratic cap sits at roughly KingDangerMgCap^2 / 32 = 1800
+    // internal units, a hair above the old attack-unit curve's max of
+    // 1159 so the feature can still bite on sharp positions without
+    // overpowering material in typical middlegames. SPSA will move
+    // them from here.
+    S(14, 2),  // KingAttackByKnight
+    S(10, 1),  // KingAttackByBishop
+    S(22, 3),  // KingAttackByRook
+    S(32, 4),  // KingAttackByQueen
+
+    // KingSafeCheck[pt]: 0 for None/Pawn/King slots so the inner loop can
+    // index by piece type directly.
+    {S(0, 0), S(0, 0), S(36, 3), S(24, 2), S(28, 3), S(44, 5), S(0, 0)},
+
+    S(6, 0),  // KingRingWeakWeight
+    S(36, 0), // KingNoQueenDiscount
+
     S(-15, -24), // IsolatedPawnPenalty
     S(  0, -83), // DoubledPawnPenalty
     S(-13, -36), // BackwardPawnPenalty
