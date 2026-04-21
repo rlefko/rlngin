@@ -199,7 +199,8 @@ static std::vector<ParamRef> collectParams() {
     for (int i = 0; i < 2; i++)
         addMgEgConstr("BlockedPawnPenalty[" + std::to_string(i) + "]",
                       &evalParams.BlockedPawnPenalty[i], nonPositive());
-    addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
+    // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
+    // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
     return out;
 }
@@ -535,7 +536,9 @@ static void printCurrentValues() {
     std::cout << "    {" << fmtScore(evalParams.BlockedPawnPenalty[0]) << ", "
               << fmtScore(evalParams.BlockedPawnPenalty[1])
               << "}, // BlockedPawnPenalty (rel rank 5, 6)\n";
-    std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
+    // PhalanxBonus is disabled in eval_params.h; re-enable the dump when the
+    // field and tuner entry come back.
+    // std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
     std::cout << "};\n";
 }
 

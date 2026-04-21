@@ -122,7 +122,12 @@ struct EvalParams {
     // pawn sits in a phalanx (same rank, adjacent file) rather than only
     // being defended from behind. Phalanx pawns can advance in lockstep,
     // which is strictly more dynamic than a merely supported pawn.
-    Score PhalanxBonus;
+    // Disabled until a joint Texel re-tune confirms it beats the already-
+    // tuned ConnectedPawnBonus, which currently absorbs both phalanx and
+    // supported cases with a single rank-indexed value. Re-enable the
+    // field, the default, the use in evaluatePawns, and the tuner entry
+    // together.
+    // Score PhalanxBonus;
 };
 
 extern EvalParams evalParams;

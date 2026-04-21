@@ -334,12 +334,13 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 score += sign * evalParams.ConnectedPawnBonus[relRank];
                 // A phalanx is the more dynamic half of the connected
                 // family: the two pawns can advance together and cover
-                // each other's stop squares on the next rank. Layer a
-                // small additional bonus on top of the shared connected
-                // term for the phalanx case specifically.
-                if (phalanx) {
-                    score += sign * evalParams.PhalanxBonus;
-                }
+                // each other's stop squares on the next rank. Layering
+                // a separate PhalanxBonus on top of the already-tuned
+                // ConnectedPawnBonus overrewards phalanx without a
+                // re-tune, so the term is disabled pending that work.
+                // if (phalanx) {
+                //     score += sign * evalParams.PhalanxBonus;
+                // }
             }
 
             // Backward pawn: not connected, not isolated, all adjacent friendly pawns
