@@ -91,9 +91,13 @@ static int correctedEval(int staticEval, const Board &board, const SearchState &
     weighted += static_cast<long>(searchParams.MinorCorrWeight) * h.minorCorrHist[stm][minorIdx];
     if (ply >= 1) {
         PieceType prevPt = state.movedPiece[ply - 1];
-        int prevTo = state.moveStack[ply - 1].to;
-        weighted +=
-            static_cast<long>(searchParams.ContCorrWeight) * h.contCorrHist[stm][prevPt][prevTo];
+        // A null parent leaves movedPiece as None; there is no meaningful
+        // previous move to key a continuation correction on, so skip the term.
+        if (prevPt != None) {
+            int prevTo = state.moveStack[ply - 1].to;
+            weighted += static_cast<long>(searchParams.ContCorrWeight) *
+                        h.contCorrHist[stm][prevPt][prevTo];
+        }
     }
 
     int correction = static_cast<int>(weighted / searchParams.CorrHistGrain);
@@ -138,8 +142,10 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
 
     if (ply >= 1) {
         PieceType prevPt = state.movedPiece[ply - 1];
-        int prevTo = state.moveStack[ply - 1].to;
-        applyHistoryBonus(h.contCorrHist[stm][prevPt][prevTo], bonus, MAX_CORR_HIST);
+        if (prevPt != None) {
+            int prevTo = state.moveStack[ply - 1].to;
+            applyHistoryBonus(h.contCorrHist[stm][prevPt][prevTo], bonus, MAX_CORR_HIST);
+        }
     }
 }
 
@@ -333,6 +339,11 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
             }
         }
 
+        // Record the move on the search stack before recursing so the child's
+        // correction-history read sees the real previous move instead of stale
+        // data left over from an earlier branch.
+        state.moveStack[ply] = m;
+        state.movedPiece[ply] = board.squares[m.from].type;
         UndoInfo undo = board.makeMove(m);
         tt.prefetch(board.key);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
@@ -570,6 +581,11 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             int R = searchParams.NmpBase + depth / 3 +
                     std::clamp((corrEval - beta) / searchParams.NmpEvalDiv, 0, 3);
             R = std::min(R, depth - 1);
+            // Sentinel so the child's correction-history lookup can detect a
+            // null parent and skip the continuation term, rather than indexing
+            // into a stale move's slot.
+            state.moveStack[ply] = {0, 0, None};
+            state.movedPiece[ply] = None;
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
             int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
