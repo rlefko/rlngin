@@ -206,14 +206,6 @@ static std::vector<ParamRef> collectParams() {
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
-    // --- Piece placement and queen pressure ---
-    addMgEgConstr("KingProtector[Knight]", &evalParams.KingProtector[0], nonPositive());
-    addMgEgConstr("KingProtector[Bishop]", &evalParams.KingProtector[1], nonPositive());
-    addMgEg("LongDiagonalBishop", &evalParams.LongDiagonalBishop);
-    addMgEg("RookOnQueenFile", &evalParams.RookOnQueenFile);
-    addMgEg("KnightOnQueen", &evalParams.KnightOnQueen);
-    addMgEg("SliderOnQueen", &evalParams.SliderOnQueen);
-
     return out;
 }
 
@@ -558,13 +550,6 @@ static void printCurrentValues() {
     // PhalanxBonus is disabled in eval_params.h; re-enable the dump when the
     // field and tuner entry come back.
     // std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
-    std::cout << "    {" << fmtScore(evalParams.KingProtector[0]) << ", "
-              << fmtScore(evalParams.KingProtector[1]) << "}, // KingProtector (Knight, Bishop)\n";
-    std::cout << "    " << fmtScore(evalParams.LongDiagonalBishop)
-              << ", // LongDiagonalBishop\n";
-    std::cout << "    " << fmtScore(evalParams.RookOnQueenFile) << ", // RookOnQueenFile\n";
-    std::cout << "    " << fmtScore(evalParams.KnightOnQueen) << ", // KnightOnQueen\n";
-    std::cout << "    " << fmtScore(evalParams.SliderOnQueen) << ", // SliderOnQueen\n";
     std::cout << "};\n";
 }
 

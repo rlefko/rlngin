@@ -171,18 +171,6 @@ static const EvalParams kDefaultEvalParams = {
     S( -5,  -8),            // PawnIslandPenalty (per island beyond the first)
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
 
-    // KingProtector: penalty per chebyshev square between the minor and
-    // our king. Eg starts at zero so endgame centralization is not
-    // discouraged before the tuner gets to weigh in.
-    {S(-8, 0), S(-6, 0)}, // KingProtector (Knight, Bishop)
-
-    S(22, 0), // LongDiagonalBishop
-
-    S(6, 11), // RookOnQueenFile
-
-    S(16, 11), // KnightOnQueen
-
-    S(6, 5), // SliderOnQueen
 };
 // clang-format on
 

@@ -151,41 +151,6 @@ struct EvalParams {
     // field, the default, the use in evaluatePawns, and the tuner entry
     // together.
     // Score PhalanxBonus;
-
-    // Per-chebyshev-square penalty pulling each of our minors toward our
-    // own king. Indexed by piece type so knight and bishop can carry
-    // different magnitudes -- knights fall apart at long range while
-    // long-diagonal bishops still see the king zone, so the tuner can
-    // separate the two pulls. Held to non-positive bounds in the tuner
-    // so the term stays a penalty under coordinate descent.
-    Score KingProtector[2]; // [0] = Knight, [1] = Bishop
-
-    // Bonus for a bishop that sits on one of the two long diagonals
-    // (a1-h8 or a8-h1) and rakes at least two of the four central
-    // squares (d4, e4, d5, e5) without a pawn structurally blocking the
-    // diagonal. Captures the classic "fianchetto rake" motif that
-    // mobility alone scores too coarsely.
-    Score LongDiagonalBishop;
-
-    // Bonus for a rook that shares its file with any queen on the
-    // board. The semi-open-file bonus already covers the case where
-    // only enemy pawns sit on the file, but it does not directly
-    // reward a rook piling pressure on a queen file.
-    Score RookOnQueenFile;
-
-    // Pre-threat bonus per safe square from which one of our knights
-    // could hop next move to attack the enemy queen. Distinct from the
-    // ThreatByMinor[Queen] term which counts current attacks; this
-    // captures the fork-in-one-move motif knights are uniquely good at.
-    Score KnightOnQueen;
-
-    // Pre-threat bonus per safe square from which one of our bishops
-    // or rooks could move next to attack the enemy queen. Sliders are
-    // less likely to fork the queen than knights, so the magnitude is
-    // expected to stay below KnightOnQueen, and the term is held below
-    // ThreatByMinor[Queen] / ThreatByRook[Queen] so the pre-threat
-    // never outweighs the realized attack.
-    Score SliderOnQueen;
 };
 
 extern EvalParams evalParams;

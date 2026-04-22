@@ -62,20 +62,6 @@ static const int KingDangerDivEg = 8;
 static const int KingDangerMgCap = 240;
 static const int KingDangerEgCap = 96;
 
-// Long-diagonal masks for the LongDiagonalBishop term and the central
-// four squares the rake is measured against. Computed at file scope
-// because they are pure constants of the board geometry; folding them
-// into a runtime helper would just hide the bit pattern behind a name.
-static const Bitboard LongDiagonalA1H8BB = (1ULL << 0) | (1ULL << 9) | (1ULL << 18) |
-                                           (1ULL << 27) | (1ULL << 36) | (1ULL << 45) |
-                                           (1ULL << 54) | (1ULL << 63);
-static const Bitboard LongDiagonalA8H1BB = (1ULL << 56) | (1ULL << 49) | (1ULL << 42) |
-                                           (1ULL << 35) | (1ULL << 28) | (1ULL << 21) |
-                                           (1ULL << 14) | (1ULL << 7);
-static const Bitboard LongDiagonalsBB = LongDiagonalA1H8BB | LongDiagonalA8H1BB;
-static const Bitboard CenterFourBB =
-    (1ULL << 27) | (1ULL << 28) | (1ULL << 35) | (1ULL << 36);
-
 // Stockfish-lineage quadratic imbalance tables. Indexed by [pt1][pt2] with
 // pt in { BishopPair=0, Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5 }. The
 // "ours" table captures synergy between own-side pieces (e.g. knight value
@@ -445,14 +431,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 !(PawnSpanMask[c][sq] & theirPawns)) {
                 scores[c] += evalParams.KnightOutpostBonus;
             }
-
-            // King protector: a knight far from our king is too distant to
-            // contribute to the defense. Penalty grows linearly with the
-            // chebyshev distance so the term keeps a smooth gradient under
-            // coordinate descent.
-            if (kingSq >= 0) {
-                scores[c] += evalParams.KingProtector[0] * chebyshev(sq, kingSq);
-            }
         }
 
         Bitboard bishops = board.byPiece[Bishop] & board.byColor[c];
@@ -470,23 +448,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
             int blockingPawns = popcount(ourPawns & sameColorSquares);
             scores[c] += evalParams.BadBishopPenalty * blockingPawns;
-
-            if (kingSq >= 0) {
-                scores[c] += evalParams.KingProtector[1] * chebyshev(sq, kingSq);
-            }
-
-            // Long-diagonal bishop: a bishop sitting on either long
-            // diagonal that rakes at least two of the four central
-            // squares unobstructed by any pawn. Using the union of
-            // pawns as the blocker set lets friendly or enemy non-pawn
-            // pieces sit on the diagonal without killing the bonus,
-            // matching the motif we want to reward.
-            if (squareBB(sq) & LongDiagonalsBB) {
-                Bitboard allPawns = board.byPiece[Pawn];
-                if (popcount(bishopAttacks(sq, allPawns) & CenterFourBB) >= 2) {
-                    scores[c] += evalParams.LongDiagonalBishop;
-                }
-            }
         }
 
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
@@ -502,16 +463,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += evalParams.RookOpenFileBonus;
             } else if (noOurPawns) {
                 scores[c] += evalParams.RookSemiOpenFileBonus;
-            }
-
-            // Rook on queen file: a rook that shares its file with any
-            // queen, friend or foe, piles tactical pressure that the
-            // open- and semi-open-file bonuses do not cover when a
-            // queen sits on the file. Counted separately so the tuner
-            // can find a magnitude orthogonal to the file-emptiness
-            // bonuses above.
-            if (fileMask & board.byPiece[Queen]) {
-                scores[c] += evalParams.RookOnQueenFile;
             }
 
             // Rook on the seventh: either targets enemy pawns on the 7th
@@ -1021,64 +972,6 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard pushVictims =
             pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
         scores[us] += evalParams.SafePawnPush * popcount(pushVictims);
-
-        // Knight-on-queen pre-threat: count safe landing squares from
-        // which one of our knights could hop next move to attack the
-        // enemy queen. Distinct from ThreatByMinor[Queen] which scores
-        // current attacks; this term captures the fork-in-one-move
-        // motif that knights are uniquely good at. Safe squares are
-        // those not attacked by enemy pawns and not occupied by our
-        // own pieces -- the standard pre-threat filter. The knight
-        // graph has no two-squares-attacking-the-same-queen edge
-        // adjacency, so this set cannot double-count with the already-
-        // attacking case that ThreatByMinor[Queen] scores.
-        Bitboard theirQueens = theirPieces & board.byPiece[Queen];
-        if (theirQueens) {
-            Bitboard safeSquares = ~ctx.attackedBy[them][Pawn] & ~board.byColor[us];
-            Bitboard knightHops = 0;
-            Bitboard queens = theirQueens;
-            while (queens) {
-                int qsq = popLsb(queens);
-                knightHops |= KnightAttacks[qsq];
-            }
-            Bitboard knightForks = knightHops & ctx.attackedBy[us][Knight] & safeSquares;
-            scores[us] += evalParams.KnightOnQueen * popcount(knightForks);
-
-            // Slider-on-queen pre-threat: count landing squares per
-            // slider, skipping only queens that slider already attacks
-            // right now. The earlier whole-piece skip dropped genuine
-            // pre-threats in promoted-queen positions where a bishop or
-            // rook attacked one queen already but could move next to
-            // attack a second queen.
-            int sliderForkCount = 0;
-            Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
-            while (ourBishops) {
-                int sq = popLsb(ourBishops);
-                Bitboard bishopMoves = bishopAttacks(sq, board.occupied) & safeSquares;
-                Bitboard bishopForks = 0;
-                Bitboard queensForBishop = theirQueens;
-                while (queensForBishop) {
-                    int qsq = popLsb(queensForBishop);
-                    if (bishopMoves & squareBB(qsq)) continue;
-                    bishopForks |= bishopMoves & bishopAttacks(qsq, board.occupied);
-                }
-                sliderForkCount += popcount(bishopForks);
-            }
-            Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
-            while (ourRooks) {
-                int sq = popLsb(ourRooks);
-                Bitboard rookMoves = rookAttacks(sq, board.occupied) & safeSquares;
-                Bitboard rookForks = 0;
-                Bitboard queensForRook = theirQueens;
-                while (queensForRook) {
-                    int qsq = popLsb(queensForRook);
-                    if (rookMoves & squareBB(qsq)) continue;
-                    rookForks |= rookMoves & rookAttacks(qsq, board.occupied);
-                }
-                sliderForkCount += popcount(rookForks);
-            }
-            scores[us] += evalParams.SliderOnQueen * sliderForkCount;
-        }
     }
 }
 
