@@ -167,6 +167,20 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("KingNoQueenDiscountMg", &evalParams.KingNoQueenDiscount, true,
                                     0, 200, 10.0, 4.0));
 
+    // --- Rook coordination with passed pawns (Tarrasch). Bonus-signed per
+    // the usual "bonus stays a bonus" invariant, sized small because the
+    // eval applies them per rook-passer pair and a doubled rook lift can
+    // credit twice on the same file. ---
+    out.push_back(makeScoreHalfSpec("RookBehindOurPasserBonusMg",
+                                    &evalParams.RookBehindOurPasserBonus, true, 0, 60, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookBehindOurPasserBonusEg",
+                                    &evalParams.RookBehindOurPasserBonus, false, 0, 80, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookBehindTheirPasserBonusMg",
+                                    &evalParams.RookBehindTheirPasserBonus, true, 0, 60, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookBehindTheirPasserBonusEg",
+                                    &evalParams.RookBehindTheirPasserBonus, false, 0, 80, 6.0,
+                                    2.0));
+
     return out;
 }
 

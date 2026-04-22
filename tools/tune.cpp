@@ -151,6 +151,8 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("BishopOutpostBonus", &evalParams.BishopOutpostBonus);
     out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
                    nonPositive()}); // mg only, must stay a penalty
+    addMgEg("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus);
+    addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus);
 
     // --- Bishop pair ---
     addMgEg("BishopPair", &evalParams.BishopPair);

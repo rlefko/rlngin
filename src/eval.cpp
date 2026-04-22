@@ -689,7 +689,8 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
         Color them = static_cast<Color>(c ^ 1);
 
         Bitboard ourPassers = passers[us];
-        if (!ourPassers) continue;
+        Bitboard theirPassers = passers[them];
+        if (!ourPassers && !theirPassers) continue;
 
         Bitboard ourKingBB = board.byPiece[King] & board.byColor[us];
         Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
@@ -727,6 +728,34 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
                 // Only a truly safe stop square counts as supported -- if
                 // the enemy attacks it too, the push loses the pawn.
                 scores[us] += evalParams.PassedSupportedBonus[relRank];
+            }
+        }
+
+        // Tarrasch's rule: rooks are strongest behind passed pawns. A rook
+        // on the same file as a friendly passer, positioned on the passer's
+        // rear, escorts it toward promotion while shadowing any blockader;
+        // the same rook planted behind an enemy passer chases it down from
+        // the rear and ties the defender to its pawn. "Behind our passer"
+        // uses the enemy's forward-file mask (squares below the passer
+        // from our side); "behind their passer" uses our own forward-file
+        // mask (squares above the enemy passer).
+        Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
+        if (ourRooks) {
+            Bitboard ownPasserIter = ourPassers;
+            while (ownPasserIter) {
+                int sq = popLsb(ownPasserIter);
+                int behind = popcount(ourRooks & ForwardFileBB[them][sq]);
+                if (behind) {
+                    scores[us] += evalParams.RookBehindOurPasserBonus * behind;
+                }
+            }
+            Bitboard enemyPasserIter = theirPassers;
+            while (enemyPasserIter) {
+                int sq = popLsb(enemyPasserIter);
+                int behind = popcount(ourRooks & ForwardFileBB[us][sq]);
+                if (behind) {
+                    scores[us] += evalParams.RookBehindTheirPasserBonus * behind;
+                }
             }
         }
 

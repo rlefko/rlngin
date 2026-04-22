@@ -555,6 +555,55 @@ TEST_CASE("Eval: symmetric pawn structure leaves only the tempo bonus", "[eval][
     CHECK(evaluate(board) == 0);
 }
 
+TEST_CASE("Eval: rook behind passed pawn fires the Tarrasch bonus", "[eval][pawn]") {
+    Board board;
+
+    auto passedExtrasLine = [](const Board &b) {
+        std::ostringstream os;
+        evaluateVerbose(b, os);
+        const std::string text = os.str();
+        size_t pos = text.find("Passed extras");
+        REQUIRE(pos != std::string::npos);
+        size_t eol = text.find('\n', pos);
+        return text.substr(pos, eol - pos);
+    };
+
+    auto passedExtrasDelta = [&](const std::string &withRookFen, const std::string &withoutRookFen,
+                                 int defaultMgBonus, int defaultEgBonus) {
+        Board b;
+        b.setFen(withRookFen);
+        std::string withLine = passedExtrasLine(b);
+        b.setFen(withoutRookFen);
+        std::string withoutLine = passedExtrasLine(b);
+
+        auto parseMg = [](const std::string &line) {
+            size_t mg = line.find("mg=");
+            REQUIRE(mg != std::string::npos);
+            return std::atoi(line.c_str() + mg + 3);
+        };
+        auto parseEg = [](const std::string &line) {
+            size_t eg = line.find("eg=");
+            REQUIRE(eg != std::string::npos);
+            return std::atoi(line.c_str() + eg + 3);
+        };
+
+        CHECK(parseMg(withLine) - parseMg(withoutLine) == defaultMgBonus);
+        CHECK(parseEg(withLine) - parseEg(withoutLine) == defaultEgBonus);
+    };
+
+    // Rook behind a friendly passer: white passer on a5, with a white rook
+    // on a1 (behind) versus a white rook planted off the passer's file.
+    // The tunable bonus must show up cleanly in the "Passed extras"
+    // bucket, isolated from PST and mobility differences.
+    passedExtrasDelta("4k3/8/8/P7/8/8/8/R3K3 w - - 0 1", "4k3/8/8/P7/8/8/8/4K2R w - - 0 1", 10, 20);
+
+    // Rook behind an enemy passer: black passer on a4, with a white rook
+    // on a8 (behind the enemy pawn from black's advancing direction)
+    // versus the same rook off the passer's file. The "chase from the
+    // rear" bonus lives in the same bucket.
+    passedExtrasDelta("R3k3/8/8/8/p7/8/8/4K3 w - - 0 1", "4k2R/8/8/8/p7/8/8/4K3 w - - 0 1", 5, 15);
+}
+
 TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
     Board board;
 

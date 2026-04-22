@@ -59,6 +59,15 @@ struct EvalParams {
     Score BishopOutpostBonus;
     Score TrappedRookByKingPenalty;
 
+    // Tarrasch's rule: rooks belong behind passed pawns. Credit a small
+    // bonus when a friendly rook shares a file with a passed pawn and
+    // sits behind it relative to the pawn's advancing direction. The
+    // "our" case rewards escorting a friendly passer toward promotion;
+    // the "their" case rewards chasing an enemy passer from behind,
+    // which is the same idea applied to the defender.
+    Score RookBehindOurPasserBonus;
+    Score RookBehindTheirPasserBonus;
+
     // Piece pair synergy.
     Score BishopPair;
 
