@@ -71,14 +71,14 @@ TunableSpec makeScoreHalfSpec(std::string name, Score *target, bool isMg, int mi
 //   * SEE*Coef fields are stored as positive magnitudes; the negation to
 //     form the pruning threshold happens at the call site in search.cpp,
 //     so the stored value must stay non-negative.
-//   * Every eval term in this list is a "Bonus" or "ThreatBy" scalar,
-//     which the engine adds with a positive sign. Locking min >= 0 keeps
-//     SPSA from driving a bonus across zero and accidentally turning it
-//     into a penalty (the "bonuses stay bonuses" prior that the Texel
-//     tuner enforces for symmetrically-named penalties).
-// No scalar in the current list is a "Penalty", so no non-positive bounds
-// are needed here; that side of the constraint catalog lives in the Texel
-// tuner instead.
+//   * Every eval term in this list named "Bonus" or "ThreatBy" is added
+//     with a positive sign. Locking min >= 0 keeps SPSA from driving a
+//     bonus across zero and accidentally turning it into a penalty (the
+//     "bonuses stay bonuses" prior that the Texel tuner enforces for
+//     symmetrically-named penalties).
+//   * Scalars named "Penalty" mirror the same invariant in the opposite
+//     direction: max <= 0 keeps the sign and "penalties stay penalties"
+//     holds through every SPSA perturbation.
 std::vector<TunableSpec> buildRegistry() {
     std::vector<TunableSpec> out;
     out.reserve(20);
@@ -104,6 +104,7 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeIntSpec("FpDepth", &searchParams.FpDepth, 120, 300, 10.0, 4.0));
     out.push_back(makeIntSpec("SeeCaptureCoef", &searchParams.SeeCaptureCoef, 25, 90, 4.0, 1.5));
     out.push_back(makeIntSpec("SeeQuietCoef", &searchParams.SeeQuietCoef, 60, 200, 8.0, 3.0));
+    out.push_back(makeIntSpec("QsDeltaMargin", &searchParams.QsDeltaMargin, 300, 1200, 30.0, 10.0));
 
     // --- LMR table coefficients (scaled x100, table is rebuilt on write) ---
     // c_end values here are deliberately larger than the prior spec: LmrBase
@@ -180,6 +181,36 @@ std::vector<TunableSpec> buildRegistry() {
                                     60, 5.0, 2.0));
     out.push_back(makeScoreHalfSpec("KingNoQueenDiscountMg", &evalParams.KingNoQueenDiscount, true,
                                     0, 200, 10.0, 4.0));
+
+    // --- Rook coordination with passed pawns (Tarrasch). Bonus-signed per
+    // the usual "bonus stays a bonus" invariant, sized small because the
+    // eval applies them per rook-passer pair and a doubled rook lift can
+    // credit twice on the same file. ---
+    out.push_back(makeScoreHalfSpec("RookBehindOurPasserBonusMg",
+                                    &evalParams.RookBehindOurPasserBonus, true, 0, 60, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookBehindOurPasserBonusEg",
+                                    &evalParams.RookBehindOurPasserBonus, false, 0, 80, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookBehindTheirPasserBonusMg",
+                                    &evalParams.RookBehindTheirPasserBonus, true, 0, 60, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookBehindTheirPasserBonusEg",
+                                    &evalParams.RookBehindTheirPasserBonus, false, 0, 80, 6.0,
+                                    2.0));
+
+    // --- Minor behind pawn: small bonus applied per shielded minor,
+    // sized in line with other per-piece activity scalars. ---
+    out.push_back(makeScoreHalfSpec("MinorBehindPawnBonusMg", &evalParams.MinorBehindPawnBonus,
+                                    true, 0, 60, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("MinorBehindPawnBonusEg", &evalParams.MinorBehindPawnBonus,
+                                    false, 0, 60, 5.0, 2.0));
+
+    // --- Pawn islands penalty: penalty-signed so SPSA cannot flip it
+    // into a bonus. The first penalty-valued scalar exposed via SPSA, so
+    // the bounds follow the "bonuses stay bonuses" invariant inverted:
+    // maxValue pinned at 0 keeps the sign. ---
+    out.push_back(makeScoreHalfSpec("PawnIslandPenaltyMg", &evalParams.PawnIslandPenalty, true, -40,
+                                    0, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("PawnIslandPenaltyEg", &evalParams.PawnIslandPenalty, false,
+                                    -60, 0, 5.0, 2.0));
 
     return out;
 }

@@ -287,6 +287,24 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
         Bitboard theirPawns = (c == White) ? blackPawns : whitePawns;
         int sign = (c == White) ? 1 : -1;
 
+        // Pawn islands: project our pawns down to an 8-bit file mask
+        // (one bit per file that contains at least one friendly pawn),
+        // then count runs of set bits. Each run is an island; the
+        // penalty fires once per extra island beyond the first since
+        // one contiguous chain is the ideal structure. Cheap to fold
+        // into the pawn hash because the computation depends only on
+        // which files have pawns, which is a strict subset of the
+        // information already keyed by pawnKey.
+        Bitboard folded = ourPawns;
+        folded |= folded >> 32;
+        folded |= folded >> 16;
+        folded |= folded >> 8;
+        uint8_t fileBits = static_cast<uint8_t>(folded & 0xFFu);
+        int islandCount = popcount(static_cast<Bitboard>(fileBits & ~(fileBits >> 1)));
+        if (islandCount > 1) {
+            score += sign * evalParams.PawnIslandPenalty * (islandCount - 1);
+        }
+
         Bitboard pawns = ourPawns;
         while (pawns) {
             int sq = popLsb(pawns);
@@ -403,6 +421,19 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
         bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
         bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
+
+        // Minor behind pawn: a friendly knight or bishop sitting directly
+        // one rank behind a friendly pawn is shielded against frontal
+        // attacks and cannot be easily chased by an enemy pawn on the
+        // same file. Pulling the pawn bitboard back one rank aligns the
+        // pawns with their shielded minor, so a single AND counts every
+        // shielded pair cleanly.
+        Bitboard ourMinors = (board.byPiece[Knight] | board.byPiece[Bishop]) & board.byColor[c];
+        Bitboard pawnsPulledBack = (c == White) ? (ourPawns >> 8) : (ourPawns << 8);
+        int shieldedMinors = popcount(ourMinors & pawnsPulledBack);
+        if (shieldedMinors) {
+            scores[c] += evalParams.MinorBehindPawnBonus * shieldedMinors;
+        }
 
         Bitboard knights = board.byPiece[Knight] & board.byColor[c];
         while (knights) {
@@ -756,7 +787,8 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
         Color them = static_cast<Color>(c ^ 1);
 
         Bitboard ourPassers = passers[us];
-        if (!ourPassers) continue;
+        Bitboard theirPassers = passers[them];
+        if (!ourPassers && !theirPassers) continue;
 
         Bitboard ourKingBB = board.byPiece[King] & board.byColor[us];
         Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
@@ -794,6 +826,34 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
                 // Only a truly safe stop square counts as supported -- if
                 // the enemy attacks it too, the push loses the pawn.
                 scores[us] += evalParams.PassedSupportedBonus[relRank];
+            }
+        }
+
+        // Tarrasch's rule: rooks are strongest behind passed pawns. A rook
+        // on the same file as a friendly passer, positioned on the passer's
+        // rear, escorts it toward promotion while shadowing any blockader;
+        // the same rook planted behind an enemy passer chases it down from
+        // the rear and ties the defender to its pawn. "Behind our passer"
+        // uses the enemy's forward-file mask (squares below the passer
+        // from our side); "behind their passer" uses our own forward-file
+        // mask (squares above the enemy passer).
+        Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
+        if (ourRooks) {
+            Bitboard ownPasserIter = ourPassers;
+            while (ownPasserIter) {
+                int sq = popLsb(ownPasserIter);
+                int behind = popcount(ourRooks & ForwardFileBB[them][sq]);
+                if (behind) {
+                    scores[us] += evalParams.RookBehindOurPasserBonus * behind;
+                }
+            }
+            Bitboard enemyPasserIter = theirPassers;
+            while (enemyPasserIter) {
+                int sq = popLsb(enemyPasserIter);
+                int behind = popcount(ourRooks & ForwardFileBB[us][sq]);
+                if (behind) {
+                    scores[us] += evalParams.RookBehindTheirPasserBonus * behind;
+                }
             }
         }
 

@@ -31,6 +31,12 @@ struct SearchParams {
     int SeeCaptureCoef;
     int SeeQuietCoef;
 
+    // Qsearch delta-pruning margin: a capture (or the node as a whole)
+    // is pruned when standPat + maxPossibleGain + QsDeltaMargin <= alpha.
+    // Captures the positional slack between a pure material swap and the
+    // realistic best-case eval after the exchange resolves.
+    int QsDeltaMargin;
+
     // Late move reductions table: scaled integers that are divided by 100
     // at table-fill time. Formula:
     //   lmrReductions[d][m] = int(LmrBase/100 + log(d) * log(m) / (LmrDivisor/100))

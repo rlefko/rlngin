@@ -128,6 +128,9 @@ static const EvalParams kDefaultEvalParams = {
     S( 81,  30), // KnightOutpostBonus
     S( 78,  45), // BishopOutpostBonus
     S( -7,   0), // TrappedRookByKingPenalty
+    S( 10,  20), // RookBehindOurPasserBonus
+    S(  5,  15), // RookBehindTheirPasserBonus
+    S( 10,   5), // MinorBehindPawnBonus
     S(  8,  74), // BishopPair
 
     {S(68, -12), S(52, -13)},                        // PawnShieldBonus
@@ -165,6 +168,7 @@ static const EvalParams kDefaultEvalParams = {
     S( -5, -10), // WeakUnopposedPenalty
     S( -8, -15), // DoubledIsolatedPenalty
     {S(-5, -2), S(-2, -1)}, // BlockedPawnPenalty (rel rank 5, 6)
+    S( -5,  -8),            // PawnIslandPenalty (per island beyond the first)
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
 
     S(18, 3), // MinorBehindPawn
