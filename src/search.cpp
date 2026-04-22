@@ -533,20 +533,23 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     } else {
         staticEval = evaluate(board);
     }
-    state.staticEvals[ply] = staticEval;
-
-    // Pawn-structure correction folded on top of the raw static eval. The raw
-    // value still drives improving detection and is what we store in TT.
+    // Correction history folded onto the raw static eval. The raw value is
+    // still what we store in TT; the corrected value is what every eval-gated
+    // decision in this node reads, and it is also what we stash in the search
+    // stack so the improving comparison stays in the same units.
     int corrEval = inCheck ? -INF_SCORE : correctedEval(staticEval, board, state, ply);
+    state.staticEvals[ply] = inCheck ? -INF_SCORE : corrEval;
 
-    // Determine if the position is improving (eval better than 2 plies ago)
+    // Determine if the position is improving (corrected eval better than 2
+    // plies ago). Using corrected on both sides keeps improving aligned with
+    // the pruning gates that also read corrEval.
     bool improving = false;
     if (inCheck) {
         improving = false;
     } else if (ply >= 2 && state.staticEvals[ply - 2] != -INF_SCORE) {
-        improving = staticEval > state.staticEvals[ply - 2];
+        improving = corrEval > state.staticEvals[ply - 2];
     } else if (ply >= 4 && state.staticEvals[ply - 4] != -INF_SCORE) {
-        improving = staticEval > state.staticEvals[ply - 4];
+        improving = corrEval > state.staticEvals[ply - 4];
     } else {
         improving = true;
     }
@@ -982,7 +985,10 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     // aging replacement rule can discount entries from prior searches.
     tt.new_search();
     state.searchKeys[0] = board.key;
-    state.staticEvals[0] = evaluate(board);
+    // Seed the stack with the corrected root eval so the ply=2 improving
+    // comparison reads the same units as the interior-node writes.
+    int rootRawEval = evaluate(board);
+    state.staticEvals[0] = correctedEval(rootRawEval, board, state, 0);
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = computeTimeAllocation(board, limits);
 
