@@ -52,12 +52,11 @@ struct PickedMove {
 // heuristics (TT, MVV-LVA + SEE, killer, counter-move, butterfly +
 // three-tier continuation history) feed into the same scoring that the
 // previous score-and-sort implementation used, so move ordering stays
-// bit-identical except for two deliberate changes: bad captures are served
-// after quiets instead of being sorted into the same pass, and quiets are
-// selected via incremental max-selection instead of a full std::sort so
-// partial consumption stays cheap on early cutoffs.
+// compatible with the old single-pass sort. The single deliberate ordering
+// change is that bad captures are served after quiets instead of being
+// sorted into the same pass, matching the modern convention.
 class MovePicker {
-public:
+  public:
     // Main-search constructor. `board` is captured by reference because the
     // picker may call `isLegalMove` internally, which requires a mutable
     // board. `state` / `ply` drive killer, counter-move, and continuation
@@ -77,7 +76,7 @@ public:
 
     PickPhase currentPhase() const { return phase_; }
 
-private:
+  private:
     Board &board_;
     const SearchState &state_;
     int ply_;
@@ -109,9 +108,9 @@ private:
     void genCaptures();
     void genQuiets();
 
-    // Incrementally pick the max-score entry from a buffer. Selection sort
-    // is cheaper than a full std::sort when the search cuts off early and
-    // matches the Stockfish / Ethereal convention.
+    // Walk the pre-sorted buffer one entry at a time. Captures and quiets
+    // are sorted up front so selection during iteration is just a cursor
+    // bump.
     bool selectNextCapture(PickedMove &out);
     bool selectNextQuiet(PickedMove &out);
     bool selectNextBadCapture(PickedMove &out);

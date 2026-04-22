@@ -13,7 +13,7 @@ bool isSquareAttacked(const Board &board, int sq, Color byColor) {
     return false;
 }
 
-static bool isLegalMove(Board &board, const Move &m) {
+bool isLegalMove(Board &board, const Move &m) {
     Color us = board.sideToMove;
     UndoInfo undo = board.makeMove(m);
     Bitboard kingBB = board.byPiece[King] & board.byColor[us];

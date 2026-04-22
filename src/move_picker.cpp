@@ -3,6 +3,7 @@
 #include "eval.h"
 #include "movegen.h"
 #include "see.h"
+#include <algorithm>
 #include <cstdlib>
 
 // Tier offsets for multi-ply continuation history: 1-ply, 2-ply, and
@@ -192,18 +193,14 @@ bool isPseudoLegalMove(const Board &board, const Move &m) {
     }
 }
 
-// Strictly checks whether `m` is a fully legal move in `board`. Used to
-// validate TT, killer, and counter moves before handing them to the main
-// search. Runs one makeMove / unmakeMove round trip when the pseudo-legal
-// screen passes.
+// Strictly checks whether `m` is a fully legal move in `board`. The
+// pseudo-legal screen guards the makeMove call inside `isLegalMove`
+// against garbage TT moves that would otherwise write into arbitrary
+// board cells, and the real legality test then confirms the move also
+// satisfies check / pin constraints.
 static bool isFullyLegal(Board &board, const Move &m) {
     if (!isPseudoLegalMove(board, m)) return false;
-    Color us = board.sideToMove;
-    UndoInfo undo = board.makeMove(m);
-    Bitboard kingBB = board.byPiece[King] & board.byColor[us];
-    bool legal = kingBB && !isSquareAttacked(board, lsb(kingBB), (us == White) ? Black : White);
-    board.unmakeMove(m, undo);
-    return legal;
+    return isLegalMove(board, m);
 }
 
 MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck)
@@ -255,6 +252,8 @@ void MovePicker::genCaptures() {
         int score = scoreMove(m, board_, ttMove_, ply_, state_, nullptr);
         caps_[numCaps_++] = {score, 0, m};
     }
+    std::sort(caps_.begin(), caps_.begin() + numCaps_,
+              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 }
 
 void MovePicker::genQuiets() {
@@ -270,33 +269,21 @@ void MovePicker::genQuiets() {
         int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist);
         quiets_[numQuiets_++] = {score, hist, m};
     }
+    std::sort(quiets_.begin(), quiets_.begin() + numQuiets_,
+              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 }
 
 bool MovePicker::selectNextCapture(PickedMove &out) {
-    // Selection-sort one step: find the highest-score good capture, swap
-    // to the front, consume it. Bad captures (SEE < 0, signalled by the
-    // scorer scoring below zero) are stashed for the later BadCaptures
-    // phase without being removed from `caps_`.
+    // Captures are pre-sorted descending by score in `genCaptures`, so a
+    // linear walk is enough. Good captures (SEE >= 0) are served inline;
+    // bad captures are indexed for the later BadCaptures phase without
+    // being removed from `caps_` so their ordering is preserved.
     while (capCursor_ < numCaps_) {
-        int bestIdx = capCursor_;
-        for (int i = capCursor_ + 1; i < numCaps_; i++) {
-            if (caps_[i].score > caps_[bestIdx].score) bestIdx = i;
-        }
-        ScoredMove picked = caps_[bestIdx];
-        caps_[bestIdx] = caps_[capCursor_];
-        caps_[capCursor_] = picked;
-        capCursor_++;
-
-        // Good captures score at 5,000,000 + SEE + tweaks; bad captures
-        // score at -2,000,000 + SEE. Queen promotions score 9M. The 0
-        // threshold separates good-enough from bad cleanly, and queen
-        // promotions stay on the good side because their score is well
-        // above zero.
+        const ScoredMove &picked = caps_[capCursor_++];
         if (picked.score >= 0) {
             out = {picked.move, picked.score, 0, PickPhase::GoodCaptures};
             return true;
         }
-        // Remember this entry for the BadCaptures phase.
         if (numBadCaps_ < static_cast<int>(badCapIdx_.size())) {
             badCapIdx_[numBadCaps_++] = capCursor_ - 1;
         }
@@ -305,19 +292,11 @@ bool MovePicker::selectNextCapture(PickedMove &out) {
 }
 
 bool MovePicker::selectNextQuiet(PickedMove &out) {
-    while (quietCursor_ < numQuiets_) {
-        int bestIdx = quietCursor_;
-        for (int i = quietCursor_ + 1; i < numQuiets_; i++) {
-            if (quiets_[i].score > quiets_[bestIdx].score) bestIdx = i;
-        }
-        ScoredMove picked = quiets_[bestIdx];
-        quiets_[bestIdx] = quiets_[quietCursor_];
-        quiets_[quietCursor_] = picked;
-        quietCursor_++;
-        out = {picked.move, picked.score, picked.histScore, PickPhase::Quiets};
-        return true;
-    }
-    return false;
+    // Quiets are pre-sorted descending by score in `genQuiets`.
+    if (quietCursor_ >= numQuiets_) return false;
+    const ScoredMove &picked = quiets_[quietCursor_++];
+    out = {picked.move, picked.score, picked.histScore, PickPhase::Quiets};
+    return true;
 }
 
 bool MovePicker::selectNextBadCapture(PickedMove &out) {
@@ -437,16 +416,10 @@ bool MovePicker::next(PickedMove &out, const Move &skipMove) {
         case PickPhase::QsCaptures: {
             // Qsearch reuses the capture scoring pipeline but streams
             // everything, good or bad, because the caller applies its own
-            // SEE and delta-pruning gates per capture.
+            // SEE and delta-pruning gates per capture. The buffer is
+            // already sorted by `genCaptures` so a linear walk suffices.
             while (capCursor_ < numCaps_) {
-                int bestIdx = capCursor_;
-                for (int i = capCursor_ + 1; i < numCaps_; i++) {
-                    if (caps_[i].score > caps_[bestIdx].score) bestIdx = i;
-                }
-                ScoredMove picked = caps_[bestIdx];
-                caps_[bestIdx] = caps_[capCursor_];
-                caps_[capCursor_] = picked;
-                capCursor_++;
+                const ScoredMove &picked = caps_[capCursor_++];
                 if (sameMove(picked.move, ttMove_) || sameMove(picked.move, skipMove)) continue;
                 out = {picked.move, picked.score, 0, PickPhase::QsCaptures};
                 return true;
@@ -460,7 +433,8 @@ bool MovePicker::next(PickedMove &out, const Move &skipMove) {
             // search can find a check escape. We reuse the quiets buffer
             // as a scratch list because it is otherwise unused on this
             // branch, and run the full movegen path through the normal
-            // scoring routine.
+            // scoring routine. Sort up front so the QsEvasions phase can
+            // do a straight linear walk.
             std::vector<Move> all = generateLegalMoves(board_);
             numQuiets_ = 0;
             for (const Move &m : all) {
@@ -469,20 +443,15 @@ bool MovePicker::next(PickedMove &out, const Move &skipMove) {
                 int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist);
                 quiets_[numQuiets_++] = {score, hist, m};
             }
+            std::sort(quiets_.begin(), quiets_.begin() + numQuiets_,
+                      [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
             phase_ = PickPhase::QsEvasions;
             break;
         }
 
         case PickPhase::QsEvasions: {
             while (quietCursor_ < numQuiets_) {
-                int bestIdx = quietCursor_;
-                for (int i = quietCursor_ + 1; i < numQuiets_; i++) {
-                    if (quiets_[i].score > quiets_[bestIdx].score) bestIdx = i;
-                }
-                ScoredMove picked = quiets_[bestIdx];
-                quiets_[bestIdx] = quiets_[quietCursor_];
-                quiets_[quietCursor_] = picked;
-                quietCursor_++;
+                const ScoredMove &picked = quiets_[quietCursor_++];
                 if (sameMove(picked.move, ttMove_) || sameMove(picked.move, skipMove)) continue;
                 out = {picked.move, picked.score, picked.histScore, PickPhase::QsEvasions};
                 return true;

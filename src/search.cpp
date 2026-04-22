@@ -1,6 +1,7 @@
 #include "search.h"
 #include "bitboard.h"
 #include "eval.h"
+#include "move_picker.h"
 #include "movegen.h"
 #include "search_params.h"
 #include "see.h"
@@ -26,15 +27,6 @@ static TranspositionTable tt(16);
 
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
-// Pairs a move with its ordering score so the sort comparator does not
-// re-evaluate scoreMove on every comparison. The quiet history portion is
-// captured alongside so the LMR reduction term can read it directly.
-struct ScoredMove {
-    int score;
-    int historyScore;
-    Move move;
-};
-
 // Saturating gravity update used by every history table. The gravity term
 // pulls `entry` toward zero in proportion to its current magnitude; clamping
 // into `[-max, max]` prevents transient overshoot from runaway bonuses.
@@ -48,22 +40,9 @@ template <typename T> static void applyHistoryBonus(T &entry, int bonus, int max
 }
 
 // Tier offsets for multi-ply continuation history: 1-ply, 2-ply, and 4-ply back.
+// Kept in sync with the definition in move_picker.cpp; both files must index
+// the same entries because scoring and updating share the table.
 static constexpr int CONT_HIST_OFFSETS[3] = {1, 2, 4};
-
-// Sum the continuation-history contribution across all tiers for (currPt, currTo)
-// at the given ply. Tiers whose offset exceeds ply are skipped.
-static int contHistoryScore(const SearchState &state, int ply, PieceType currPt, int currTo) {
-    int score = 0;
-    for (int t = 0; t < 3; t++) {
-        int off = CONT_HIST_OFFSETS[t];
-        if (ply >= off) {
-            PieceType prevPt = state.movedPiece[ply - off];
-            int prevTo = state.moveStack[ply - off].to;
-            score += state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo];
-        }
-    }
-    return score;
-}
 
 // Adjust a raw static eval by the accumulated correction history for the side
 // to move. Every table contributes via a tunable weight, divided by a shared
@@ -174,91 +153,6 @@ static void updateContHistoryAll(SearchState &state, int ply, PieceType currPt, 
     }
 }
 
-static bool isCapture(const Board &board, const Move &m) {
-    if (board.squares[m.to].type != None) return true;
-    if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
-        board.enPassantSquare != -1)
-        return true;
-    return false;
-}
-
-static PieceType capturedType(const Board &board, const Move &m) {
-    if (board.squares[m.to].type != None) return board.squares[m.to].type;
-    if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
-        board.enPassantSquare != -1)
-        return Pawn;
-    return None;
-}
-
-static int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
-                     const SearchState &state, int *outQuietHistory = nullptr) {
-    PieceType pt = board.squares[m.from].type;
-    bool capture = isCapture(board, m);
-    bool quietCandidate = !capture && m.promotion == None;
-
-    // Compute the quiet history once and expose it to the caller; LMR reads
-    // this instead of recomputing the same lookups after move ordering.
-    int quietHist = 0;
-    if (quietCandidate) {
-        quietHist = state.historyTables->mainHistory[board.sideToMove][m.from][m.to];
-        if (ply >= 0) {
-            quietHist += contHistoryScore(state, ply, pt, m.to);
-        }
-        if (outQuietHistory) *outQuietHistory = quietHist;
-    }
-
-    // TT move gets highest priority
-    if (m.from == ttMove.from && m.to == ttMove.to && m.promotion == ttMove.promotion) {
-        return 10000000;
-    }
-
-    // Promotions
-    if (m.promotion != None) {
-        if (m.promotion == Queen) return 9000000;
-        return -5000000;
-    }
-
-    // Captures: use SEE to separate good from bad (skip SEE in quiescence, ply == -1)
-    if (capture) {
-        PieceType ct = capturedType(board, m);
-        int capHist = state.captureHistory[pt][m.to][ct];
-        if (ply < 0) {
-            // Quiescence: use MVV-LVA + capture history (no SEE for speed)
-            return 5000000 + PieceValue[ct] * 100 - PieceValue[pt] + capHist / 32;
-        }
-        int seeVal = see(board, m);
-        if (seeVal >= 0) {
-            return 5000000 + seeVal + capHist / 32;
-        } else {
-            return -2000000 + seeVal + capHist / 32;
-        }
-    }
-
-    // Killer moves
-    if (ply >= 0) {
-        for (int k = 0; k < 2; k++) {
-            const Move &killer = state.killers[ply][k];
-            if (m.from == killer.from && m.to == killer.to && m.promotion == killer.promotion) {
-                return 4000000 - k;
-            }
-        }
-    }
-
-    // Counter-move: the quiet reply that previously refuted the prior move
-    if (ply >= 1) {
-        Color prevColor = (board.sideToMove == White) ? Black : White;
-        PieceType prevPt = state.movedPiece[ply - 1];
-        int prevTo = state.moveStack[ply - 1].to;
-        const Move &counter = state.historyTables->counterMoves[prevColor][prevPt][prevTo];
-        if (m.from == counter.from && m.to == counter.to && m.promotion == counter.promotion) {
-            return 3500000;
-        }
-    }
-
-    // Plain quiet move: fall back to the precomputed history score.
-    return quietHist;
-}
-
 static void checkTime(SearchState &state) {
     auto now = std::chrono::steady_clock::now();
     auto elapsed =
@@ -348,26 +242,12 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         }
     }
 
-    // When in check, search all legal moves (must escape check).
-    // Otherwise, search only captures.
-    std::vector<Move> moves = inCheck ? generateLegalMoves(board) : generateLegalCaptures(board);
-
-    if (inCheck && moves.empty()) return -(MATE_SCORE - ply);
-
-    // Ordering: promote the TT move when present, otherwise fall back to the
-    // MVV-LVA + capture-history score used at leaves.
-    std::vector<ScoredMove> scored;
-    scored.reserve(moves.size());
-    for (const Move &m : moves) {
-        scored.push_back({scoreMove(m, board, ttMove, -1, state), 0, m});
-    }
-    std::sort(scored.begin(), scored.end(),
-              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
-
     Move bestMove = {0, 0, None};
-
-    for (const ScoredMove &sm : scored) {
-        const Move &m = sm.move;
+    MovePicker picker(board, state, ply, ttMove, inCheck, /*qsearchTag=*/true);
+    PickedMove pm;
+    int movesSearched = 0;
+    while (picker.next(pm)) {
+        const Move &m = pm.move;
         if (!inCheck && isCapture(board, m)) {
             // Prune losing captures
             if (see(board, m) < 0) continue;
@@ -392,6 +272,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
         if (state.stopped) return 0;
+        movesSearched++;
         if (score > bestScore) {
             bestScore = score;
             bestMove = m;
@@ -399,6 +280,12 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         if (score > alpha) alpha = score;
         if (alpha >= beta) break;
     }
+
+    // In-check mate detection: if we never made it past move generation with
+    // a legal evasion, the side to move is mated at this ply. Stand-pat was
+    // suppressed above for in-check positions, so bestScore would otherwise
+    // stay at -INF_SCORE here.
+    if (inCheck && movesSearched == 0) return -(MATE_SCORE - ply);
 
     // Store the leaf result so future visits can cut immediately.
     TTFlag flag;
@@ -535,13 +422,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
     }
 
-    std::vector<Move> moves = generateLegalMoves(board);
-
-    if (moves.empty()) {
-        if (isInCheck(board)) return -(MATE_SCORE - ply);
-        return 0;
-    }
-
     if (depth <= 0) return quiescence(board, alpha, beta, ply, state);
 
     // Internal iterative reduction: if we lack a TT move at a node deep enough
@@ -550,19 +430,6 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
         depth -= 1;
     }
-
-    // Move ordering: TT move first, then MVV-LVA for captures, then quiet moves.
-    // Capture the quiet history for each move in the same pass so LMR does not
-    // repeat the lookup.
-    std::vector<ScoredMove> scored;
-    scored.reserve(moves.size());
-    for (const Move &m : moves) {
-        int hist = 0;
-        int s = scoreMove(m, board, ttMove, ply, state, &hist);
-        scored.push_back({s, hist, m});
-    }
-    std::sort(scored.begin(), scored.end(),
-              [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 
     bool inCheck = isInCheck(board);
 
@@ -672,7 +539,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         std::vector<ScoredMove> pcScored;
         pcScored.reserve(pcMoves.size());
         for (const Move &m : pcMoves) {
-            pcScored.push_back({scoreMove(m, board, noTT, -1, state), 0, m});
+            pcScored.push_back({scoreMove(m, board, noTT, -1, state, nullptr), 0, m});
         }
         std::sort(pcScored.begin(), pcScored.end(),
                   [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
@@ -719,7 +586,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     int bestScore = -INF_SCORE;
-    Move bestMove = scored[0].move;
+    Move bestMove = {0, 0, None};
 
     Move searchedCaptures[64];
     Move searchedQuiets[64];
@@ -728,14 +595,14 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int bonus = std::min(depth * depth, 400);
     int movesSearched = 0;
 
-    for (int moveIndex = 0; moveIndex < static_cast<int>(scored.size()); moveIndex++) {
-        const Move &m = scored[moveIndex].move;
-
-        // Skip the excluded move during singular extension searches
-        if (hasExcludedMove && m.from == excludedMove.from && m.to == excludedMove.to &&
-            m.promotion == excludedMove.promotion) {
-            continue;
-        }
+    // Staged move picker: the excluded move is threaded through as `skipMove`
+    // so the singular-extension path never sees the excluded candidate in any
+    // phase, including from the TT slot.
+    MovePicker picker(board, state, ply, ttMove, inCheck);
+    PickedMove pm;
+    int moveIndex = 0;
+    while (picker.next(pm, excludedMove)) {
+        const Move &m = pm.move;
 
         state.moveStack[ply] = m;
         state.movedPiece[ply] = board.squares[m.from].type;
@@ -845,7 +712,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // during move ordering. The divisor scales with the added tiers
                 // so the reduction magnitude stays comparable to the single-tier
                 // configuration.
-                reduction -= scored[moveIndex].historyScore / 24576;
+                reduction -= pm.histScore / 24576;
 
                 // Reduce less when position is improving
                 reduction -= improving;
@@ -934,10 +801,19 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         } else {
             if (numSearchedQuiets < 64) searchedQuiets[numSearchedQuiets++] = m;
         }
+
+        moveIndex++;
     }
 
-    // If all moves were pruned, fail low to avoid erroneous stalemate scores
-    if (movesSearched == 0) return alpha;
+    // Terminal detection: the eager generateLegalMoves gate was removed when
+    // the picker took over, so mate / stalemate is recognized here by the
+    // picker having yielded nothing. During singular extension searches a
+    // zero-move result means only the excluded candidate was legal, and we
+    // fall through to the alpha return so the outer search marks singular.
+    if (movesSearched == 0) {
+        if (hasExcludedMove) return alpha;
+        return inCheck ? -(MATE_SCORE - ply) : 0;
+    }
 
     // TT store (skip during singular searches to avoid overwriting deeper entries)
     if (!hasExcludedMove) {

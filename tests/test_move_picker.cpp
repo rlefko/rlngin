@@ -108,7 +108,8 @@ TEST_CASE("MovePicker: yields the full legal move set exactly once", "[move_pick
         board.setFen(f);
         auto expected = generateLegalMoves(board);
         std::set<uint64_t> expectedKeys;
-        for (const Move &m : expected) expectedKeys.insert(moveKey(m));
+        for (const Move &m : expected)
+            expectedKeys.insert(moveKey(m));
 
         SearchState state;
         Move noTT = {0, 0, None};
@@ -116,7 +117,8 @@ TEST_CASE("MovePicker: yields the full legal move set exactly once", "[move_pick
         auto picks = drainPicker(picker);
 
         std::set<uint64_t> pickedKeys;
-        for (const auto &p : picks) pickedKeys.insert(moveKey(p.move));
+        for (const auto &p : picks)
+            pickedKeys.insert(moveKey(p.move));
 
         CHECK(picks.size() == expected.size());
         CHECK(pickedKeys == expectedKeys);
@@ -150,7 +152,8 @@ TEST_CASE("MovePicker: qsearch path emits only captures when not in check", "[mo
 
     auto allCaps = generateLegalCaptures(board);
     std::set<uint64_t> capKeys;
-    for (const Move &m : allCaps) capKeys.insert(moveKey(m));
+    for (const Move &m : allCaps)
+        capKeys.insert(moveKey(m));
 
     SearchState state;
     Move noTT = {0, 0, None};
@@ -173,7 +176,8 @@ TEST_CASE("MovePicker: qsearch in check yields every legal evasion", "[move_pick
     board.setFen("4k3/8/4b3/8/8/8/8/4K3 w - - 0 1");
     auto allLegal = generateLegalMoves(board);
     std::set<uint64_t> legalKeys;
-    for (const Move &m : allLegal) legalKeys.insert(moveKey(m));
+    for (const Move &m : allLegal)
+        legalKeys.insert(moveKey(m));
 
     SearchState state;
     Move noTT = {0, 0, None};
@@ -181,6 +185,7 @@ TEST_CASE("MovePicker: qsearch in check yields every legal evasion", "[move_pick
     auto picks = drainPicker(picker);
 
     std::set<uint64_t> pickedKeys;
-    for (const auto &p : picks) pickedKeys.insert(moveKey(p.move));
+    for (const auto &p : picks)
+        pickedKeys.insert(moveKey(p.move));
     CHECK(pickedKeys == legalKeys);
 }
