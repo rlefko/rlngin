@@ -384,6 +384,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
         Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[c ^ 1];
 
+        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
+        int kingSq = kingBB ? lsb(kingBB) : -1;
+        int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
+        bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
+        bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
+
         Bitboard knights = board.byPiece[Knight] & board.byColor[c];
         while (knights) {
             int sq = popLsb(knights);
@@ -404,6 +410,14 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 if (squareBB(frontSq) & ourPawns) {
                     scores[c] += evalParams.MinorBehindPawn;
                 }
+            }
+
+            // King protector: a knight far from our king is too distant to
+            // contribute to the defense. Penalty grows linearly with the
+            // chebyshev distance so the term keeps a smooth gradient under
+            // coordinate descent.
+            if (kingSq >= 0) {
+                scores[c] += evalParams.KingProtector[0] * chebyshev(sq, kingSq);
             }
         }
 
@@ -429,13 +443,11 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                     scores[c] += evalParams.MinorBehindPawn;
                 }
             }
-        }
 
-        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
-        int kingSq = kingBB ? lsb(kingBB) : -1;
-        int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
-        bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
-        bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
+            if (kingSq >= 0) {
+                scores[c] += evalParams.KingProtector[1] * chebyshev(sq, kingSq);
+            }
+        }
 
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
         while (rooks) {

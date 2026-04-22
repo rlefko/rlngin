@@ -168,6 +168,11 @@ static const EvalParams kDefaultEvalParams = {
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
 
     S(18, 3), // MinorBehindPawn
+
+    // KingProtector: penalty per chebyshev square between the minor and
+    // our king. Eg starts at zero so endgame centralization is not
+    // discouraged before the tuner gets to weigh in.
+    {S(-8, 0), S(-6, 0)}, // KingProtector (Knight, Bishop)
 };
 // clang-format on
 

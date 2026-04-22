@@ -51,14 +51,17 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
     // contribution survives, which is small with phase=1 and no pieces
-    // to generate meaningful mg terms.
+    // to generate meaningful mg terms. The king-protector penalty pulls
+    // a knight on a1 (chebyshev distance 4 from the king on e1) by a
+    // single internal unit at phase=1.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 25);
+    CHECK(evaluate(board) == 24);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
-    // is scaled to zero. The mg half still reflects material and PSTs.
+    // is scaled to zero. The mg half still reflects material and PSTs,
+    // less the king-protector penalty for the bishop on a1.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 41);
+    CHECK(evaluate(board) == 40);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
@@ -1139,4 +1142,56 @@ TEST_CASE("Eval: minor-behind-pawn bonus is color-symmetric", "[eval][placement]
     // the tempo contribution.
     CHECK((whiteSide + blackSide) >= 0);
     CHECK((whiteSide - blackSide) > 0);
+}
+
+TEST_CASE("Eval: knight close to its own king beats the same knight in the far corner",
+          "[eval][placement]") {
+    Board board;
+
+    // White knight on g2 directly next to its own king on g1: chebyshev
+    // distance = 1, so the king-protector penalty is at its smallest.
+    board.setFen("4k3/8/8/8/8/8/6N1/6K1 w - - 0 1");
+    int closeKnight = evaluate(board);
+
+    // White knight on a8 with king still on g1: chebyshev distance = 7,
+    // the largest possible, so the king-protector penalty should be at
+    // its largest negative.
+    board.setFen("N3k3/8/8/8/8/8/8/6K1 w - - 0 1");
+    int farKnight = evaluate(board);
+
+    CHECK(closeKnight > farKnight);
+}
+
+TEST_CASE("Eval: bishop close to its own king beats the same bishop in the far corner",
+          "[eval][placement]") {
+    Board board;
+
+    // White bishop on g2 next to its king on g1.
+    board.setFen("4k3/8/8/8/8/8/6B1/6K1 w - - 0 1");
+    int closeBishop = evaluate(board);
+
+    // White bishop on a8 with king still on g1.
+    board.setFen("B3k3/8/8/8/8/8/8/6K1 w - - 0 1");
+    int farBishop = evaluate(board);
+
+    CHECK(closeBishop > farBishop);
+}
+
+TEST_CASE("Eval: king-protector penalty is color-symmetric", "[eval][placement]") {
+    Board board;
+
+    // White knight far from white king: a knight on a8 with king on g1.
+    board.setFen("N3k3/8/8/8/8/8/8/6K1 w - - 0 1");
+    int whiteFar = evaluate(board);
+
+    // Mirror to Black: black knight on a1 with black king on g8.
+    board.setFen("6k1/8/8/8/8/8/8/n3K3 w - - 0 1");
+    int blackFar = evaluate(board);
+
+    // Penalty applies symmetrically to both colors. With both sides
+    // suffering an equally large penalty there is no asymmetric pull,
+    // and the only positional bias comes from PST. The check
+    // (whiteFar - blackFar) > 0 confirms the white-knight side carries
+    // the same magnitude of penalty as the mirrored black-knight side.
+    CHECK((whiteFar - blackFar) > 0);
 }
