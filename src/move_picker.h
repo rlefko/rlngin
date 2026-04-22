@@ -3,18 +3,11 @@
 
 #include "board.h"
 #include "search.h"
-#include <array>
 #include <cstdint>
 
-// Scored entry for the picker's internal buffers and for passing results
-// back to the search. `histScore` is the quiet butterfly + continuation
-// history sum; LMR reads it to avoid recomputing the same lookups. `score`
-// is the full ordering score that the picker uses for selection.
-struct ScoredMove {
-    int score;
-    int histScore;
-    Move move;
-};
+// `ScoredMove` is declared in search.h so SearchState can preallocate the
+// picker's scratch buffers on the heap. The definition is pulled in via
+// the include above.
 
 // Phases are traversed in order: the picker advances through them each time
 // `next()` exhausts a buffer. The qsearch pipeline reuses the same enum and
@@ -87,21 +80,23 @@ class MovePicker {
     PickPhase phase_;
     bool inCheck_;
 
-    // Fixed-capacity scratch buffers. Chess positions max out at around
-    // 218 legal moves; 256 is the same cap used elsewhere in the search
-    // (MAX_LMR_MOVES) and is comfortably above the theoretical maximum.
-    std::array<ScoredMove, 256> caps_{};
+    // Scratch buffers live on the heap via SearchState so the picker stays
+    // small in stack footprint. At MAX_PLY deep recursion the previous
+    // inline std::array layout blew the 512KB default std::thread stack
+    // on macOS; borrowing per-ply slices keeps every frame in the low
+    // hundreds of bytes.
+    ScoredMove *caps_;
     int numCaps_ = 0;
     int capCursor_ = 0;
 
-    std::array<ScoredMove, 256> quiets_{};
+    ScoredMove *quiets_;
     int numQuiets_ = 0;
     int quietCursor_ = 0;
 
     // Bad captures are recognized while partitioning captures by SEE sign.
     // We keep indices into `caps_` so we can stream them out at the final
     // phase without re-sorting, and without copying the ScoredMove payload.
-    std::array<int, 256> badCapIdx_{};
+    int *badCapIdx_;
     int numBadCaps_ = 0;
     int badCapCursor_ = 0;
 

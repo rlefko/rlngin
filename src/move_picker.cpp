@@ -233,7 +233,8 @@ static bool isFullyLegal(Board &board, const Move &m) {
 
 MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck)
     : board_(board), state_(state), ply_(ply), ttMove_(ttMove), phase_(PickPhase::TTMove),
-      inCheck_(inCheck) {
+      inCheck_(inCheck), caps_(state.pickerBuffers[ply].caps),
+      quiets_(state.pickerBuffers[ply].quiets), badCapIdx_(state.pickerBuffers[ply].badCapIdx) {
     // Skip the TT-move phase outright when no candidate is on hand. Saves
     // the isPseudoLegalMove / isFullyLegal cost at every node that has no TT
     // hit for the position.
@@ -254,7 +255,8 @@ MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttM
 MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck,
                        bool /*qsearchTag*/)
     : board_(board), state_(state), ply_(ply), ttMove_(ttMove), phase_(PickPhase::QsTTMove),
-      inCheck_(inCheck) {
+      inCheck_(inCheck), caps_(state.pickerBuffers[ply].caps),
+      quiets_(state.pickerBuffers[ply].quiets), badCapIdx_(state.pickerBuffers[ply].badCapIdx) {
     if (inCheck_) {
         // In-check qsearch needs every legal evasion, not just captures, so
         // the pipeline routes through the evasion phase. The TT move is
@@ -276,11 +278,11 @@ void MovePicker::genCaptures() {
     std::vector<Move> pseudo = generateLegalCaptures(board_);
     numCaps_ = 0;
     for (const Move &m : pseudo) {
-        if (numCaps_ >= static_cast<int>(caps_.size())) break;
+        if (numCaps_ >= MOVE_PICKER_BUFFER_SIZE) break;
         int score = scoreMove(m, board_, ttMove_, ply_, state_, nullptr);
         caps_[numCaps_++] = {score, 0, m};
     }
-    std::sort(caps_.begin(), caps_.begin() + numCaps_,
+    std::sort(caps_, caps_ + numCaps_,
               [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 }
 
@@ -292,12 +294,12 @@ void MovePicker::genQuiets() {
     std::vector<Move> pseudo = generateLegalQuiets(board_);
     numQuiets_ = 0;
     for (const Move &m : pseudo) {
-        if (numQuiets_ >= static_cast<int>(quiets_.size())) break;
+        if (numQuiets_ >= MOVE_PICKER_BUFFER_SIZE) break;
         int hist = 0;
         int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist);
         quiets_[numQuiets_++] = {score, hist, m};
     }
-    std::sort(quiets_.begin(), quiets_.begin() + numQuiets_,
+    std::sort(quiets_, quiets_ + numQuiets_,
               [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
 }
 
@@ -312,7 +314,7 @@ bool MovePicker::selectNextCapture(PickedMove &out) {
             out = {picked.move, picked.score, 0, PickPhase::GoodCaptures};
             return true;
         }
-        if (numBadCaps_ < static_cast<int>(badCapIdx_.size())) {
+        if (numBadCaps_ < MOVE_PICKER_BUFFER_SIZE) {
             badCapIdx_[numBadCaps_++] = capCursor_ - 1;
         }
     }
@@ -466,12 +468,12 @@ bool MovePicker::next(PickedMove &out, const Move &skipMove) {
             std::vector<Move> all = generateLegalMoves(board_);
             numQuiets_ = 0;
             for (const Move &m : all) {
-                if (numQuiets_ >= static_cast<int>(quiets_.size())) break;
+                if (numQuiets_ >= MOVE_PICKER_BUFFER_SIZE) break;
                 int hist = 0;
                 int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist);
                 quiets_[numQuiets_++] = {score, hist, m};
             }
-            std::sort(quiets_.begin(), quiets_.begin() + numQuiets_,
+            std::sort(quiets_, quiets_ + numQuiets_,
                       [](const ScoredMove &a, const ScoredMove &b) { return a.score > b.score; });
             phase_ = PickPhase::QsEvasions;
             break;
