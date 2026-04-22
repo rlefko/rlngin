@@ -986,28 +986,51 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // current attacks; this term captures the fork-in-one-move
         // motif that knights are uniquely good at. Safe squares are
         // those not attacked by enemy pawns and not occupied by our
-        // own pieces -- the standard pre-threat filter.
+        // own pieces -- the standard pre-threat filter. The knight
+        // graph has no two-squares-attacking-the-same-queen edge
+        // adjacency, so this set cannot double-count with the already-
+        // attacking case that ThreatByMinor[Queen] scores.
         Bitboard theirQueens = theirPieces & board.byPiece[Queen];
         if (theirQueens) {
             Bitboard safeSquares = ~ctx.attackedBy[them][Pawn] & ~board.byColor[us];
             Bitboard knightHops = 0;
-            Bitboard sliderHops = 0;
+            Bitboard bishopRays = 0;
+            Bitboard rookRays = 0;
             Bitboard queens = theirQueens;
             while (queens) {
                 int qsq = popLsb(queens);
                 knightHops |= KnightAttacks[qsq];
-                // Bishop and rook landing squares: anywhere along the
-                // queen's diagonals or files/ranks, blocker-aware via
-                // the magic attack tables, so an obstructed alignment
-                // does not award the bonus.
-                sliderHops |= bishopAttacks(qsq, board.occupied) & ctx.attackedBy[us][Bishop];
-                sliderHops |= rookAttacks(qsq, board.occupied) & ctx.attackedBy[us][Rook];
+                bishopRays |= bishopAttacks(qsq, board.occupied);
+                rookRays |= rookAttacks(qsq, board.occupied);
             }
             Bitboard knightForks = knightHops & ctx.attackedBy[us][Knight] & safeSquares;
             scores[us] += evalParams.KnightOnQueen * popcount(knightForks);
 
-            Bitboard sliderForks = sliderHops & safeSquares;
-            scores[us] += evalParams.SliderOnQueen * popcount(sliderForks);
+            // Slider-on-queen pre-threat: count landing squares per
+            // slider, skipping sliders that already attack a queen.
+            // Without the per-piece skip, a bishop on a long diagonal
+            // with the queen already in its sights would get a pre-
+            // threat bonus for every alternate square on that diagonal
+            // it could slide to -- all redundant with the realized
+            // attack already scored by ThreatByMinor/Rook[Queen]. The
+            // skip keeps SliderOnQueen scoring only genuine new
+            // threats our sliders could create next move.
+            int sliderForkCount = 0;
+            Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
+            while (ourBishops) {
+                int sq = popLsb(ourBishops);
+                Bitboard bishopMoves = bishopAttacks(sq, board.occupied);
+                if (bishopMoves & theirQueens) continue;
+                sliderForkCount += popcount(bishopMoves & bishopRays & safeSquares);
+            }
+            Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
+            while (ourRooks) {
+                int sq = popLsb(ourRooks);
+                Bitboard rookMoves = rookAttacks(sq, board.occupied);
+                if (rookMoves & theirQueens) continue;
+                sliderForkCount += popcount(rookMoves & rookRays & safeSquares);
+            }
+            scores[us] += evalParams.SliderOnQueen * sliderForkCount;
         }
     }
 }
