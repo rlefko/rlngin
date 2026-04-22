@@ -118,7 +118,7 @@ static int correctedEval(int staticEval, const Board &board, const SearchState &
 static int corrHistBonus(int baseEval, int bestValue, int depth, int max) {
     int diff = bestValue - baseEval;
     int cappedDepth = depth > 32 ? 32 : depth;
-    int bonus = diff * cappedDepth / 64;
+    int bonus = diff * cappedDepth / 32;
     int cap = max / 4;
     if (bonus > cap)
         bonus = cap;
