@@ -516,6 +516,12 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.BishopOutpostBonus) << ", // BishopOutpostBonus\n";
     std::cout << "    " << fmtScore(evalParams.TrappedRookByKingPenalty)
               << ", // TrappedRookByKingPenalty\n";
+    std::cout << "    " << fmtScore(evalParams.RookBehindOurPasserBonus)
+              << ", // RookBehindOurPasserBonus\n";
+    std::cout << "    " << fmtScore(evalParams.RookBehindTheirPasserBonus)
+              << ", // RookBehindTheirPasserBonus\n";
+    std::cout << "    " << fmtScore(evalParams.MinorBehindPawnBonus)
+              << ", // MinorBehindPawnBonus\n";
     std::cout << "    " << fmtScore(evalParams.BishopPair) << ", // BishopPair\n";
 
     std::cout << "    {" << fmtScore(evalParams.PawnShieldBonus[0]) << ", "
@@ -548,6 +554,7 @@ static void printCurrentValues() {
     std::cout << "    {" << fmtScore(evalParams.BlockedPawnPenalty[0]) << ", "
               << fmtScore(evalParams.BlockedPawnPenalty[1])
               << "}, // BlockedPawnPenalty (rel rank 5, 6)\n";
+    std::cout << "    " << fmtScore(evalParams.PawnIslandPenalty) << ", // PawnIslandPenalty\n";
     // PhalanxBonus is disabled in eval_params.h; re-enable the dump when the
     // field and tuner entry come back.
     // std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
