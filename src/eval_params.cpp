@@ -179,6 +179,8 @@ static const EvalParams kDefaultEvalParams = {
     S(6, 11), // RookOnQueenFile
 
     S(16, 11), // KnightOnQueen
+
+    S(6, 5), // SliderOnQueen
 };
 // clang-format on
 

@@ -161,6 +161,14 @@ struct EvalParams {
     // ThreatByMinor[Queen] term which counts current attacks; this
     // captures the fork-in-one-move motif knights are uniquely good at.
     Score KnightOnQueen;
+
+    // Pre-threat bonus per safe square from which one of our bishops
+    // or rooks could move next to attack the enemy queen. Sliders are
+    // less likely to fork the queen than knights, so the magnitude is
+    // expected to stay below KnightOnQueen, and the term is held below
+    // ThreatByMinor[Queen] / ThreatByRook[Queen] so the pre-threat
+    // never outweighs the realized attack.
+    Score SliderOnQueen;
 };
 
 extern EvalParams evalParams;

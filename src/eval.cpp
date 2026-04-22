@@ -991,12 +991,23 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         if (theirQueens) {
             Bitboard safeSquares = ~ctx.attackedBy[them][Pawn] & ~board.byColor[us];
             Bitboard knightHops = 0;
+            Bitboard sliderHops = 0;
             Bitboard queens = theirQueens;
             while (queens) {
-                knightHops |= KnightAttacks[popLsb(queens)];
+                int qsq = popLsb(queens);
+                knightHops |= KnightAttacks[qsq];
+                // Bishop and rook landing squares: anywhere along the
+                // queen's diagonals or files/ranks, blocker-aware via
+                // the magic attack tables, so an obstructed alignment
+                // does not award the bonus.
+                sliderHops |= bishopAttacks(qsq, board.occupied) & ctx.attackedBy[us][Bishop];
+                sliderHops |= rookAttacks(qsq, board.occupied) & ctx.attackedBy[us][Rook];
             }
             Bitboard knightForks = knightHops & ctx.attackedBy[us][Knight] & safeSquares;
             scores[us] += evalParams.KnightOnQueen * popcount(knightForks);
+
+            Bitboard sliderForks = sliderHops & safeSquares;
+            scores[us] += evalParams.SliderOnQueen * popcount(sliderForks);
         }
     }
 }

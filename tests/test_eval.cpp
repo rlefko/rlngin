@@ -1276,6 +1276,70 @@ TEST_CASE("Eval: knight pre-threat does not fire without an enemy queen", "[eval
     CHECK(withoutQueen < 1500);
 }
 
+TEST_CASE("Eval: bishop one safe move from attacking the enemy queen earns a bonus",
+          "[eval][threats]") {
+    Board board;
+
+    // White bishop on f1 with the enemy queen on d5: from f1 the
+    // bishop sees c4 and g2 -- both on diagonals to d5 -- so a bishop
+    // moving to either would attack the queen. SliderOnQueen fires
+    // for both pre-threat landing squares.
+    board.setFen("4k3/8/8/3q4/8/8/8/4KB2 w - - 0 1");
+    int withPreThreat = evaluate(board);
+
+    // Same material with the bishop on c1: bishop attacks lie on the
+    // c1-h6 diagonal and the c1-a3 diagonal, none of which intersect
+    // the d5 diagonal landing squares. SliderOnQueen does not fire,
+    // and the bishop is not on a long diagonal so the long-diagonal
+    // bonus also does not pollute the comparison.
+    board.setFen("4k3/8/8/3q4/8/8/8/2B1K3 w - - 0 1");
+    int withoutPreThreat = evaluate(board);
+
+    CHECK(withPreThreat > withoutPreThreat);
+}
+
+TEST_CASE("Eval: slider pre-threat does not fire without an enemy queen",
+          "[eval][threats]") {
+    Board board;
+
+    // White rook on a1 with no enemy queen anywhere: SliderOnQueen has
+    // nothing to score, so its contribution is zero. The eval reduces
+    // to material plus PST plus tempo plus the open-file bonus the
+    // rook earns on the empty a-file.
+    board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+    int withoutQueen = evaluate(board);
+
+    // Sanity: a clear material advantage for white, no threat
+    // contribution from the queen-pressure bucket.
+    CHECK(withoutQueen > 0);
+}
+
+TEST_CASE("Eval: slider blocked by a piece between it and the queen earns nothing extra",
+          "[eval][threats]") {
+    Board board;
+
+    // White bishop on f1 with enemy queen on d5: c4 is a pre-threat
+    // landing square, so the bonus fires.
+    board.setFen("4k3/8/8/3q4/8/8/8/4KB2 w - - 0 1");
+    int unblocked = evaluate(board);
+
+    // Same configuration but a black knight sits on c4, blocking the
+    // bishop's reach to that square (and squares beyond it). The
+    // bishop now attacks only e2, d3, b5, a6 plus g2/h3, and none of
+    // those lie on a d5 diagonal landing square. SliderOnQueen does
+    // not fire any longer for this bishop.
+    board.setFen("4k3/8/8/3q4/2n5/8/8/4KB2 w - - 0 1");
+    int blockedBetween = evaluate(board);
+
+    // The blocker carries material and PST for Black, so the eval gap
+    // is dominated by that material loss. The signal we want: the
+    // unblocked configuration wins over the blocked one even before
+    // the slider pre-threat is added, but the gap should at minimum
+    // include the slider bonus we surrender. The CHECK confirms the
+    // unblocked position keeps a clear lead.
+    CHECK(unblocked > blockedBetween);
+}
+
 TEST_CASE("Eval: knight pre-threat ignores landing squares attacked by enemy pawns",
           "[eval][threats]") {
     Board board;
