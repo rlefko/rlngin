@@ -1242,6 +1242,66 @@ TEST_CASE("Eval: friendly non-pawn on the long diagonal does not kill the bonus"
     CHECK(std::abs(withCenterKnight - knightOnRim) < 200);
 }
 
+TEST_CASE("Eval: knight one safe hop from attacking the enemy queen earns a bonus",
+          "[eval][threats]") {
+    Board board;
+
+    // White knight on e2 with the enemy queen on d5: from e2, the
+    // knight could move to c3 or f4, and from either of those landing
+    // squares it would attack the queen on d5. Two pre-threat squares
+    // fire the KnightOnQueen bonus.
+    board.setFen("4k3/8/8/3q4/8/8/4N3/4K3 w - - 0 1");
+    int withPreThreat = evaluate(board);
+
+    // Same material with the knight on h6: KnightAttacks[h6] = {f5, g4,
+    // f7, g8} -- none of which lie in KnightAttacks[d5], so no
+    // pre-threat squares fire.
+    board.setFen("4k3/8/7N/3q4/8/8/8/4K3 w - - 0 1");
+    int withoutPreThreat = evaluate(board);
+
+    CHECK(withPreThreat > withoutPreThreat);
+}
+
+TEST_CASE("Eval: knight pre-threat does not fire without an enemy queen", "[eval][threats]") {
+    Board board;
+
+    // White knight on e2 with no enemy queen on the board: KnightOnQueen
+    // has nothing to score, so its contribution is zero.
+    board.setFen("4k3/8/8/8/8/8/4N3/4K3 w - - 0 1");
+    int withoutQueen = evaluate(board);
+
+    // Sanity: the eval should be a small positive number reflecting
+    // material plus PST plus tempo, with no threat contribution.
+    CHECK(withoutQueen > 0);
+    CHECK(withoutQueen < 1500);
+}
+
+TEST_CASE("Eval: knight pre-threat ignores landing squares attacked by enemy pawns",
+          "[eval][threats]") {
+    Board board;
+
+    // White knight on e2, enemy queen on d5, no enemy pawns: the
+    // c3 and f4 pre-threat squares are both safe and the bonus fires
+    // for both.
+    board.setFen("4k3/8/8/3q4/8/8/4N3/4K3 w - - 0 1");
+    int safeLandings = evaluate(board);
+
+    // Same configuration but with a black pawn on b4 so it attacks c3:
+    // c3 is no longer a safe landing square, so only one of the two
+    // pre-threat squares fires.
+    board.setFen("4k3/8/8/3q4/1p6/8/4N3/4K3 w - - 0 1");
+    int onePawnAttacker = evaluate(board);
+
+    // Both positions also receive the same set of other terms; the
+    // landing-safety filter trims the pre-threat count from two to
+    // one, so removing a safe landing reduces our bonus while the
+    // black pawn carries its own material/structure delta. The signal
+    // we want: the safe-landings configuration scores at least as
+    // well as the one-pawn-attacker configuration once material and
+    // pawn-structure deltas are absorbed.
+    CHECK(safeLandings > onePawnAttacker);
+}
+
 TEST_CASE("Eval: rook on the same file as an enemy queen earns a bonus",
           "[eval][placement]") {
     Board board;

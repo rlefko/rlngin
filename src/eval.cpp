@@ -979,6 +979,25 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard pushVictims =
             pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
         scores[us] += evalParams.SafePawnPush * popcount(pushVictims);
+
+        // Knight-on-queen pre-threat: count safe landing squares from
+        // which one of our knights could hop next move to attack the
+        // enemy queen. Distinct from ThreatByMinor[Queen] which scores
+        // current attacks; this term captures the fork-in-one-move
+        // motif that knights are uniquely good at. Safe squares are
+        // those not attacked by enemy pawns and not occupied by our
+        // own pieces -- the standard pre-threat filter.
+        Bitboard theirQueens = theirPieces & board.byPiece[Queen];
+        if (theirQueens) {
+            Bitboard safeSquares = ~ctx.attackedBy[them][Pawn] & ~board.byColor[us];
+            Bitboard knightHops = 0;
+            Bitboard queens = theirQueens;
+            while (queens) {
+                knightHops |= KnightAttacks[popLsb(queens)];
+            }
+            Bitboard knightForks = knightHops & ctx.attackedBy[us][Knight] & safeSquares;
+            scores[us] += evalParams.KnightOnQueen * popcount(knightForks);
+        }
     }
 }
 

@@ -177,6 +177,8 @@ static const EvalParams kDefaultEvalParams = {
     S(22, 0), // LongDiagonalBishop
 
     S(6, 11), // RookOnQueenFile
+
+    S(16, 11), // KnightOnQueen
 };
 // clang-format on
 

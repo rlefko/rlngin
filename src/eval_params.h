@@ -155,6 +155,12 @@ struct EvalParams {
     // only enemy pawns sit on the file, but it does not directly
     // reward a rook piling pressure on a queen file.
     Score RookOnQueenFile;
+
+    // Pre-threat bonus per safe square from which one of our knights
+    // could hop next move to attack the enemy queen. Distinct from the
+    // ThreatByMinor[Queen] term which counts current attacks; this
+    // captures the fork-in-one-move motif knights are uniquely good at.
+    Score KnightOnQueen;
 };
 
 extern EvalParams evalParams;
