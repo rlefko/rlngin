@@ -44,6 +44,27 @@ void Board::computeMaterialKey() {
     }
 }
 
+void Board::computeNonPawnKeys() {
+    nonPawnKey[White] = 0;
+    nonPawnKey[Black] = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        PieceType pt = squares[sq].type;
+        if (pt != None && pt != Pawn) {
+            nonPawnKey[squares[sq].color] ^= zobrist::piece_keys[squares[sq].color][pt][sq];
+        }
+    }
+}
+
+void Board::computeMinorKey() {
+    minorKey = 0;
+    for (int sq = 0; sq < 64; sq++) {
+        PieceType pt = squares[sq].type;
+        if (pt == Knight || pt == Bishop) {
+            minorKey ^= zobrist::piece_keys[squares[sq].color][pt][sq];
+        }
+    }
+}
+
 Piece Board::pieceAt(int sq) const {
     return squares[sq];
 }
@@ -158,6 +179,8 @@ void Board::setFen(const std::string &fen) {
     computeKey();
     computePawnKey();
     computeMaterialKey();
+    computeNonPawnKeys();
+    computeMinorKey();
 }
 
 UndoInfo Board::makeMove(const Move &m) {
@@ -171,6 +194,9 @@ UndoInfo Board::makeMove(const Move &m) {
     undo.key = key;
     undo.pawnKey = pawnKey;
     undo.materialKey = materialKey;
+    undo.nonPawnKey[White] = nonPawnKey[White];
+    undo.nonPawnKey[Black] = nonPawnKey[Black];
+    undo.minorKey = minorKey;
 
     Piece moving = squares[m.from];
     Piece captured = squares[m.to];
@@ -187,6 +213,11 @@ UndoInfo Board::makeMove(const Move &m) {
     key ^= zobrist::piece_keys[moving.color][moving.type][m.from];
     if (moving.type == Pawn) {
         pawnKey ^= zobrist::piece_keys[moving.color][Pawn][m.from];
+    } else {
+        nonPawnKey[moving.color] ^= zobrist::piece_keys[moving.color][moving.type][m.from];
+    }
+    if (moving.type == Knight || moving.type == Bishop) {
+        minorKey ^= zobrist::piece_keys[moving.color][moving.type][m.from];
     }
 
     // En passant capture
@@ -207,6 +238,11 @@ UndoInfo Board::makeMove(const Move &m) {
         key ^= zobrist::piece_keys[captured.color][captured.type][m.to];
         if (captured.type == Pawn) {
             pawnKey ^= zobrist::piece_keys[captured.color][Pawn][m.to];
+        } else {
+            nonPawnKey[captured.color] ^= zobrist::piece_keys[captured.color][captured.type][m.to];
+        }
+        if (captured.type == Knight || captured.type == Bishop) {
+            minorKey ^= zobrist::piece_keys[captured.color][captured.type][m.to];
         }
         occupied ^= 1ULL << m.to;
         byColor[captured.color] ^= 1ULL << m.to;
@@ -242,8 +278,13 @@ UndoInfo Board::makeMove(const Move &m) {
     // XOR in piece at destination (with promoted type if applicable)
     PieceType destType = (m.promotion != None) ? m.promotion : moving.type;
     key ^= zobrist::piece_keys[moving.color][destType][m.to];
-    if (moving.type == Pawn && m.promotion == None) {
+    if (destType == Pawn) {
         pawnKey ^= zobrist::piece_keys[moving.color][Pawn][m.to];
+    } else {
+        nonPawnKey[moving.color] ^= zobrist::piece_keys[moving.color][destType][m.to];
+    }
+    if (destType == Knight || destType == Bishop) {
+        minorKey ^= zobrist::piece_keys[moving.color][destType][m.to];
     }
 
     // Castling: move the rook
@@ -253,6 +294,8 @@ UndoInfo Board::makeMove(const Move &m) {
             // Kingside
             key ^= zobrist::piece_keys[moving.color][Rook][m.from + 3];
             key ^= zobrist::piece_keys[moving.color][Rook][m.from + 1];
+            nonPawnKey[moving.color] ^= zobrist::piece_keys[moving.color][Rook][m.from + 3];
+            nonPawnKey[moving.color] ^= zobrist::piece_keys[moving.color][Rook][m.from + 1];
             squares[m.from + 1] = squares[m.from + 3];
             squares[m.from + 3] = {None, White};
             occupied ^= (1ULL << (m.from + 3)) | (1ULL << (m.from + 1));
@@ -262,6 +305,8 @@ UndoInfo Board::makeMove(const Move &m) {
             // Queenside
             key ^= zobrist::piece_keys[moving.color][Rook][m.from - 4];
             key ^= zobrist::piece_keys[moving.color][Rook][m.from - 1];
+            nonPawnKey[moving.color] ^= zobrist::piece_keys[moving.color][Rook][m.from - 4];
+            nonPawnKey[moving.color] ^= zobrist::piece_keys[moving.color][Rook][m.from - 1];
             squares[m.from - 1] = squares[m.from - 4];
             squares[m.from - 4] = {None, White};
             occupied ^= (1ULL << (m.from - 4)) | (1ULL << (m.from - 1));
@@ -336,6 +381,9 @@ UndoInfo Board::makeNullMove() {
     undo.key = key;
     undo.pawnKey = pawnKey;
     undo.materialKey = materialKey;
+    undo.nonPawnKey[White] = nonPawnKey[White];
+    undo.nonPawnKey[Black] = nonPawnKey[Black];
+    undo.minorKey = minorKey;
 
     // Clear en passant
     if (enPassantSquare != -1) {
@@ -363,6 +411,9 @@ void Board::unmakeNullMove(const UndoInfo &undo) {
     key = undo.key;
     pawnKey = undo.pawnKey;
     materialKey = undo.materialKey;
+    nonPawnKey[White] = undo.nonPawnKey[White];
+    nonPawnKey[Black] = undo.nonPawnKey[Black];
+    minorKey = undo.minorKey;
 }
 
 void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
@@ -437,5 +488,8 @@ void Board::unmakeMove(const Move &m, const UndoInfo &undo) {
     key = undo.key;
     pawnKey = undo.pawnKey;
     materialKey = undo.materialKey;
+    nonPawnKey[White] = undo.nonPawnKey[White];
+    nonPawnKey[Black] = undo.nonPawnKey[Black];
+    minorKey = undo.minorKey;
     if (us == Black) fullmoveNumber--;
 }
