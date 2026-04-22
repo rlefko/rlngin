@@ -656,6 +656,49 @@ TEST_CASE("Search: pawn correction history stays tactically sound", "[search][co
     }
 }
 
+TEST_CASE("Search: corrected pawn history does not drift startpos to e3", "[search][corrhist]") {
+    ensureInit();
+    resetSearchParams();
+
+    int savedPawn = searchParams.PawnCorrWeight;
+    int savedNonPawn = searchParams.NonPawnCorrWeight;
+    int savedMinor = searchParams.MinorCorrWeight;
+    int savedCont = searchParams.ContCorrWeight;
+
+    searchParams.PawnCorrWeight = 128;
+    searchParams.NonPawnCorrWeight = 0;
+    searchParams.MinorCorrWeight = 0;
+    searchParams.ContCorrWeight = 0;
+
+    clearTT();
+
+    Board board;
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 10;
+
+    SearchState state;
+    startSearch(board, limits, state);
+    Move first = state.bestMove;
+
+    startSearch(board, limits, state);
+    Move second = state.bestMove;
+
+    int e2 = stringToSquare("e2");
+    int e3 = stringToSquare("e3");
+    bool firstIsE3 = first.from == e2 && first.to == e3;
+    bool secondIsE3 = second.from == e2 && second.to == e3;
+    CHECK_FALSE(firstIsE3);
+    CHECK_FALSE(secondIsE3);
+
+    searchParams.PawnCorrWeight = savedPawn;
+    searchParams.NonPawnCorrWeight = savedNonPawn;
+    searchParams.MinorCorrWeight = savedMinor;
+    searchParams.ContCorrWeight = savedCont;
+    clearTT();
+}
+
 TEST_CASE("Search: depth 10 node count bounded on startpos", "[search][nodes]") {
     ensureInit();
     clearTT();
