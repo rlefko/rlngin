@@ -286,10 +286,17 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 score += sign * evalParams.DoubledPawnPenalty;
             }
 
+            // "Unopposed" is the absence of any enemy pawn on the same
+            // file ahead of this pawn. It is used by the weak-pawn term
+            // below, and potentially by future pawn-structure signals, so
+            // it is computed once here and reused.
+            bool opposed = (ForwardFileBB[c][sq] & theirPawns) != 0;
+
             // Passed pawn: no enemy pawns ahead on same or adjacent files,
             // and no friendly pawn ahead on the same file (rear doubled pawns
             // are not passed)
-            if (!isDoubled && !(PassedPawnMask[c][sq] & theirPawns)) {
+            bool isPassed = !isDoubled && !(PassedPawnMask[c][sq] & theirPawns);
+            if (isPassed) {
                 score += sign * evalParams.PassedPawnBonus[relRank];
                 if (c == White)
                     whitePassers |= squareBB(sq);
@@ -301,6 +308,23 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             bool isolated = !(AdjacentFilesBB[f] & ourPawns);
             if (isolated) {
                 score += sign * evalParams.IsolatedPawnPenalty;
+                // An isolated pawn with an open file behind it is an
+                // easy rook target, so it absorbs an extra penalty on
+                // top of the plain isolated cost. Skip when the pawn is
+                // already passed: "no enemy pawn on the file ahead" is
+                // exactly the feature the passed bonus rewards, so
+                // double-counting it as a penalty here fights the passer
+                // reward and mis-scores winning king-and-pawn endings.
+                if (!opposed && !isPassed) {
+                    score += sign * evalParams.WeakUnopposedPenalty;
+                }
+                // Doubled and isolated together is the worst structural
+                // configuration a pawn can sit in -- no rank neighbour,
+                // no file neighbour that can defend it, and the rear
+                // pawn inherits every weakness when the leader falls.
+                if (isDoubled) {
+                    score += sign * evalParams.DoubledIsolatedPenalty;
+                }
             }
 
             // Connected pawn: phalanx (same rank, adjacent file) or defended by friendly pawn
@@ -308,6 +332,15 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
             if (phalanx || defended) {
                 score += sign * evalParams.ConnectedPawnBonus[relRank];
+                // A phalanx is the more dynamic half of the connected
+                // family: the two pawns can advance together and cover
+                // each other's stop squares on the next rank. Layering
+                // a separate PhalanxBonus on top of the already-tuned
+                // ConnectedPawnBonus overrewards phalanx without a
+                // re-tune, so the term is disabled pending that work.
+                // if (phalanx) {
+                //     score += sign * evalParams.PhalanxBonus;
+                // }
             }
 
             // Backward pawn: not connected, not isolated, all adjacent friendly pawns
@@ -318,6 +351,13 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                     int stopSq = (c == White) ? sq + 8 : sq - 8;
                     if (PawnAttacks[c][stopSq] & theirPawns) {
                         score += sign * evalParams.BackwardPawnPenalty;
+                        // Same "open file behind a weak pawn" logic as the
+                        // isolated case: a backward pawn with no opposing
+                        // pawn on its file is the easiest heavy-piece target
+                        // of all.
+                        if (!opposed) {
+                            score += sign * evalParams.WeakUnopposedPenalty;
+                        }
                     }
                 }
             }
@@ -718,6 +758,31 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
     }
 }
 
+// Penalize non-passer pawns whose stop square is occupied by an enemy
+// piece and which sit on relative rank 5 or 6. Passers already receive
+// PassedBlockedPenalty via evaluatePassedPawnExtras, so this term skips
+// them and only reports on "stuck" pawns that never had the passer
+// upside to begin with. Lives outside the pawn hash because blocker
+// identity depends on non-pawn pieces.
+static void evaluateBlockedPawns(const Board &board, const Bitboard passers[2], Score scores[2]) {
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
+        Bitboard blockedCandidates = ourPawns & ~passers[us];
+
+        while (blockedCandidates) {
+            int sq = popLsb(blockedCandidates);
+            int relRank = relativeRank(us, sq);
+            if (relRank < 4 || relRank > 5) continue;
+
+            int stopSq = (us == White) ? sq + 8 : sq - 8;
+            if (board.byColor[us ^ 1] & squareBB(stopSq)) {
+                scores[us] += evalParams.BlockedPawnPenalty[relRank - 4];
+            }
+        }
+    }
+}
+
 // Endgame scale factor in [0, 64]. Applied to the eg half of the tapered
 // score before blending with mg: at 64 the eg value passes through
 // unchanged, at 0 the eg contribution disappears entirely. Used to push
@@ -886,6 +951,7 @@ int evaluate(const Board &board) {
 
     evaluatePieces(board, ctx, scores);
     evaluatePassedPawnExtras(board, ctx, passers, scores);
+    evaluateBlockedPawns(board, passers, scores);
     evaluateThreats(board, ctx, scores);
     evaluateSpace(board, ctx, scores);
     evaluateKingSafety(board, ctx, scores);
@@ -969,6 +1035,10 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluatePassedPawnExtras(board, ctx, passers, passerExtrasScores);
     Score passerExtrasScore = passerExtrasScores[White] - passerExtrasScores[Black];
 
+    Score blockedPawnScores[2] = {0, 0};
+    evaluateBlockedPawns(board, passers, blockedPawnScores);
+    Score blockedPawnScore = blockedPawnScores[White] - blockedPawnScores[Black];
+
     Score threatScores[2] = {0, 0};
     evaluateThreats(board, ctx, threatScores);
     Score threatScore = threatScores[White] - threatScores[Black];
@@ -981,8 +1051,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score total = pstScore + matScore + pieceScore + passerExtrasScore + threatScore + spaceScore +
-                  kingSafetyScore + pawnScore;
+    Score total = pstScore + matScore + pieceScore + passerExtrasScore + blockedPawnScore +
+                  threatScore + spaceScore + kingSafetyScore + pawnScore;
     int mg = mg_value(total);
     int eg = eg_value(total);
 
@@ -1020,6 +1090,7 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     formatTerm(os, "Pawns", pawnScore);
     formatTerm(os, "Pieces", pieceScore);
     formatTerm(os, "Passed extras", passerExtrasScore);
+    formatTerm(os, "Blocked pawns", blockedPawnScore);
     formatTerm(os, "Threats", threatScore);
     formatTerm(os, "Space", spaceScore);
     formatTerm(os, "King safety", kingSafetyScore);

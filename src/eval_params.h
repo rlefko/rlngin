@@ -97,6 +97,37 @@ struct EvalParams {
     Score IsolatedPawnPenalty;
     Score DoubledPawnPenalty;
     Score BackwardPawnPenalty;
+
+    // Extra penalty on top of IsolatedPawnPenalty or BackwardPawnPenalty
+    // when the pawn is "unopposed", meaning no enemy pawn sits on the
+    // same file ahead of it. An open file behind a weak pawn makes it an
+    // easy target for a rook lift, so unopposed weakness is strictly
+    // worse than opposed weakness.
+    Score WeakUnopposedPenalty;
+
+    // Extra penalty when a pawn is both doubled and isolated. The joint
+    // case is strictly worse than either alone: the doubled pair cannot
+    // be defended by a friendly pawn from any file, and losing the lead
+    // pawn leaves the trailing pawn equally defenseless.
+    Score DoubledIsolatedPenalty;
+
+    // Penalty for a non-passer pawn whose stop square is occupied by an
+    // enemy piece (including an enemy pawn), indexed by relative rank
+    // minus 5, so entry [0] is rank 5 and entry [1] is rank 6. Captures
+    // the over-extended-but-stuck pattern that passers already get via
+    // PassedBlockedPenalty.
+    Score BlockedPawnPenalty[2];
+
+    // Extra bonus layered on top of ConnectedPawnBonus when the connected
+    // pawn sits in a phalanx (same rank, adjacent file) rather than only
+    // being defended from behind. Phalanx pawns can advance in lockstep,
+    // which is strictly more dynamic than a merely supported pawn.
+    // Disabled until a joint Texel re-tune confirms it beats the already-
+    // tuned ConnectedPawnBonus, which currently absorbs both phalanx and
+    // supported cases with a single rank-indexed value. Re-enable the
+    // field, the default, the use in evaluatePawns, and the tuner entry
+    // together.
+    // Score PhalanxBonus;
 };
 
 extern EvalParams evalParams;

@@ -401,6 +401,118 @@ TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][
     CHECK(connected > disconnected);
 }
 
+TEST_CASE("Eval: phalanx connected pawns score higher than defended connected pawns",
+          "[eval][pawn]") {
+    Board board;
+
+    // White d4 and e4 sit side by side on the same rank: phalanx, and
+    // neither is defending the other from behind.
+    board.setFen("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
+    int phalanx = evaluate(board);
+
+    // White e4 defended by d3 from behind: connected but not phalanx. The
+    // pawns occupy the same files as the phalanx test and on adjacent
+    // ranks, so PST, material, and the shared ConnectedPawnBonus come out
+    // very close -- PhalanxBonus is the dominant remaining signal.
+    board.setFen("4k3/8/8/8/4P3/3P4/8/4K3 w - - 0 1");
+    int defendedOnly = evaluate(board);
+
+    CHECK(phalanx > defendedOnly);
+}
+
+TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pawn]") {
+    Board board;
+
+    auto blockedPawnsLine = [](const Board &b) {
+        std::ostringstream os;
+        evaluateVerbose(b, os);
+        const std::string text = os.str();
+        size_t pos = text.find("Blocked pawns");
+        REQUIRE(pos != std::string::npos);
+        size_t eol = text.find('\n', pos);
+        return text.substr(pos, eol - pos);
+    };
+
+    // No pawn is blocked on either side: both the "Blocked pawns" mg and
+    // eg halves print as zero.
+    board.setFen("4k3/8/8/8/8/8/8/4K3 w - - 0 1");
+    CHECK(blockedPawnsLine(board).find("mg=     0 eg=     0") != std::string::npos);
+
+    // White e5 pawn sits directly behind a black knight on e6 (blocker) and
+    // a black e7 pawn keeps e5 from passing. This is the rank 5 slot of
+    // BlockedPawnPenalty, so the breakdown should show a negative entry for
+    // white (reported as white perspective, so both halves are negative).
+    board.setFen("4k3/4p3/4n3/4P3/8/8/8/4K3 w - - 0 1");
+    {
+        std::string line = blockedPawnsLine(board);
+        CHECK(line.find("mg=    -5") != std::string::npos);
+        CHECK(line.find("eg=    -2") != std::string::npos);
+    }
+
+    // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
+    // keeping e6 non-passed. This is the rank 6 slot of BlockedPawnPenalty,
+    // which at default values is smaller in magnitude than the rank 5 slot.
+    board.setFen("4k3/3pn3/4P3/8/8/8/8/4K3 w - - 0 1");
+    {
+        std::string line = blockedPawnsLine(board);
+        CHECK(line.find("mg=    -2") != std::string::npos);
+        CHECK(line.find("eg=    -1") != std::string::npos);
+    }
+}
+
+TEST_CASE("Eval: doubled isolated pawns are worse than plain doubled pawns", "[eval][pawn]") {
+    Board board;
+
+    // White a2 and a3 are doubled on the a file and have no friend on the
+    // b file, so they are both doubled and isolated.
+    board.setFen("4k3/8/8/8/8/P7/P7/4K3 w - - 0 1");
+    int doubledIsolated = evaluate(board);
+
+    // Same doubled pair, but now there is a friend on the b file, so the
+    // a pawns are doubled but no longer isolated. The extra DoubledIsolated
+    // penalty should disappear even though the plain Doubled penalty and
+    // the extra b2 pawn's own material both shift the score.
+    board.setFen("4k3/8/8/8/8/P7/PP6/4K3 w - - 0 1");
+    int doubledSupported = evaluate(board);
+
+    CHECK(doubledSupported > doubledIsolated);
+}
+
+TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eval][pawn]") {
+    Board board;
+
+    // A lone isolated passed pawn on a2 already owes its strength to
+    // "no enemy pawn on the file ahead". Stacking WeakUnopposedPenalty
+    // on top of PassedPawnBonus fights the passer reward and distorts
+    // winning king-and-pawn endings downward. The eval must match the
+    // baseline (same score as before the weak-unopposed term existed).
+    board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 377);
+
+    // Textbook K + P vs K with an outside passed pawn: white is winning
+    // and the score should not be dragged down by treating the "no
+    // opposing pawn" feature as a weakness.
+    board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
+    CHECK(evaluate(board) == 342);
+}
+
+TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {
+    Board board;
+
+    // White a2 is isolated and blocked from being a passer by a black b3
+    // pawn on the adjacent file, but nothing sits on the a file ahead of
+    // it, so the a pawn is "weak unopposed".
+    board.setFen("4k3/8/8/8/8/1p6/P7/4K3 w - - 0 1");
+    int unopposed = evaluate(board);
+
+    // Same idea, but the blocker now lives on the a file, so white's a
+    // pawn is opposed and the weak-unopposed surcharge no longer fires.
+    board.setFen("4k3/p7/8/8/8/8/P7/4K3 w - - 0 1");
+    int opposed = evaluate(board);
+
+    CHECK(opposed > unopposed);
+}
+
 TEST_CASE("Eval: backward pawn scores lower than non-backward pawn", "[eval][pawn]") {
     Board board;
 
