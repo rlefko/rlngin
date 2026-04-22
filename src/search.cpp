@@ -845,8 +845,15 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // we have a quiet best move and a bound that actually informs the
         // correction: exact, a passing lower bound, or a failing upper bound.
         // Captures and promotions skew the correction target so we omit them.
-        if (!inCheck && depth >= 2 && bestMove.from != bestMove.to && !isCapture(board, bestMove) &&
-            bestMove.promotion == None) {
+        // Updates at ply 1 and 2 also skew sibling root moves: the position
+        // keys at those plies overlap heavily with keys visited elsewhere in
+        // the tree, and the cappedDepth-scaled bonus is at its largest there,
+        // so writes accumulated while the first root move is searched bias
+        // the correction that later-searched root moves read. Gating on
+        // ply >= 3 preserves the overwhelming majority of update sites while
+        // breaking the sibling-pollution loop.
+        if (!inCheck && ply >= 3 && depth >= 2 && bestMove.from != bestMove.to &&
+            !isCapture(board, bestMove) && bestMove.promotion == None) {
             bool boundUseful = (flag == TT_EXACT) ||
                                (flag == TT_LOWER_BOUND && bestScore >= beta) ||
                                (flag == TT_UPPER_BOUND && bestScore <= origAlpha);
