@@ -798,3 +798,24 @@ TEST_CASE("Search: depth 10 node count bounded on Kiwipete", "[search][nodes]") 
 
     CHECK(state.nodes < 2000000);
 }
+
+TEST_CASE("Search: Berlin position keeps recapturing Nxe5 at depth 17", "[search][corrhist]") {
+    // Regression for the sibling-pollution flip in which depths 13 through 16
+    // stably chose Nxe5 and then depth 17 jumped to Bf1. The cause was
+    // correction history writes at ply 1 and 2 inside the first root move's
+    // subtree biasing the evaluation of later-searched root moves. Gating
+    // those writes on ply >= 3 preserves the obvious recapture.
+    ensureInit();
+    clearTT();
+    Board board;
+    // Position after 1. e4 e5 2. Nf3 Nc6 3. Bb5 Nf6 4. O-O Nxe4 5. Re1 Nd6.
+    board.setFen("r1bqkb1r/pppp1ppp/2nn4/1B2p3/8/5N2/PPPP1PPP/RNBQR1K1 w kq - 2 6");
+
+    SearchLimits limits;
+    limits.depth = 17;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from == stringToSquare("f3"));
+    CHECK(state.bestMove.to == stringToSquare("e5"));
+}
