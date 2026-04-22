@@ -257,10 +257,14 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         // front so we can skip move generation and ordering entirely.
         // Promotions are handled separately because the per-move prune
         // deliberately ignores them; whenever a push-to-promote is on
-        // the board we fall through to the normal search path.
+        // the board we fall through to the normal search path. Pawn
+        // captures must be included in the max-gain calculation here so
+        // that pure-pawn endgames, where the per-move prune still lets
+        // pawn captures through at PieceValue[Pawn] + margin, are not
+        // silently pruned by a shortcut that thinks no capture exists.
         Color them = (board.sideToMove == White) ? Black : White;
         int bestTargetValue = 0;
-        for (int pt = Queen; pt >= Knight; pt--) {
+        for (int pt = Queen; pt >= Pawn; pt--) {
             if (board.byPiece[pt] & board.byColor[them]) {
                 bestTargetValue = PieceValue[pt];
                 break;
@@ -269,6 +273,12 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[board.sideToMove];
         Bitboard promoReady = ourPawns & ((board.sideToMove == White) ? Rank7BB : Rank2BB);
         if (!promoReady && standPat + bestTargetValue + searchParams.QsDeltaMargin <= alpha) {
+            // Mirror the no-move-tried store path below so future probes
+            // can cut immediately instead of recomputing stand-pat from
+            // scratch. The shortcut fires only when standPat < alpha, so
+            // the bound is always an upper bound.
+            Move noMove = {0, 0, None};
+            tt.store(board.key, standPat, rawStandPat, 0, TT_UPPER_BOUND, noMove, ply);
             return standPat;
         }
     }

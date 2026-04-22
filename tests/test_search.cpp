@@ -662,6 +662,30 @@ TEST_CASE("Search: qsearch shortcut preserves winning capture", "[search][qsearc
     clearTT();
 }
 
+TEST_CASE("Search: qsearch shortcut keeps pawn captures in pawn endgames", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    resetSearchParams();
+
+    // Pure pawn endgame with a simple winning capture: white pawn on e4
+    // takes black pawn on d5. Earlier the shortcut's max-gain loop
+    // stopped at Knight and so saw zero capturable targets when the
+    // enemy only had pawns, causing the node-level prune to fire even
+    // though the per-move delta would have let the pawn capture
+    // through. A tight margin plus a depth-one search surfaces the
+    // regression cleanly.
+    searchParams.QsDeltaMargin = 300;
+    Board board;
+    board.setFen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 1);
+    CHECK(best.from == stringToSquare("e4"));
+    CHECK(best.to == stringToSquare("d5"));
+
+    resetSearchParams();
+    clearTT();
+}
+
 TEST_CASE("Search: qsearch shortcut respects pending promotion", "[search][qsearch]") {
     ensureInit();
     clearTT();
