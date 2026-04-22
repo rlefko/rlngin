@@ -994,41 +994,46 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         if (theirQueens) {
             Bitboard safeSquares = ~ctx.attackedBy[them][Pawn] & ~board.byColor[us];
             Bitboard knightHops = 0;
-            Bitboard bishopRays = 0;
-            Bitboard rookRays = 0;
             Bitboard queens = theirQueens;
             while (queens) {
                 int qsq = popLsb(queens);
                 knightHops |= KnightAttacks[qsq];
-                bishopRays |= bishopAttacks(qsq, board.occupied);
-                rookRays |= rookAttacks(qsq, board.occupied);
             }
             Bitboard knightForks = knightHops & ctx.attackedBy[us][Knight] & safeSquares;
             scores[us] += evalParams.KnightOnQueen * popcount(knightForks);
 
             // Slider-on-queen pre-threat: count landing squares per
-            // slider, skipping sliders that already attack a queen.
-            // Without the per-piece skip, a bishop on a long diagonal
-            // with the queen already in its sights would get a pre-
-            // threat bonus for every alternate square on that diagonal
-            // it could slide to -- all redundant with the realized
-            // attack already scored by ThreatByMinor/Rook[Queen]. The
-            // skip keeps SliderOnQueen scoring only genuine new
-            // threats our sliders could create next move.
+            // slider, skipping only queens that slider already attacks
+            // right now. The earlier whole-piece skip dropped genuine
+            // pre-threats in promoted-queen positions where a bishop or
+            // rook attacked one queen already but could move next to
+            // attack a second queen.
             int sliderForkCount = 0;
             Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
             while (ourBishops) {
                 int sq = popLsb(ourBishops);
-                Bitboard bishopMoves = bishopAttacks(sq, board.occupied);
-                if (bishopMoves & theirQueens) continue;
-                sliderForkCount += popcount(bishopMoves & bishopRays & safeSquares);
+                Bitboard bishopMoves = bishopAttacks(sq, board.occupied) & safeSquares;
+                Bitboard bishopForks = 0;
+                Bitboard queensForBishop = theirQueens;
+                while (queensForBishop) {
+                    int qsq = popLsb(queensForBishop);
+                    if (bishopMoves & squareBB(qsq)) continue;
+                    bishopForks |= bishopMoves & bishopAttacks(qsq, board.occupied);
+                }
+                sliderForkCount += popcount(bishopForks);
             }
             Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
             while (ourRooks) {
                 int sq = popLsb(ourRooks);
-                Bitboard rookMoves = rookAttacks(sq, board.occupied);
-                if (rookMoves & theirQueens) continue;
-                sliderForkCount += popcount(rookMoves & rookRays & safeSquares);
+                Bitboard rookMoves = rookAttacks(sq, board.occupied) & safeSquares;
+                Bitboard rookForks = 0;
+                Bitboard queensForRook = theirQueens;
+                while (queensForRook) {
+                    int qsq = popLsb(queensForRook);
+                    if (rookMoves & squareBB(qsq)) continue;
+                    rookForks |= rookMoves & rookAttacks(qsq, board.occupied);
+                }
+                sliderForkCount += popcount(rookForks);
             }
             scores[us] += evalParams.SliderOnQueen * sliderForkCount;
         }

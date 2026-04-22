@@ -1339,6 +1339,42 @@ TEST_CASE("Eval: slider blocked by a piece between it and the queen earns nothin
     CHECK(unblocked > blockedBetween);
 }
 
+TEST_CASE("Eval: slider pre-threat still counts against a second queen", "[eval][threats]") {
+    auto threatScores = [](const Board &b) {
+        std::ostringstream os;
+        evaluateVerbose(b, os);
+        const std::string text = os.str();
+        size_t pos = text.find("Threats");
+        REQUIRE(pos != std::string::npos);
+        size_t mgPos = text.find("mg=", pos);
+        size_t egPos = text.find("eg=", mgPos);
+        REQUIRE(mgPos != std::string::npos);
+        REQUIRE(egPos != std::string::npos);
+        size_t eol = text.find('\n', egPos);
+        REQUIRE(eol != std::string::npos);
+        int mg = std::stoi(text.substr(mgPos + 3, egPos - (mgPos + 3)));
+        int eg = std::stoi(text.substr(egPos + 3, eol - (egPos + 3)));
+        return std::pair<int, int>{mg, eg};
+    };
+
+    Board board;
+
+    // White bishop on a1 can move to b2 or c3 to attack the queen on c1.
+    // This establishes the baseline slider pre-threat count.
+    board.setFen("7k/8/8/8/8/8/R5K1/B1q5 w - - 0 1");
+    auto [baselineMg, baselineEg] = threatScores(board);
+
+    // Add a second black queen on c3, already attacked by the bishop on a1.
+    // The bishop can still move to b2 to attack the queen on c1 next move,
+    // so the threat bucket should gain both the realized bishop-on-queen
+    // bonus and one remaining SliderOnQueen landing square.
+    board.setFen("7k/8/8/8/8/2q5/R5K1/B1q5 w - - 0 1");
+    auto [multiQueenMg, multiQueenEg] = threatScores(board);
+
+    CHECK(multiQueenMg - baselineMg == 137);
+    CHECK(multiQueenEg - baselineEg == 93);
+}
+
 TEST_CASE("Eval: knight pre-threat ignores landing squares attacked by enemy pawns",
           "[eval][threats]") {
     Board board;
