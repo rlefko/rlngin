@@ -699,6 +699,24 @@ TEST_CASE("Search: corrected pawn history does not drift startpos to e3", "[sear
     clearTT();
 }
 
+TEST_CASE("Search: fresh startpos search does not open with e3", "[search][corrhist]") {
+    ensureInit();
+    resetSearchParams();
+    clearTT();
+
+    Board board;
+    board.setStartPos();
+
+    Move best = findBestMove(board, 10);
+
+    int e2 = stringToSquare("e2");
+    int e3 = stringToSquare("e3");
+    bool isE3 = best.from == e2 && best.to == e3;
+    CHECK_FALSE(isE3);
+
+    clearTT();
+}
+
 TEST_CASE("Search: depth 10 node count bounded on startpos", "[search][nodes]") {
     ensureInit();
     clearTT();
