@@ -548,6 +548,14 @@ static void printCurrentValues() {
     // PhalanxBonus is disabled in eval_params.h; re-enable the dump when the
     // field and tuner entry come back.
     // std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
+    std::cout << "    " << fmtScore(evalParams.MinorBehindPawn) << ", // MinorBehindPawn\n";
+    std::cout << "    {" << fmtScore(evalParams.KingProtector[0]) << ", "
+              << fmtScore(evalParams.KingProtector[1]) << "}, // KingProtector (Knight, Bishop)\n";
+    std::cout << "    " << fmtScore(evalParams.LongDiagonalBishop)
+              << ", // LongDiagonalBishop\n";
+    std::cout << "    " << fmtScore(evalParams.RookOnQueenFile) << ", // RookOnQueenFile\n";
+    std::cout << "    " << fmtScore(evalParams.KnightOnQueen) << ", // KnightOnQueen\n";
+    std::cout << "    " << fmtScore(evalParams.SliderOnQueen) << ", // SliderOnQueen\n";
     std::cout << "};\n";
 }
 
