@@ -107,12 +107,15 @@ static int correctedEval(int staticEval, const Board &board, const SearchState &
     return staticEval + correction;
 }
 
-// Shared scaled bonus used by every correction-history table: the gap between
-// the node's search result and its raw static eval, scaled by depth and
-// clamped so a single update cannot saturate the entry.
-static int corrHistBonus(int staticEval, int bestValue, int depth, int max) {
-    int diff = bestValue - staticEval;
-    int bonus = diff * depth / 8;
+// Shared scaled bonus used by every correction-history table: the residual
+// gap between the node's search result and its ALREADY-CORRECTED eval,
+// scaled by depth and clamped so a single update cannot saturate the entry.
+// Depth is capped at 32 so very deep lines cannot single-handedly drive the
+// entry to saturation in one update.
+static int corrHistBonus(int baseEval, int bestValue, int depth, int max) {
+    int diff = bestValue - baseEval;
+    int cappedDepth = depth > 32 ? 32 : depth;
+    int bonus = diff * cappedDepth / 8;
     int cap = max / 4;
     if (bonus > cap)
         bonus = cap;
@@ -121,15 +124,17 @@ static int corrHistBonus(int staticEval, int bestValue, int depth, int max) {
     return bonus;
 }
 
-// Fold the gap between the node's search result and its raw static eval into
-// every correction table. Gated by the caller to fire only on quiet bestMove
-// cutoffs/exact bounds outside singular exclusion. Every table shares the
+// Fold the residual error between the node's search result and its corrected
+// eval into every correction table. Gated by the caller to fire only on
+// quiet bestMove cutoffs/exact bounds outside singular exclusion. Passing the
+// corrected eval lets the bonus self-regulate: as the correction converges
+// the residual shrinks and updates stop accumulating. Every table shares the
 // same storage bound, so the per-table bonus is also shared.
-static void updateCorrectionHistories(const Board &board, SearchState &state, int ply,
-                                      int staticEval, int bestValue, int depth) {
-    if (staticEval == -INF_SCORE) return;
+static void updateCorrectionHistories(const Board &board, SearchState &state, int ply, int baseEval,
+                                      int bestValue, int depth) {
+    if (baseEval == -INF_SCORE) return;
     int stm = board.sideToMove;
-    int bonus = corrHistBonus(staticEval, bestValue, depth, MAX_CORR_HIST);
+    int bonus = corrHistBonus(baseEval, bestValue, depth, MAX_CORR_HIST);
     auto &h = *state.historyTables;
 
     int pawnIdx = static_cast<int>(board.pawnKey % CORR_HIST_SIZE);
@@ -916,7 +921,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                                (flag == TT_LOWER_BOUND && bestScore >= beta) ||
                                (flag == TT_UPPER_BOUND && bestScore <= origAlpha);
             if (boundUseful) {
-                updateCorrectionHistories(board, state, ply, staticEval, bestScore, depth);
+                // Pass the CORRECTED eval as the bonus baseline so the update
+                // measures the residual error after the current correction is
+                // applied. Once the correction converges to the right value,
+                // bestScore - corrEval goes to zero and the update stops
+                // strengthening the entries further.
+                updateCorrectionHistories(board, state, ply, corrEval, bestScore, depth);
             }
         }
     }
