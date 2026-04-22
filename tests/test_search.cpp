@@ -608,6 +608,82 @@ TEST_CASE("Search: check extensions sharpen forcing lines", "[search][extensions
     CHECK(best.to == stringToSquare("e8"));
 }
 
+TEST_CASE("Search: QsDeltaMargin mutation changes node count", "[search][qsearch][tunable]") {
+    ensureInit();
+    clearTT();
+    resetSearchParams();
+
+    // Tactical position with enough capture churn for the delta-prune
+    // shortcut to fire repeatedly. Tightening the margin should prune
+    // more (fewer nodes); loosening it should prune less.
+    const std::string fen = "r1bqkb1r/pppp1ppp/2n2n2/4p3/2B1P3/5N2/PPPP1PPP/RNBQK2R w KQkq - 0 4";
+
+    Board boardA;
+    boardA.setFen(fen);
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState stateDefault;
+    startSearch(boardA, limits, stateDefault);
+    int64_t nodesDefault = stateDefault.nodes;
+
+    clearTT();
+    searchParams.QsDeltaMargin = 300; // tighter margin, more pruning
+
+    Board boardB;
+    boardB.setFen(fen);
+    SearchState stateTight;
+    startSearch(boardB, limits, stateTight);
+    int64_t nodesTight = stateTight.nodes;
+
+    resetSearchParams();
+    clearTT();
+
+    CHECK(nodesDefault != nodesTight);
+}
+
+TEST_CASE("Search: qsearch shortcut preserves winning capture", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    resetSearchParams();
+
+    // Winning capture available: white rook takes hanging black queen.
+    // Even with the tightest legal delta margin the node-level shortcut
+    // must never suppress the tactic, because the max-gain guard sees
+    // the enemy queen and refuses to shortcut.
+    searchParams.QsDeltaMargin = 300;
+    Board board;
+    board.setFen("4k3/8/8/q7/8/8/8/R3K3 w - - 0 1");
+
+    Move best = findBestMove(board, 3);
+    CHECK(best.from == stringToSquare("a1"));
+    CHECK(best.to == stringToSquare("a5"));
+
+    resetSearchParams();
+    clearTT();
+}
+
+TEST_CASE("Search: qsearch shortcut respects pending promotion", "[search][qsearch]") {
+    ensureInit();
+    clearTT();
+    resetSearchParams();
+
+    // White to move with a pawn on the 7th rank ready to promote. Even
+    // a tiny delta margin must not shortcut away the promotion: the
+    // rank-7 guard in qsearch detects the threat and falls through to
+    // the normal search path.
+    searchParams.QsDeltaMargin = 300;
+    Board board;
+    board.setFen("4k3/P7/8/8/8/8/8/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 2);
+    CHECK(best.from == stringToSquare("a7"));
+    CHECK(best.to == stringToSquare("a8"));
+    CHECK(best.promotion == Queen);
+
+    resetSearchParams();
+    clearTT();
+}
+
 TEST_CASE("Search: qsearch TT probe shrinks repeat work", "[search][qsearch]") {
     ensureInit();
     clearTT();

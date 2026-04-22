@@ -250,6 +250,27 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         bestScore = standPat;
         if (standPat >= beta) return standPat;
         if (standPat > alpha) alpha = standPat;
+
+        // Node-level delta shortcut: the per-move delta prune below will
+        // reject every capture when even the most valuable enemy piece
+        // cannot lift stand-pat into the alpha window. Detect that up
+        // front so we can skip move generation and ordering entirely.
+        // Promotions are handled separately because the per-move prune
+        // deliberately ignores them; whenever a push-to-promote is on
+        // the board we fall through to the normal search path.
+        Color them = (board.sideToMove == White) ? Black : White;
+        int bestTargetValue = 0;
+        for (int pt = Queen; pt >= Knight; pt--) {
+            if (board.byPiece[pt] & board.byColor[them]) {
+                bestTargetValue = PieceValue[pt];
+                break;
+            }
+        }
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[board.sideToMove];
+        Bitboard promoReady = ourPawns & ((board.sideToMove == White) ? Rank7BB : Rank2BB);
+        if (!promoReady && standPat + bestTargetValue + searchParams.QsDeltaMargin <= alpha) {
+            return standPat;
+        }
     }
 
     // When in check, search all legal moves (must escape check).
@@ -280,7 +301,8 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
             // distribution, standPat often sits well below alpha, so qsearch
             // fans out captures that have no chance of moving the score.
             if (m.promotion == None &&
-                standPat + PieceValue[capturedType(board, m)] + 724 <= alpha) {
+                standPat + PieceValue[capturedType(board, m)] + searchParams.QsDeltaMargin <=
+                    alpha) {
                 continue;
             }
         }

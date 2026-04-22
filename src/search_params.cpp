@@ -19,6 +19,7 @@ static const SearchParams kDefaultSearchParams = {
     246, // FpDepth
     38,  // SeeCaptureCoef
     97,  // SeeQuietCoef
+    724, // QsDeltaMargin
     74,  // LmrBase           (scaled x100; 0.74 in LMR formula)
     181, // LmrDivisor        (scaled x100; 1.81 in LMR formula)
 };
