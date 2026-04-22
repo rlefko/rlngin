@@ -202,6 +202,15 @@ static std::vector<ParamRef> collectParams() {
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
+    // --- Piece placement and queen pressure ---
+    addMgEg("MinorBehindPawn", &evalParams.MinorBehindPawn);
+    addMgEgConstr("KingProtector[Knight]", &evalParams.KingProtector[0], nonPositive());
+    addMgEgConstr("KingProtector[Bishop]", &evalParams.KingProtector[1], nonPositive());
+    addMgEg("LongDiagonalBishop", &evalParams.LongDiagonalBishop);
+    addMgEg("RookOnQueenFile", &evalParams.RookOnQueenFile);
+    addMgEg("KnightOnQueen", &evalParams.KnightOnQueen);
+    addMgEg("SliderOnQueen", &evalParams.SliderOnQueen);
+
     return out;
 }
 

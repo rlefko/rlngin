@@ -1298,8 +1298,7 @@ TEST_CASE("Eval: bishop one safe move from attacking the enemy queen earns a bon
     CHECK(withPreThreat > withoutPreThreat);
 }
 
-TEST_CASE("Eval: slider pre-threat does not fire without an enemy queen",
-          "[eval][threats]") {
+TEST_CASE("Eval: slider pre-threat does not fire without an enemy queen", "[eval][threats]") {
     Board board;
 
     // White rook on a1 with no enemy queen anywhere: SliderOnQueen has
@@ -1366,8 +1365,7 @@ TEST_CASE("Eval: knight pre-threat ignores landing squares attacked by enemy paw
     CHECK(safeLandings > onePawnAttacker);
 }
 
-TEST_CASE("Eval: rook on the same file as an enemy queen earns a bonus",
-          "[eval][placement]") {
+TEST_CASE("Eval: rook on the same file as an enemy queen earns a bonus", "[eval][placement]") {
     Board board;
 
     // White rook on a1 sharing a file with a black queen on a8: the
