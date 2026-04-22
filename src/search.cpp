@@ -110,12 +110,15 @@ static int correctedEval(int staticEval, const Board &board, const SearchState &
 // Shared scaled bonus used by every correction-history table: the residual
 // gap between the node's search result and its ALREADY-CORRECTED eval,
 // scaled by depth and clamped so a single update cannot saturate the entry.
-// Depth is capped at 32 so very deep lines cannot single-handedly drive the
-// entry to saturation in one update.
+// rlngin's search and table sizes compound this signal more aggressively than
+// the upstream engines this idea came from, so keep the gain conservative to
+// avoid same-search overlearning and opening drift like 1.e3. Depth is capped
+// at 32 so very deep lines cannot single-handedly drive the entry to
+// saturation in one update.
 static int corrHistBonus(int baseEval, int bestValue, int depth, int max) {
     int diff = bestValue - baseEval;
     int cappedDepth = depth > 32 ? 32 : depth;
-    int bonus = diff * cappedDepth / 8;
+    int bonus = diff * cappedDepth / 32;
     int cap = max / 4;
     if (bonus > cap)
         bonus = cap;
