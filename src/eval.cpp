@@ -273,6 +273,24 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
         Bitboard theirPawns = (c == White) ? blackPawns : whitePawns;
         int sign = (c == White) ? 1 : -1;
 
+        // Pawn islands: project our pawns down to an 8-bit file mask
+        // (one bit per file that contains at least one friendly pawn),
+        // then count runs of set bits. Each run is an island; the
+        // penalty fires once per extra island beyond the first since
+        // one contiguous chain is the ideal structure. Cheap to fold
+        // into the pawn hash because the computation depends only on
+        // which files have pawns, which is a strict subset of the
+        // information already keyed by pawnKey.
+        Bitboard folded = ourPawns;
+        folded |= folded >> 32;
+        folded |= folded >> 16;
+        folded |= folded >> 8;
+        uint8_t fileBits = static_cast<uint8_t>(folded & 0xFFu);
+        int islandCount = popcount(static_cast<Bitboard>(fileBits & ~(fileBits >> 1)));
+        if (islandCount > 1) {
+            score += sign * evalParams.PawnIslandPenalty * (islandCount - 1);
+        }
+
         Bitboard pawns = ourPawns;
         while (pawns) {
             int sq = popLsb(pawns);

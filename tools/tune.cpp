@@ -202,6 +202,7 @@ static std::vector<ParamRef> collectParams() {
     for (int i = 0; i < 2; i++)
         addMgEgConstr("BlockedPawnPenalty[" + std::to_string(i) + "]",
                       &evalParams.BlockedPawnPenalty[i], nonPositive());
+    addMgEgConstr("PawnIslandPenalty", &evalParams.PawnIslandPenalty, nonPositive());
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 

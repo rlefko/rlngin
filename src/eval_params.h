@@ -134,6 +134,13 @@ struct EvalParams {
     // PassedBlockedPenalty.
     Score BlockedPawnPenalty[2];
 
+    // Penalty per extra pawn island beyond the first. A side's pawns
+    // split into islands at every empty file: one contiguous group is
+    // ideal, and each additional island loses the ability to use the
+    // in-between file as a support highway while doubling the number
+    // of chain endpoints the opponent can attack.
+    Score PawnIslandPenalty;
+
     // Extra bonus layered on top of ConnectedPawnBonus when the connected
     // pawn sits in a phalanx (same rank, adjacent file) rather than only
     // being defended from behind. Phalanx pawns can advance in lockstep,
