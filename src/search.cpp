@@ -549,7 +549,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // decision in this node reads, and it is also what we stash in the search
     // stack so the improving comparison stays in the same units.
     int corrEval = inCheck ? -INF_SCORE : correctedEval(staticEval, board, state, ply);
-    state.staticEvals[ply] = inCheck ? -INF_SCORE : corrEval;
+    // Only the outer entry at this ply owns state.staticEvals[ply]. Singular
+    // extension and NMP verification re-enter the same ply (both pass
+    // allowNullMove=false); if we let them overwrite, their corrEval would be
+    // computed AFTER NMP or ProbCut children already updated the correction
+    // tables, producing a value that disagrees with what outer wrote and
+    // destabilizing the improving flag seen by descendants at ply+2.
+    bool writeStaticEval = allowNullMove && !hasExcludedMove;
+    if (writeStaticEval) {
+        state.staticEvals[ply] = inCheck ? -INF_SCORE : corrEval;
+    }
 
     // Determine if the position is improving (corrected eval better than 2
     // plies ago). Using corrected on both sides keeps improving aligned with
