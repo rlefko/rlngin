@@ -181,11 +181,39 @@ bool isPseudoLegalMove(const Board &board, const Move &m) {
         return (queenAttacks(m.from, occ) & target) != 0;
     case King: {
         if (KingAttacks[m.from] & target) return true;
-        // Castling legality (empty-between squares, path not attacked, and
-        // rights available) is re-validated by `isLegalMove` via makeMove;
-        // here we only confirm the move shape so makeMove is safe to call.
-        if (us == White && m.from == 4 && (m.to == 6 || m.to == 2)) return true;
-        if (us == Black && m.from == 60 && (m.to == 62 || m.to == 58)) return true;
+        // Castling requires full validation here: `Board::makeMove` treats
+        // any two-square king move as castling and blindly relocates the
+        // rook, so waving a castling move through without checking rights,
+        // path occupancy, and path-through-check would corrupt the board
+        // when `isLegalMove` runs the move for verification. Mirror the
+        // gates `addKingMoves` already uses at generation time.
+        Color enemy = (us == White) ? Black : White;
+        if (us == White && m.from == 4) {
+            if (m.to == 6 && board.castleWK && board.squares[5].type == None &&
+                board.squares[6].type == None && !isSquareAttacked(board, 4, enemy) &&
+                !isSquareAttacked(board, 5, enemy) && !isSquareAttacked(board, 6, enemy)) {
+                return true;
+            }
+            if (m.to == 2 && board.castleWQ && board.squares[3].type == None &&
+                board.squares[2].type == None && board.squares[1].type == None &&
+                !isSquareAttacked(board, 4, enemy) && !isSquareAttacked(board, 3, enemy) &&
+                !isSquareAttacked(board, 2, enemy)) {
+                return true;
+            }
+        }
+        if (us == Black && m.from == 60) {
+            if (m.to == 62 && board.castleBK && board.squares[61].type == None &&
+                board.squares[62].type == None && !isSquareAttacked(board, 60, enemy) &&
+                !isSquareAttacked(board, 61, enemy) && !isSquareAttacked(board, 62, enemy)) {
+                return true;
+            }
+            if (m.to == 58 && board.castleBQ && board.squares[59].type == None &&
+                board.squares[58].type == None && board.squares[57].type == None &&
+                !isSquareAttacked(board, 60, enemy) && !isSquareAttacked(board, 59, enemy) &&
+                !isSquareAttacked(board, 58, enemy)) {
+                return true;
+            }
+        }
         return false;
     }
     default:

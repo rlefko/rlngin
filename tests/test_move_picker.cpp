@@ -168,6 +168,29 @@ TEST_CASE("MovePicker: qsearch path emits only captures when not in check", "[mo
     CHECK(pickedKeys == capKeys);
 }
 
+TEST_CASE("MovePicker: illegal castling TT move is filtered without board corruption",
+          "[move_picker]") {
+    ensureInit();
+    Board board;
+    // White king on e1, white rook on h1, white bishop on f1 blocking the
+    // kingside castling path. `Board::makeMove` treats any two-square king
+    // move as castling, so a TT collision that carries `e1g1` here would
+    // corrupt the board if `isPseudoLegalMove` waved it through.
+    board.setFen("rnbqk1nr/1p2pp2/p1pp2pb/6Bp/2PPP2P/5N2/PP3PP1/RN1QKB1R w KQkq - 1 7");
+    Move castle = {4, 6, None};
+
+    SearchState state;
+    MovePicker picker(board, state, 0, castle, false);
+    PickedMove pm;
+    while (picker.next(pm)) {
+        CHECK_FALSE((pm.move.from == castle.from && pm.move.to == castle.to &&
+                     pm.move.promotion == castle.promotion));
+    }
+    // Board state must be untouched by the rejected TT move validation.
+    CHECK(board.squares[5].type == Bishop);
+    CHECK(board.squares[7].type == Rook);
+}
+
 TEST_CASE("MovePicker: qsearch in check yields every legal evasion", "[move_picker]") {
     ensureInit();
     Board board;
