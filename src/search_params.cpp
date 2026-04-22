@@ -22,9 +22,9 @@ static const SearchParams kDefaultSearchParams = {
     74,    // LmrBase           (scaled x100; 0.74 in LMR formula)
     181,   // LmrDivisor        (scaled x100; 1.81 in LMR formula)
     128,   // PawnCorrWeight    (preserves the prior pawn-only correction at full strength)
-    0,     // NonPawnCorrWeight (table is wired in but defaults off; SPSA can enable)
-    0,     // MinorCorrWeight   (table is wired in but defaults off; SPSA can enable)
-    0,     // ContCorrWeight    (table is wired in but defaults off; SPSA can enable)
+    16,    // NonPawnCorrWeight (modest additive signal per color, summed across both sides)
+    8,     // MinorCorrWeight   (small refinement on top of the non-pawn term)
+    16,    // ContCorrWeight    (two-ply keyed table; modest weight keeps magnitude in check)
     16384, // CorrHistGrain     (shared denominator; also the per-table clamp max)
 };
 
