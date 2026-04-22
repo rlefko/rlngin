@@ -207,7 +207,6 @@ static std::vector<ParamRef> collectParams() {
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
     // --- Piece placement and queen pressure ---
-    addMgEg("MinorBehindPawn", &evalParams.MinorBehindPawn);
     addMgEgConstr("KingProtector[Knight]", &evalParams.KingProtector[0], nonPositive());
     addMgEgConstr("KingProtector[Bishop]", &evalParams.KingProtector[1], nonPositive());
     addMgEg("LongDiagonalBishop", &evalParams.LongDiagonalBishop);
@@ -552,7 +551,6 @@ static void printCurrentValues() {
     // PhalanxBonus is disabled in eval_params.h; re-enable the dump when the
     // field and tuner entry come back.
     // std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
-    std::cout << "    " << fmtScore(evalParams.MinorBehindPawn) << ", // MinorBehindPawn\n";
     std::cout << "    {" << fmtScore(evalParams.KingProtector[0]) << ", "
               << fmtScore(evalParams.KingProtector[1]) << "}, // KingProtector (Knight, Bishop)\n";
     std::cout << "    " << fmtScore(evalParams.LongDiagonalBishop)

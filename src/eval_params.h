@@ -152,12 +152,6 @@ struct EvalParams {
     // together.
     // Score PhalanxBonus;
 
-    // Bonus for a knight or bishop sitting one square behind a friendly
-    // pawn (from our perspective). The pawn shields the minor and the
-    // minor in turn supports the pawn chain, capturing a coordination
-    // motif that mobility and outpost terms do not directly score.
-    Score MinorBehindPawn;
-
     // Per-chebyshev-square penalty pulling each of our minors toward our
     // own king. Indexed by piece type so knight and bishop can carry
     // different magnitudes -- knights fall apart at long range while

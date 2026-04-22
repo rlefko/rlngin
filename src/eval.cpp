@@ -446,17 +446,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += evalParams.KnightOutpostBonus;
             }
 
-            // Minor-behind-pawn: the friendly pawn directly in front shields
-            // the minor and the minor in turn supports the pawn chain. The
-            // relative-rank guard avoids reading off the board for a minor
-            // sitting on its own back-relative rank.
-            if (relativeRank(static_cast<Color>(c), sq) < 7) {
-                int frontSq = (c == White) ? sq + 8 : sq - 8;
-                if (squareBB(frontSq) & ourPawns) {
-                    scores[c] += evalParams.MinorBehindPawn;
-                }
-            }
-
             // King protector: a knight far from our king is too distant to
             // contribute to the defense. Penalty grows linearly with the
             // chebyshev distance so the term keeps a smooth gradient under
@@ -481,13 +470,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
             int blockingPawns = popcount(ourPawns & sameColorSquares);
             scores[c] += evalParams.BadBishopPenalty * blockingPawns;
-
-            if (relativeRank(static_cast<Color>(c), sq) < 7) {
-                int frontSq = (c == White) ? sq + 8 : sq - 8;
-                if (squareBB(frontSq) & ourPawns) {
-                    scores[c] += evalParams.MinorBehindPawn;
-                }
-            }
 
             if (kingSq >= 0) {
                 scores[c] += evalParams.KingProtector[1] * chebyshev(sq, kingSq);
