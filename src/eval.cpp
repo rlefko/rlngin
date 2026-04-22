@@ -394,6 +394,17 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 !(PawnSpanMask[c][sq] & theirPawns)) {
                 scores[c] += evalParams.KnightOutpostBonus;
             }
+
+            // Minor-behind-pawn: the friendly pawn directly in front shields
+            // the minor and the minor in turn supports the pawn chain. The
+            // relative-rank guard avoids reading off the board for a minor
+            // sitting on its own back-relative rank.
+            if (relativeRank(static_cast<Color>(c), sq) < 7) {
+                int frontSq = (c == White) ? sq + 8 : sq - 8;
+                if (squareBB(frontSq) & ourPawns) {
+                    scores[c] += evalParams.MinorBehindPawn;
+                }
+            }
         }
 
         Bitboard bishops = board.byPiece[Bishop] & board.byColor[c];
@@ -411,6 +422,13 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
             int blockingPawns = popcount(ourPawns & sameColorSquares);
             scores[c] += evalParams.BadBishopPenalty * blockingPawns;
+
+            if (relativeRank(static_cast<Color>(c), sq) < 7) {
+                int frontSq = (c == White) ? sq + 8 : sq - 8;
+                if (squareBB(frontSq) & ourPawns) {
+                    scores[c] += evalParams.MinorBehindPawn;
+                }
+            }
         }
 
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];
