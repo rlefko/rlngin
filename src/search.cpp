@@ -931,8 +931,9 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     // aging replacement rule can discount entries from prior searches.
     tt.new_search();
     state.searchKeys[0] = board.key;
-    // Seed the stack with the corrected root eval so the ply=2 improving
-    // comparison reads the same units as the interior-node writes.
+    // Raw root eval is position-only and safe to compute once; the corrected
+    // value is refreshed per iteration below so the ply=2 improving baseline
+    // stays in the same units as the live correction tables.
     int rootRawEval = evaluate(board);
     state.staticEvals[0] = correctedEval(rootRawEval, board, state, 0);
     state.startTime = std::chrono::steady_clock::now();
@@ -957,6 +958,11 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     for (int depth = 1; depth <= maxDepth; depth++) {
         state.rootDepth = depth;
         state.extensionsOnPath[0] = 0;
+        // Refresh the root corrected eval against the live correction tables.
+        // Interior nodes read this via improving at ply 2; letting it drift
+        // against a frozen seed produces mismatched pruning decisions as the
+        // correction tables evolve during the iteration.
+        state.staticEvals[0] = correctedEval(rootRawEval, board, state, 0);
 
         const int numSlots = std::min<int>(multiPVRequested, static_cast<int>(rootMoves.size()));
         std::vector<Move> excludedMoves;
