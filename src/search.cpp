@@ -646,6 +646,19 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
         }
 
+        // Late-history pruning: once the picker enters the Quiets phase, the
+        // remaining moves are strictly ordered by history. At shallow
+        // non-PV depths, skip any quiet whose history score sits below a
+        // depth-scaled threshold. Gating on phase == Quiets keeps TT move,
+        // good captures, killers, and the counter move unpruned.
+        if (!pvNode && !inCheck && moveIndex > 0 && pm.phase == PickPhase::Quiets && depth <= 5 &&
+            bestScore > -MATE_SCORE + MAX_PLY) {
+            int threshold = -searchParams.HistoryPruningCoef * depth;
+            if (pm.histScore < threshold) {
+                continue;
+            }
+        }
+
         // Check extension gate. seeGE operates on the pre-move board, so we
         // compute it here, and only for captures/promotions where the SEE
         // answer is meaningful. Quiet non-captures extend without the SEE

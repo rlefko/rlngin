@@ -52,6 +52,13 @@ struct SearchParams {
     int MinorCorrWeight;
     int ContCorrWeight;
     int CorrHistGrain;
+
+    // Late-history pruning: once the MovePicker enters the Quiets phase at
+    // a shallow non-PV node, skip any quiet whose butterfly + continuation
+    // history score is below `-HistoryPruningCoef * depth`. Gating on the
+    // picker phase keeps TT moves, good captures, killers, and the counter
+    // move unaffected, while the depth-scaled threshold softens at depth.
+    int HistoryPruningCoef;
 };
 
 extern SearchParams searchParams;

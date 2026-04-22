@@ -132,6 +132,15 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(
         makeIntSpec("CorrHistGrain", &searchParams.CorrHistGrain, 4096, 65536, 512.0, 256.0));
 
+    // --- Late-history pruning coefficient ---
+    // Skips quiets below `-HistoryPruningCoef * depth` once the picker is in
+    // the Quiets phase. Magnitude space scales against the ~16K cap on
+    // butterfly + continuation history, so bounds were picked to let SPSA
+    // search the full range from "prune almost no quiets" up to "prune
+    // anything below average".
+    out.push_back(makeIntSpec("HistoryPruningCoef", &searchParams.HistoryPruningCoef, 1000, 12000,
+                              400.0, 150.0));
+
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
     out.push_back(

@@ -27,6 +27,7 @@ static const SearchParams kDefaultSearchParams = {
     8,     // MinorCorrWeight   (small refinement on top of the non-pawn term)
     16,    // ContCorrWeight    (two-ply keyed table; modest weight keeps magnitude in check)
     16384, // CorrHistGrain     (shared denominator; also the per-table clamp max)
+    4000,  // HistoryPruningCoef (threshold per depth ply for late-history pruning)
 };
 
 SearchParams searchParams = kDefaultSearchParams;
