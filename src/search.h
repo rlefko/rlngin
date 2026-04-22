@@ -9,6 +9,22 @@
 #include <memory>
 #include <vector>
 
+// Shared cap between the MovePicker scratch buffers and the LMR reduction
+// table. Chess positions max out at around 218 legal moves; 256 is the
+// theoretical safe upper bound with comfortable headroom.
+constexpr int MOVE_PICKER_BUFFER_SIZE = 256;
+
+// Scored entry shared between MovePicker and SearchState. Declared here so
+// SearchState can preallocate per-ply scratch buffers on the heap; the
+// MovePicker borrows those slots instead of carrying large arrays on the
+// stack, which would blow the std::thread default stack limit at deep
+// recursion.
+struct ScoredMove {
+    int score;
+    int histScore;
+    Move move;
+};
+
 struct SearchLimits {
     int depth = 0;
     int movetime = 0;
@@ -58,6 +74,20 @@ struct SearchState {
         int16_t contCorrHist[7][64][7][64] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
+
+    // Per-ply scratch buffers for the staged MovePicker. Holding these on
+    // the heap keeps every negamax frame small; inlining them on the stack
+    // cost about 11 KB per frame and overflowed the std::thread default
+    // 512 KB stack at deep ply counts. The buffers are declared `mutable`
+    // so a MovePicker built from a `const SearchState&` can still write
+    // through them without triggering const-correctness UB under -O2.
+    struct PickerBuffers {
+        ScoredMove caps[MOVE_PICKER_BUFFER_SIZE];
+        ScoredMove quiets[MOVE_PICKER_BUFFER_SIZE];
+        int badCapIdx[MOVE_PICKER_BUFFER_SIZE];
+    };
+    mutable std::unique_ptr<PickerBuffers[]> pickerBuffers =
+        std::unique_ptr<PickerBuffers[]>(new PickerBuffers[MAX_PLY]);
 
     Move moveStack[MAX_PLY] = {};
     PieceType movedPiece[MAX_PLY] = {};

@@ -13,7 +13,7 @@ bool isSquareAttacked(const Board &board, int sq, Color byColor) {
     return false;
 }
 
-static bool isLegalMove(Board &board, const Move &m) {
+bool isLegalMove(Board &board, const Move &m) {
     Color us = board.sideToMove;
     UndoInfo undo = board.makeMove(m);
     Bitboard kingBB = board.byPiece[King] & board.byColor[us];
@@ -274,6 +274,123 @@ static void addKingCaptures(const Board &board, std::vector<Move> &moves) {
     }
 }
 
+static void addPawnQuiets(const Board &board, std::vector<Move> &moves) {
+    Color us = board.sideToMove;
+    Bitboard pawns = board.byPiece[Pawn] & board.byColor[us];
+    Bitboard empty = ~board.occupied;
+    Bitboard promoRank = (us == White) ? Rank8BB : Rank1BB;
+
+    // Non-promoting single pushes. Promotion pushes are material-changing
+    // and live on the capture / promotion path, so filter them out here.
+    Bitboard singlePush = (us == White) ? (pawns << 8) : (pawns >> 8);
+    singlePush &= empty;
+    int pushOffset = (us == White) ? -8 : 8;
+    Bitboard quietSingle = singlePush & ~promoRank;
+    while (quietSingle) {
+        int to = popLsb(quietSingle);
+        moves.push_back({to + pushOffset, to, None});
+    }
+
+    // Double pushes are always quiet: both intermediate and target squares
+    // must be empty, and the target can never be the promotion rank.
+    Bitboard dblRank = (us == White) ? Rank3BB : Rank6BB;
+    Bitboard doublePush =
+        (us == White) ? ((singlePush & dblRank) << 8) : ((singlePush & dblRank) >> 8);
+    doublePush &= empty;
+    while (doublePush) {
+        int to = popLsb(doublePush);
+        int from = (us == White) ? to - 16 : to + 16;
+        moves.push_back({from, to, None});
+    }
+}
+
+static void addKnightQuiets(const Board &board, std::vector<Move> &moves) {
+    Color us = board.sideToMove;
+    Bitboard empty = ~board.occupied;
+    Bitboard knights = board.byPiece[Knight] & board.byColor[us];
+
+    while (knights) {
+        int sq = popLsb(knights);
+        Bitboard attacks = KnightAttacks[sq] & empty;
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
+        }
+    }
+}
+
+static void addSlidingQuiets(const Board &board, std::vector<Move> &moves) {
+    Color us = board.sideToMove;
+    Bitboard occ = board.occupied;
+    Bitboard empty = ~occ;
+
+    Bitboard bishops = board.byPiece[Bishop] & board.byColor[us];
+    while (bishops) {
+        int sq = popLsb(bishops);
+        Bitboard attacks = bishopAttacks(sq, occ) & empty;
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
+        }
+    }
+
+    Bitboard rooks = board.byPiece[Rook] & board.byColor[us];
+    while (rooks) {
+        int sq = popLsb(rooks);
+        Bitboard attacks = rookAttacks(sq, occ) & empty;
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
+        }
+    }
+
+    Bitboard queens = board.byPiece[Queen] & board.byColor[us];
+    while (queens) {
+        int sq = popLsb(queens);
+        Bitboard attacks = queenAttacks(sq, occ) & empty;
+        while (attacks) {
+            moves.push_back({sq, popLsb(attacks), None});
+        }
+    }
+}
+
+static void addKingQuiets(const Board &board, std::vector<Move> &moves) {
+    Color us = board.sideToMove;
+    Bitboard kingBB = board.byPiece[King] & board.byColor[us];
+    if (!kingBB) return;
+    int kingSq = lsb(kingBB);
+    Bitboard empty = ~board.occupied;
+
+    Bitboard attacks = KingAttacks[kingSq] & empty;
+    while (attacks) {
+        moves.push_back({kingSq, popLsb(attacks), None});
+    }
+
+    // Castling is quiet by construction; mirror the legality gates used in
+    // the full movegen path so a quiet-only generator is still correct.
+    Color enemy = (us == White) ? Black : White;
+    if (us == White) {
+        if (board.castleWK && board.squares[5].type == None && board.squares[6].type == None &&
+            !isSquareAttacked(board, 4, enemy) && !isSquareAttacked(board, 5, enemy) &&
+            !isSquareAttacked(board, 6, enemy)) {
+            moves.push_back({4, 6, None});
+        }
+        if (board.castleWQ && board.squares[3].type == None && board.squares[2].type == None &&
+            board.squares[1].type == None && !isSquareAttacked(board, 4, enemy) &&
+            !isSquareAttacked(board, 3, enemy) && !isSquareAttacked(board, 2, enemy)) {
+            moves.push_back({4, 2, None});
+        }
+    } else {
+        if (board.castleBK && board.squares[61].type == None && board.squares[62].type == None &&
+            !isSquareAttacked(board, 60, enemy) && !isSquareAttacked(board, 61, enemy) &&
+            !isSquareAttacked(board, 62, enemy)) {
+            moves.push_back({60, 62, None});
+        }
+        if (board.castleBQ && board.squares[59].type == None && board.squares[58].type == None &&
+            board.squares[57].type == None && !isSquareAttacked(board, 60, enemy) &&
+            !isSquareAttacked(board, 59, enemy) && !isSquareAttacked(board, 58, enemy)) {
+            moves.push_back({60, 58, None});
+        }
+    }
+}
+
 std::vector<Move> generateLegalCaptures(Board &board) {
     std::vector<Move> pseudo;
 
@@ -298,6 +415,23 @@ std::vector<Move> generateLegalMoves(Board &board) {
     addKnightMoves(board, pseudo);
     addSlidingMoves(board, pseudo);
     addKingMoves(board, pseudo);
+
+    std::vector<Move> legal;
+    for (const Move &m : pseudo) {
+        if (isLegalMove(board, m)) {
+            legal.push_back(m);
+        }
+    }
+    return legal;
+}
+
+std::vector<Move> generateLegalQuiets(Board &board) {
+    std::vector<Move> pseudo;
+
+    addPawnQuiets(board, pseudo);
+    addKnightQuiets(board, pseudo);
+    addSlidingQuiets(board, pseudo);
+    addKingQuiets(board, pseudo);
 
     std::vector<Move> legal;
     for (const Move &m : pseudo) {
