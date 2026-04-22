@@ -546,6 +546,60 @@ TEST_CASE("Eval: pawn chain gives connected bonus", "[eval][pawn]") {
     (void)noChain;
 }
 
+TEST_CASE("Eval: extra pawn island fires the fragmentation penalty", "[eval][pawn]") {
+    Board board;
+
+    auto pawnBucket = [](const Board &b) {
+        std::ostringstream os;
+        evaluateVerbose(b, os);
+        const std::string text = os.str();
+        size_t pos = text.find("Pawns");
+        REQUIRE(pos != std::string::npos);
+        size_t eol = text.find('\n', pos);
+        return text.substr(pos, eol - pos);
+    };
+    auto parseHalf = [](const std::string &line, const char *key) {
+        size_t k = line.find(key);
+        REQUIRE(k != std::string::npos);
+        return std::atoi(line.c_str() + k + 3);
+    };
+
+    // Two white-only pawn configurations with identical isolation,
+    // doubled, and passer counts (all four pawns connected, all four
+    // passed because black has no pawns), differing only in island
+    // count: a,b,c,d -> one island, a,b,d,e -> two islands.
+    board.setFen("4k3/8/8/8/8/8/PPPP4/4K3 w - - 0 1");
+    std::string oneIslandLine = pawnBucket(board);
+    board.setFen("4k3/8/8/8/8/8/PP1PP3/4K3 w - - 0 1");
+    std::string twoIslandLine = pawnBucket(board);
+
+    // The "Pawns" bucket difference should be exactly the islands
+    // penalty applied once (two islands minus one island). Defaults
+    // are S(-5, -8) so the one-island configuration scores five mg /
+    // eight eg units higher in the pawn bucket.
+    CHECK(parseHalf(oneIslandLine, "mg=") - parseHalf(twoIslandLine, "mg=") == 5);
+    CHECK(parseHalf(oneIslandLine, "eg=") - parseHalf(twoIslandLine, "eg=") == 8);
+}
+
+TEST_CASE("Eval: symmetric pawn islands cancel between sides", "[eval][pawn]") {
+    Board board;
+
+    // Both sides carry exactly two islands (a+c vs a+c). The islands
+    // contribution must cancel in the verbose breakdown because the
+    // term is symmetric and each side contributes equal magnitude with
+    // opposite sign.
+    board.setFen("4k3/p1p5/8/8/8/8/P1P5/4K3 w - - 0 1");
+    std::ostringstream os;
+    evaluateVerbose(board, os);
+    const std::string text = os.str();
+    size_t pos = text.find("Pawns");
+    REQUIRE(pos != std::string::npos);
+    size_t eol = text.find('\n', pos);
+    std::string pawnLine = text.substr(pos, eol - pos);
+    CHECK(pawnLine.find("mg=     0") != std::string::npos);
+    CHECK(pawnLine.find("eg=     0") != std::string::npos);
+}
+
 TEST_CASE("Eval: symmetric pawn structure leaves only the tempo bonus", "[eval][pawn]") {
     Board board;
 
@@ -553,6 +607,85 @@ TEST_CASE("Eval: symmetric pawn structure leaves only the tempo bonus", "[eval][
     // tapers all the way to zero and the score is exactly 0.
     board.setFen("4k3/pppppppp/8/8/8/8/PPPPPPPP/4K3 w - - 0 1");
     CHECK(evaluate(board) == 0);
+}
+
+TEST_CASE("Eval: rook behind passed pawn fires the Tarrasch bonus", "[eval][pawn]") {
+    Board board;
+
+    auto passedExtrasLine = [](const Board &b) {
+        std::ostringstream os;
+        evaluateVerbose(b, os);
+        const std::string text = os.str();
+        size_t pos = text.find("Passed extras");
+        REQUIRE(pos != std::string::npos);
+        size_t eol = text.find('\n', pos);
+        return text.substr(pos, eol - pos);
+    };
+
+    auto passedExtrasDelta = [&](const std::string &withRookFen, const std::string &withoutRookFen,
+                                 int defaultMgBonus, int defaultEgBonus) {
+        Board b;
+        b.setFen(withRookFen);
+        std::string withLine = passedExtrasLine(b);
+        b.setFen(withoutRookFen);
+        std::string withoutLine = passedExtrasLine(b);
+
+        auto parseMg = [](const std::string &line) {
+            size_t mg = line.find("mg=");
+            REQUIRE(mg != std::string::npos);
+            return std::atoi(line.c_str() + mg + 3);
+        };
+        auto parseEg = [](const std::string &line) {
+            size_t eg = line.find("eg=");
+            REQUIRE(eg != std::string::npos);
+            return std::atoi(line.c_str() + eg + 3);
+        };
+
+        CHECK(parseMg(withLine) - parseMg(withoutLine) == defaultMgBonus);
+        CHECK(parseEg(withLine) - parseEg(withoutLine) == defaultEgBonus);
+    };
+
+    // Rook behind a friendly passer: white passer on a5, with a white rook
+    // on a1 (behind) versus a white rook planted off the passer's file.
+    // The tunable bonus must show up cleanly in the "Passed extras"
+    // bucket, isolated from PST and mobility differences.
+    passedExtrasDelta("4k3/8/8/P7/8/8/8/R3K3 w - - 0 1", "4k3/8/8/P7/8/8/8/4K2R w - - 0 1", 10, 20);
+
+    // Rook behind an enemy passer: black passer on a4, with a white rook
+    // on a8 (behind the enemy pawn from black's advancing direction)
+    // versus the same rook off the passer's file. The "chase from the
+    // rear" bonus lives in the same bucket.
+    passedExtrasDelta("R3k3/8/8/8/p7/8/8/4K3 w - - 0 1", "4k2R/8/8/8/p7/8/8/4K3 w - - 0 1", 5, 15);
+}
+
+TEST_CASE("Eval: minor shielded by a friendly pawn earns the behind-pawn bonus", "[eval]") {
+    Board board;
+
+    // White knight on e3 with a friendly pawn directly in front on e4
+    // (shielded) versus the same knight with the pawn pushed to e5
+    // (no longer shielded; e4 is empty).
+    board.setFen("4k3/8/8/8/4P3/4N3/8/4K3 w - - 0 1");
+    int knightShielded = evaluate(board);
+    board.setFen("4k3/8/4P3/8/8/4N3/8/4K3 w - - 0 1");
+    int knightExposed = evaluate(board);
+    CHECK(knightShielded > knightExposed);
+
+    // Bishop version of the same check: B on e3, P on e4 shielding
+    // versus P on e5 with the bishop still on e3. The only structural
+    // change is whether the pawn sits directly one rank in front.
+    board.setFen("4k3/8/8/8/4P3/4B3/8/4K3 w - - 0 1");
+    int bishopShielded = evaluate(board);
+    board.setFen("4k3/8/4P3/8/8/4B3/8/4K3 w - - 0 1");
+    int bishopExposed = evaluate(board);
+    CHECK(bishopShielded > bishopExposed);
+
+    // Black mirror: the sign of the minor-behind bonus must flip with
+    // color so the term cannot bias the engine toward one side.
+    board.setFen("4k3/8/4n3/4p3/8/8/8/4K3 w - - 0 1");
+    int blackShielded = evaluate(board);
+    board.setFen("4k3/8/4n3/8/8/4p3/8/4K3 w - - 0 1");
+    int blackExposed = evaluate(board);
+    CHECK(blackShielded < blackExposed);
 }
 
 TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {

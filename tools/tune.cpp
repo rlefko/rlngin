@@ -151,6 +151,9 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("BishopOutpostBonus", &evalParams.BishopOutpostBonus);
     out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
                    nonPositive()}); // mg only, must stay a penalty
+    addMgEg("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus);
+    addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus);
+    addMgEg("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus);
 
     // --- Bishop pair ---
     addMgEg("BishopPair", &evalParams.BishopPair);
@@ -199,6 +202,7 @@ static std::vector<ParamRef> collectParams() {
     for (int i = 0; i < 2; i++)
         addMgEgConstr("BlockedPawnPenalty[" + std::to_string(i) + "]",
                       &evalParams.BlockedPawnPenalty[i], nonPositive());
+    addMgEgConstr("PawnIslandPenalty", &evalParams.PawnIslandPenalty, nonPositive());
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 

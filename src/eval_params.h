@@ -59,6 +59,22 @@ struct EvalParams {
     Score BishopOutpostBonus;
     Score TrappedRookByKingPenalty;
 
+    // Tarrasch's rule: rooks belong behind passed pawns. Credit a small
+    // bonus when a friendly rook shares a file with a passed pawn and
+    // sits behind it relative to the pawn's advancing direction. The
+    // "our" case rewards escorting a friendly passer toward promotion;
+    // the "their" case rewards chasing an enemy passer from behind,
+    // which is the same idea applied to the defender.
+    Score RookBehindOurPasserBonus;
+    Score RookBehindTheirPasserBonus;
+
+    // Stockfish-lineage "minor behind pawn": a knight or bishop sitting
+    // one rank behind a friendly pawn is shielded from direct frontal
+    // attack and hard for an enemy pawn on the same file to challenge.
+    // The bonus fires per minor-pawn pair so a well-developed kingside
+    // of N f3 + P g4 + B g2 (or similar) gets credited cleanly.
+    Score MinorBehindPawnBonus;
+
     // Piece pair synergy.
     Score BishopPair;
 
@@ -117,6 +133,13 @@ struct EvalParams {
     // the over-extended-but-stuck pattern that passers already get via
     // PassedBlockedPenalty.
     Score BlockedPawnPenalty[2];
+
+    // Penalty per extra pawn island beyond the first. A side's pawns
+    // split into islands at every empty file: one contiguous group is
+    // ideal, and each additional island loses the ability to use the
+    // in-between file as a support highway while doubling the number
+    // of chain endpoints the opponent can attack.
+    Score PawnIslandPenalty;
 
     // Extra bonus layered on top of ConnectedPawnBonus when the connected
     // pawn sits in a phalanx (same rank, adjacent file) rather than only
