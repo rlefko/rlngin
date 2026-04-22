@@ -604,6 +604,36 @@ TEST_CASE("Eval: rook behind passed pawn fires the Tarrasch bonus", "[eval][pawn
     passedExtrasDelta("R3k3/8/8/8/p7/8/8/4K3 w - - 0 1", "4k2R/8/8/8/p7/8/8/4K3 w - - 0 1", 5, 15);
 }
 
+TEST_CASE("Eval: minor shielded by a friendly pawn earns the behind-pawn bonus", "[eval]") {
+    Board board;
+
+    // White knight on e3 with a friendly pawn directly in front on e4
+    // (shielded) versus the same knight with the pawn pushed to e5
+    // (no longer shielded; e4 is empty).
+    board.setFen("4k3/8/8/8/4P3/4N3/8/4K3 w - - 0 1");
+    int knightShielded = evaluate(board);
+    board.setFen("4k3/8/4P3/8/8/4N3/8/4K3 w - - 0 1");
+    int knightExposed = evaluate(board);
+    CHECK(knightShielded > knightExposed);
+
+    // Bishop version of the same check: B on e3, P on e4 shielding
+    // versus P on e5 with the bishop still on e3. The only structural
+    // change is whether the pawn sits directly one rank in front.
+    board.setFen("4k3/8/8/8/4P3/4B3/8/4K3 w - - 0 1");
+    int bishopShielded = evaluate(board);
+    board.setFen("4k3/8/4P3/8/8/4B3/8/4K3 w - - 0 1");
+    int bishopExposed = evaluate(board);
+    CHECK(bishopShielded > bishopExposed);
+
+    // Black mirror: the sign of the minor-behind bonus must flip with
+    // color so the term cannot bias the engine toward one side.
+    board.setFen("4k3/8/4n3/4p3/8/8/8/4K3 w - - 0 1");
+    int blackShielded = evaluate(board);
+    board.setFen("4k3/8/4n3/8/8/4p3/8/4K3 w - - 0 1");
+    int blackExposed = evaluate(board);
+    CHECK(blackShielded < blackExposed);
+}
+
 TEST_CASE("Eval: black pawn structure mirrors white", "[eval][pawn]") {
     Board board;
 

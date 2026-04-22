@@ -153,6 +153,7 @@ static std::vector<ParamRef> collectParams() {
                    nonPositive()}); // mg only, must stay a penalty
     addMgEg("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus);
     addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus);
+    addMgEg("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus);
 
     // --- Bishop pair ---
     addMgEg("BishopPair", &evalParams.BishopPair);

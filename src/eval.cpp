@@ -384,6 +384,19 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
         Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[c ^ 1];
 
+        // Minor behind pawn: a friendly knight or bishop sitting directly
+        // one rank behind a friendly pawn is shielded against frontal
+        // attacks and cannot be easily chased by an enemy pawn on the
+        // same file. Pulling the pawn bitboard back one rank aligns the
+        // pawns with their shielded minor, so a single AND counts every
+        // shielded pair cleanly.
+        Bitboard ourMinors = (board.byPiece[Knight] | board.byPiece[Bishop]) & board.byColor[c];
+        Bitboard pawnsPulledBack = (c == White) ? (ourPawns >> 8) : (ourPawns << 8);
+        int shieldedMinors = popcount(ourMinors & pawnsPulledBack);
+        if (shieldedMinors) {
+            scores[c] += evalParams.MinorBehindPawnBonus * shieldedMinors;
+        }
+
         Bitboard knights = board.byPiece[Knight] & board.byColor[c];
         while (knights) {
             int sq = popLsb(knights);

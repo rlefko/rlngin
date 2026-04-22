@@ -181,6 +181,13 @@ std::vector<TunableSpec> buildRegistry() {
                                     &evalParams.RookBehindTheirPasserBonus, false, 0, 80, 6.0,
                                     2.0));
 
+    // --- Minor behind pawn: small bonus applied per shielded minor,
+    // sized in line with other per-piece activity scalars. ---
+    out.push_back(makeScoreHalfSpec("MinorBehindPawnBonusMg", &evalParams.MinorBehindPawnBonus,
+                                    true, 0, 60, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("MinorBehindPawnBonusEg", &evalParams.MinorBehindPawnBonus,
+                                    false, 0, 60, 5.0, 2.0));
+
     return out;
 }
 

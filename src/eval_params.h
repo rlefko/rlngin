@@ -68,6 +68,13 @@ struct EvalParams {
     Score RookBehindOurPasserBonus;
     Score RookBehindTheirPasserBonus;
 
+    // Stockfish-lineage "minor behind pawn": a knight or bishop sitting
+    // one rank behind a friendly pawn is shielded from direct frontal
+    // attack and hard for an enemy pawn on the same file to challenge.
+    // The bonus fires per minor-pawn pair so a well-developed kingside
+    // of N f3 + P g4 + B g2 (or similar) gets credited cleanly.
+    Score MinorBehindPawnBonus;
+
     // Piece pair synergy.
     Score BishopPair;
 

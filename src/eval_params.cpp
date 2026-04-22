@@ -130,6 +130,7 @@ static const EvalParams kDefaultEvalParams = {
     S( -7,   0), // TrappedRookByKingPenalty
     S( 10,  20), // RookBehindOurPasserBonus
     S(  5,  15), // RookBehindTheirPasserBonus
+    S( 10,   5), // MinorBehindPawnBonus
     S(  8,  74), // BishopPair
 
     {S(68, -12), S(52, -13)},                        // PawnShieldBonus
