@@ -1242,6 +1242,23 @@ TEST_CASE("Eval: friendly non-pawn on the long diagonal does not kill the bonus"
     CHECK(std::abs(withCenterKnight - knightOnRim) < 200);
 }
 
+TEST_CASE("Eval: rook on the same file as an enemy queen earns a bonus",
+          "[eval][placement]") {
+    Board board;
+
+    // White rook on a1 sharing a file with a black queen on a8: the
+    // RookOnQueenFile bonus fires.
+    board.setFen("q3k3/8/8/8/8/8/8/R3K3 w - - 0 1");
+    int onQueenFile = evaluate(board);
+
+    // Same material with the rook moved to b1, off the queen's file.
+    // The bonus does not fire.
+    board.setFen("q3k3/8/8/8/8/8/8/1R2K3 w - - 0 1");
+    int offQueenFile = evaluate(board);
+
+    CHECK(onQueenFile > offQueenFile);
+}
+
 TEST_CASE("Eval: king-protector penalty is color-symmetric", "[eval][placement]") {
     Board board;
 

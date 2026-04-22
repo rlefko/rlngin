@@ -491,6 +491,16 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += evalParams.RookSemiOpenFileBonus;
             }
 
+            // Rook on queen file: a rook that shares its file with any
+            // queen, friend or foe, piles tactical pressure that the
+            // open- and semi-open-file bonuses do not cover when a
+            // queen sits on the file. Counted separately so the tuner
+            // can find a magnitude orthogonal to the file-emptiness
+            // bonuses above.
+            if (fileMask & board.byPiece[Queen]) {
+                scores[c] += evalParams.RookOnQueenFile;
+            }
+
             // Rook on the seventh: either targets enemy pawns on the 7th
             // or pins the enemy king on the 8th. Both conditions generate
             // most of the classical "pig on the seventh" pressure.

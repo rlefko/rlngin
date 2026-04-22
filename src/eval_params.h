@@ -149,6 +149,12 @@ struct EvalParams {
     // diagonal. Captures the classic "fianchetto rake" motif that
     // mobility alone scores too coarsely.
     Score LongDiagonalBishop;
+
+    // Bonus for a rook that shares its file with any queen on the
+    // board. The semi-open-file bonus already covers the case where
+    // only enemy pawns sit on the file, but it does not directly
+    // reward a rook piling pressure on a queen file.
+    Score RookOnQueenFile;
 };
 
 extern EvalParams evalParams;
