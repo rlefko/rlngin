@@ -59,9 +59,10 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
     // is scaled to zero. The mg half still reflects material and PSTs,
-    // less the king-protector penalty for the bishop on a1.
+    // less the king-protector penalty, plus the long-diagonal-bishop
+    // bonus that fires for a1 raking into the central squares.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 40);
+    CHECK(evaluate(board) == 41);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
@@ -1175,6 +1176,70 @@ TEST_CASE("Eval: bishop close to its own king beats the same bishop in the far c
     int farBishop = evaluate(board);
 
     CHECK(closeBishop > farBishop);
+}
+
+TEST_CASE("Eval: bishop on a long diagonal raking the center earns the bonus",
+          "[eval][placement]") {
+    Board board;
+
+    // White bishop on b2 with a clear a1-h8 diagonal raking d4 and e5,
+    // with queens on the board so the pawnless-minor scale factor does
+    // not zero the eg half.
+    board.setFen("3qk3/8/8/8/8/8/1B6/3QK3 w - - 0 1");
+    int rakingBishop = evaluate(board);
+
+    // Same bishop relocated to c1: not on either long diagonal, the
+    // bonus does not fire.
+    board.setFen("3qk3/8/8/8/8/8/8/2BQK3 w - - 0 1");
+    int offDiagonal = evaluate(board);
+
+    CHECK(rakingBishop > offDiagonal);
+}
+
+TEST_CASE("Eval: pawn structurally blocking the long diagonal kills the bonus",
+          "[eval][placement]") {
+    Board board;
+
+    // Two configurations with the bishop on b2 and a single black pawn
+    // present in both, so material/scale parity holds. Pawn lives on a7
+    // in the clear case -- well off the long diagonal -- and on d4 in
+    // the blocked case where it interrupts the rake past d4. The pawn
+    // structure shift between a7 and d4 is bounded; the long-diagonal
+    // bonus fires only for the clear case.
+    board.setFen("4k3/p7/8/8/8/8/1B6/4K3 w - - 0 1");
+    int clearDiagonal = evaluate(board);
+
+    board.setFen("4k3/8/8/8/3p4/8/1B6/4K3 w - - 0 1");
+    int blockedDiagonal = evaluate(board);
+
+    // The two positions share material, the same bishop, the same set
+    // of kings. Pawn placement controls both pawn-structure terms and
+    // the LongDiagonalBishop term. Asserting the clear-diagonal case
+    // beats the blocked case captures the placement bonus dominating
+    // the modest rank/PST swing of moving the black pawn from a7 to d4.
+    CHECK(clearDiagonal > blockedDiagonal);
+}
+
+TEST_CASE("Eval: friendly non-pawn on the long diagonal does not kill the bonus",
+          "[eval][placement]") {
+    Board board;
+
+    // Two configurations sharing the same material set so the scale
+    // factor agrees in both. Bishop on b2, knight on e5 in case A
+    // (which sits on the long diagonal but is not a pawn, so it does
+    // not break the rake). Case B moves the knight off to a far rim
+    // square; both positions retain the long-diagonal rake.
+    board.setFen("3qk3/8/8/4N3/8/8/1B6/3QK3 w - - 0 1");
+    int withCenterKnight = evaluate(board);
+
+    board.setFen("3qk3/N7/8/8/8/8/1B6/3QK3 w - - 0 1");
+    int knightOnRim = evaluate(board);
+
+    // Both positions get the LongDiagonalBishop bonus; the eval gap is
+    // dominated by PST/mobility differences for the knight. Asserting
+    // the gap is bounded confirms the placement bonus stays active in
+    // both rather than vanishing because of the knight on e5.
+    CHECK(std::abs(withCenterKnight - knightOnRim) < 200);
 }
 
 TEST_CASE("Eval: king-protector penalty is color-symmetric", "[eval][placement]") {

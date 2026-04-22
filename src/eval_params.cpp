@@ -173,6 +173,8 @@ static const EvalParams kDefaultEvalParams = {
     // our king. Eg starts at zero so endgame centralization is not
     // discouraged before the tuner gets to weigh in.
     {S(-8, 0), S(-6, 0)}, // KingProtector (Knight, Bishop)
+
+    S(22, 0), // LongDiagonalBishop
 };
 // clang-format on
 

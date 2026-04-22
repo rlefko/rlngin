@@ -62,6 +62,20 @@ static const int KingDangerDivEg = 8;
 static const int KingDangerMgCap = 240;
 static const int KingDangerEgCap = 96;
 
+// Long-diagonal masks for the LongDiagonalBishop term and the central
+// four squares the rake is measured against. Computed at file scope
+// because they are pure constants of the board geometry; folding them
+// into a runtime helper would just hide the bit pattern behind a name.
+static const Bitboard LongDiagonalA1H8BB = (1ULL << 0) | (1ULL << 9) | (1ULL << 18) |
+                                           (1ULL << 27) | (1ULL << 36) | (1ULL << 45) |
+                                           (1ULL << 54) | (1ULL << 63);
+static const Bitboard LongDiagonalA8H1BB = (1ULL << 56) | (1ULL << 49) | (1ULL << 42) |
+                                           (1ULL << 35) | (1ULL << 28) | (1ULL << 21) |
+                                           (1ULL << 14) | (1ULL << 7);
+static const Bitboard LongDiagonalsBB = LongDiagonalA1H8BB | LongDiagonalA8H1BB;
+static const Bitboard CenterFourBB =
+    (1ULL << 27) | (1ULL << 28) | (1ULL << 35) | (1ULL << 36);
+
 // Stockfish-lineage quadratic imbalance tables. Indexed by [pt1][pt2] with
 // pt in { BishopPair=0, Pawn=1, Knight=2, Bishop=3, Rook=4, Queen=5 }. The
 // "ours" table captures synergy between own-side pieces (e.g. knight value
@@ -446,6 +460,19 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
 
             if (kingSq >= 0) {
                 scores[c] += evalParams.KingProtector[1] * chebyshev(sq, kingSq);
+            }
+
+            // Long-diagonal bishop: a bishop sitting on either long
+            // diagonal that rakes at least two of the four central
+            // squares unobstructed by any pawn. Using the union of
+            // pawns as the blocker set lets friendly or enemy non-pawn
+            // pieces sit on the diagonal without killing the bonus,
+            // matching the motif we want to reward.
+            if (squareBB(sq) & LongDiagonalsBB) {
+                Bitboard allPawns = board.byPiece[Pawn];
+                if (popcount(bishopAttacks(sq, allPawns) & CenterFourBB) >= 2) {
+                    scores[c] += evalParams.LongDiagonalBishop;
+                }
             }
         }
 

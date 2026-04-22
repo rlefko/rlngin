@@ -142,6 +142,13 @@ struct EvalParams {
     // separate the two pulls. Held to non-positive bounds in the tuner
     // so the term stays a penalty under coordinate descent.
     Score KingProtector[2]; // [0] = Knight, [1] = Bishop
+
+    // Bonus for a bishop that sits on one of the two long diagonals
+    // (a1-h8 or a8-h1) and rakes at least two of the four central
+    // squares (d4, e4, d5, e5) without a pawn structurally blocking the
+    // diagonal. Captures the classic "fianchetto rake" motif that
+    // mobility alone scores too coarsely.
+    Score LongDiagonalBishop;
 };
 
 extern EvalParams evalParams;
