@@ -13,6 +13,8 @@ struct UndoInfo {
     uint64_t key;
     uint64_t pawnKey;
     uint64_t materialKey;
+    uint64_t nonPawnKey[2];
+    uint64_t minorKey;
 };
 
 class Board {
@@ -29,6 +31,11 @@ class Board {
     uint64_t key = 0;
     uint64_t pawnKey = 0;
     uint64_t materialKey = 0;
+    // Non-pawn placement hash per color (includes the king). Minor hash covers
+    // knights and bishops of both colors. Both are maintained incrementally
+    // alongside key/pawnKey/materialKey in make/unmake.
+    uint64_t nonPawnKey[2] = {0, 0};
+    uint64_t minorKey = 0;
     uint64_t occupied = 0;
     uint64_t byColor[2] = {0, 0};
     uint64_t byPiece[7] = {0, 0, 0, 0, 0, 0, 0};
@@ -47,6 +54,8 @@ class Board {
     void computeKey();
     void computePawnKey();
     void computeMaterialKey();
+    void computeNonPawnKeys();
+    void computeMinorKey();
 };
 
 #endif

@@ -42,6 +42,16 @@ struct SearchParams {
     //   lmrReductions[d][m] = int(LmrBase/100 + log(d) * log(m) / (LmrDivisor/100))
     int LmrBase;
     int LmrDivisor;
+
+    // Correction-history weights. The corrected eval is:
+    //   staticEval + sum(weight_i * table_i_entry) / CorrHistGrain
+    // Non-pawn correction is weighted once per color term. CorrHistGrain is
+    // the shared denominator; raising it shrinks every correction uniformly.
+    int PawnCorrWeight;
+    int NonPawnCorrWeight;
+    int MinorCorrWeight;
+    int ContCorrWeight;
+    int CorrHistGrain;
 };
 
 extern SearchParams searchParams;
