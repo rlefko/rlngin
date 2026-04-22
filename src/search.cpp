@@ -89,14 +89,17 @@ static int correctedEval(int staticEval, const Board &board, const SearchState &
     weighted +=
         static_cast<long>(searchParams.NonPawnCorrWeight) * h.nonPawnCorrHist[stm][Black][blackIdx];
     weighted += static_cast<long>(searchParams.MinorCorrWeight) * h.minorCorrHist[stm][minorIdx];
-    if (ply >= 1) {
-        PieceType prevPt = state.movedPiece[ply - 1];
-        // A null parent leaves movedPiece as None; there is no meaningful
-        // previous move to key a continuation correction on, so skip the term.
-        if (prevPt != None) {
-            int prevTo = state.moveStack[ply - 1].to;
+    if (ply >= 2) {
+        PieceType prev2Pt = state.movedPiece[ply - 2];
+        PieceType prev1Pt = state.movedPiece[ply - 1];
+        // A null parent at either slot leaves movedPiece as None; with no
+        // meaningful move there is nothing to key a continuation correction
+        // on, so skip the term.
+        if (prev2Pt != None && prev1Pt != None) {
+            int prev2To = state.moveStack[ply - 2].to;
+            int prev1To = state.moveStack[ply - 1].to;
             weighted += static_cast<long>(searchParams.ContCorrWeight) *
-                        h.contCorrHist[stm][prevPt][prevTo];
+                        h.contCorrHist[prev2Pt][prev2To][prev1Pt][prev1To];
         }
     }
 
@@ -140,11 +143,14 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
     int minorIdx = static_cast<int>(board.minorKey % CORR_HIST_SIZE);
     applyHistoryBonus(h.minorCorrHist[stm][minorIdx], bonus, MAX_CORR_HIST);
 
-    if (ply >= 1) {
-        PieceType prevPt = state.movedPiece[ply - 1];
-        if (prevPt != None) {
-            int prevTo = state.moveStack[ply - 1].to;
-            applyHistoryBonus(h.contCorrHist[stm][prevPt][prevTo], bonus, MAX_CORR_HIST);
+    if (ply >= 2) {
+        PieceType prev2Pt = state.movedPiece[ply - 2];
+        PieceType prev1Pt = state.movedPiece[ply - 1];
+        if (prev2Pt != None && prev1Pt != None) {
+            int prev2To = state.moveStack[ply - 2].to;
+            int prev1To = state.moveStack[ply - 1].to;
+            applyHistoryBonus(h.contCorrHist[prev2Pt][prev2To][prev1Pt][prev1To], bonus,
+                              MAX_CORR_HIST);
         }
     }
 }

@@ -27,7 +27,7 @@ TEST_CASE("Correction history: every new table starts at zero", "[search][corrhi
     const auto &h = *state.historyTables;
     CHECK(tableIsZero(&h.nonPawnCorrHist[0][0][0], sizeof(h.nonPawnCorrHist) / sizeof(int16_t)));
     CHECK(tableIsZero(&h.minorCorrHist[0][0], sizeof(h.minorCorrHist) / sizeof(int16_t)));
-    CHECK(tableIsZero(&h.contCorrHist[0][0][0], sizeof(h.contCorrHist) / sizeof(int16_t)));
+    CHECK(tableIsZero(&h.contCorrHist[0][0][0][0], sizeof(h.contCorrHist) / sizeof(int16_t)));
 }
 
 TEST_CASE("Correction history: a modest search populates the new tables", "[search][corrhist]") {
@@ -52,7 +52,7 @@ TEST_CASE("Correction history: a modest search populates the new tables", "[sear
     bool minorTouched =
         !tableIsZero(&h.minorCorrHist[0][0], sizeof(h.minorCorrHist) / sizeof(int16_t));
     bool contTouched =
-        !tableIsZero(&h.contCorrHist[0][0][0], sizeof(h.contCorrHist) / sizeof(int16_t));
+        !tableIsZero(&h.contCorrHist[0][0][0][0], sizeof(h.contCorrHist) / sizeof(int16_t));
 
     CHECK(nonPawnTouched);
     CHECK(minorTouched);
@@ -77,7 +77,7 @@ TEST_CASE("Correction history: clearHistory zeroes every correction table", "[se
     CHECK(tableIsZero(&h.pawnCorrHist[0][0], sizeof(h.pawnCorrHist) / sizeof(int16_t)));
     CHECK(tableIsZero(&h.nonPawnCorrHist[0][0][0], sizeof(h.nonPawnCorrHist) / sizeof(int16_t)));
     CHECK(tableIsZero(&h.minorCorrHist[0][0], sizeof(h.minorCorrHist) / sizeof(int16_t)));
-    CHECK(tableIsZero(&h.contCorrHist[0][0][0], sizeof(h.contCorrHist) / sizeof(int16_t)));
+    CHECK(tableIsZero(&h.contCorrHist[0][0][0][0], sizeof(h.contCorrHist) / sizeof(int16_t)));
 }
 
 TEST_CASE("Correction history: tunable weights wire through to the read path",
