@@ -43,6 +43,19 @@ struct SearchState {
         // here is that for a given pawn structure, the search score tends to
         // diverge from the static eval in a particular direction.
         int16_t pawnCorrHist[2][16384] = {};
+        // Non-pawn-keyed static eval correction: `[stm][pieceColor][nonPawnKey % N]`.
+        // Each color's piece placement contributes an independent term so that
+        // e.g. a white kingside-fianchetto bias is separable from black's.
+        int16_t nonPawnCorrHist[2][2][16384] = {};
+        // Minor-piece-keyed static eval correction: `[stm][minorKey % N]`.
+        // Captures positional bias that depends on the bishop / knight layout
+        // independent of the heavier pieces and pawn structure.
+        int16_t minorCorrHist[2][16384] = {};
+        // Continuation correction keyed by a two-ply move chain:
+        // `[prev2Piece][prev2To][prev1Piece][prev1To]`. Matches the context
+        // granularity Stockfish uses so the table can tell apart sequences
+        // like Nf3 then Nc6 from Nf3 then e5.
+        int16_t contCorrHist[7][64][7][64] = {};
     };
     std::unique_ptr<HistoryTables> historyTables = std::make_unique<HistoryTables>();
 
