@@ -31,6 +31,25 @@ struct ThreatMap {
 // every caller can query the tier that matches the attacked piece.
 void buildThreatMap(const Board &board, ThreatMap &out);
 
+// The enemy-attacker tier that matters for a piece of type `pt`. A queen
+// cares about rook-and-lower attackers, a rook about minor-and-lower, a
+// knight or bishop about pawn attackers only. Pawns and kings return an
+// empty set because pawn captures resolve through SEE / MVV-LVA and king
+// safety has its own eval-side machinery.
+inline Bitboard lesserAttackerTier(const ThreatMap &threats, PieceType pt) {
+    switch (pt) {
+    case Queen:
+        return threats.byRook;
+    case Rook:
+        return threats.byMinor;
+    case Knight:
+    case Bishop:
+        return threats.byPawn;
+    default:
+        return 0;
+    }
+}
+
 // Phases are traversed in order: the picker advances through them each time
 // `next()` exhausts a buffer. The qsearch pipeline reuses the same enum and
 // simply transitions Done without the killer / quiet / bad-capture stages.

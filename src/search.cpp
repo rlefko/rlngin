@@ -760,6 +760,30 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // Reduce less when position is improving
                 reduction -= improving;
 
+                // Threat-aware adjustment. The tier sampled by the piece's own
+                // value class answers "is the move entering or leaving a
+                // square attacked by a strictly less-valuable enemy piece".
+                // Evacuating a threatened piece onto a safe square deserves
+                // a deeper look; walking a quiet piece into the same kind of
+                // attack deserves a shallower one. Gated to the Quiets phase
+                // so killer / counter / bad-capture moves (which have their
+                // own priority signals) do not get reshuffled in depth.
+                if (pm.phase == PickPhase::Quiets) {
+                    PieceType movedPt = state.movedPiece[ply];
+                    Bitboard tier = lesserAttackerTier(threats, movedPt);
+                    if (tier) {
+                        Bitboard fromBB = squareBB(m.from);
+                        Bitboard toBB = squareBB(m.to);
+                        bool fromThreatened = (tier & fromBB) != 0;
+                        bool toThreatened = (tier & toBB) != 0;
+                        if (fromThreatened && !toThreatened) {
+                            reduction -= searchParams.LmrThreatEscape;
+                        } else if (!fromThreatened && toThreatened) {
+                            reduction += searchParams.LmrThreatWalkIn;
+                        }
+                    }
+                }
+
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 

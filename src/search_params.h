@@ -71,6 +71,16 @@ struct SearchParams {
     // outrank a weak threat cue and vice versa.
     int ThreatEscapeBonus;
     int ThreatWalkInPenalty;
+
+    // Threat-aware LMR deltas. When a quiet move evacuates a piece from a
+    // square attacked by a less-valuable enemy piece onto a safe square,
+    // LMR reduces the search depth by `LmrThreatEscape` fewer plies. When
+    // it walks a safe piece onto such a square, LMR reduces by
+    // `LmrThreatWalkIn` more plies. Stored as integer ply counts, not
+    // magnitudes, because the LMR table itself is integer-valued and
+    // sub-unit perturbations would never cross a reduction boundary.
+    int LmrThreatEscape;
+    int LmrThreatWalkIn;
 };
 
 extern SearchParams searchParams;

@@ -82,25 +82,6 @@ int contHistoryScore(const SearchState &state, int ply, PieceType currPt, int cu
     return score;
 }
 
-// Select the enemy-attacker tier relevant to a moving piece. A queen is
-// "under threat from a lesser piece" when any rook-or-lower attacks its
-// square, a rook when any minor-or-lower attacks it, and a minor piece
-// when any pawn attacks it. Pawns and kings are left to SEE / eval and
-// return a null bitboard so the caller short-circuits.
-static inline Bitboard lesserAttackerTier(const ThreatMap &threats, PieceType pt) {
-    switch (pt) {
-    case Queen:
-        return threats.byRook;
-    case Rook:
-        return threats.byMinor;
-    case Knight:
-    case Bishop:
-        return threats.byPawn;
-    default:
-        return 0;
-    }
-}
-
 int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
               const SearchState &state, int *outQuietHistory, const ThreatMap *threats) {
     PieceType pt = board.squares[m.from].type;
