@@ -613,6 +613,18 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         int shieldFileMin = std::max(0, kingFile - 1);
         int shieldFileMax = std::min(7, kingFile + 1);
 
+        // The pawn shield bonus is only meaningful for a king that has
+        // tucked into a flank. A king on the d or e file is still in the
+        // center, not sheltered by its pawns, and rewarding its e2 or
+        // e3 pawn distorts opening move selection: the pre-castle king
+        // gets the same shield credit whether the e-pawn sits on e2 or
+        // e3, which nudges the engine toward e3 over the classical e4
+        // push. Storm and open-file penalties still fire unconditionally
+        // because a central king is also genuinely exposed to file
+        // pressure from enemy rooks and pawn storms; only the reward
+        // half of the term is gated.
+        bool kingFlanked = kingFile <= 2 || kingFile >= 5;
+
         // Pawn shield, pawn storm, and open file evaluation per shield file
         for (int f = shieldFileMin; f <= shieldFileMax; f++) {
             Bitboard fileMask = FileBB[f];
@@ -623,7 +635,7 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             // When the file has no friendly pawn, the missing-shield signal
             // is captured by the semi-open / open file penalties below, so
             // no separate penalty is applied here.
-            if (ourPawnsOnFile) {
+            if (kingFlanked && ourPawnsOnFile) {
                 int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
                 int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
 
