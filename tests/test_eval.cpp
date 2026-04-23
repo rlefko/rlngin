@@ -1193,3 +1193,190 @@ TEST_CASE("Eval: rook attacking enemy queen earns a threat bonus", "[eval][threa
 
     CHECK(rookThreatensQueen > rookIdle);
 }
+
+// --- Central pawn bonus ---
+
+namespace {
+
+std::string bucketLine(const Board &b, const char *name) {
+    std::ostringstream out;
+    evaluateVerbose(b, out);
+    const std::string text = out.str();
+    size_t pos = text.find(name);
+    REQUIRE(pos != std::string::npos);
+    size_t eol = text.find('\n', pos);
+    return text.substr(pos, eol - pos);
+}
+
+int parseMg(const std::string &line) {
+    size_t mg = line.find("mg=");
+    REQUIRE(mg != std::string::npos);
+    return std::atoi(line.c_str() + mg + 3);
+}
+
+int parseEg(const std::string &line) {
+    size_t eg = line.find("eg=");
+    REQUIRE(eg != std::string::npos);
+    return std::atoi(line.c_str() + eg + 3);
+}
+
+} // namespace
+
+TEST_CASE("Eval: central pawn bonus credits primary and extended center squares",
+          "[eval][center]") {
+    Board board;
+
+    // White pawn on e4: primary central square fires once.
+    board.setFen("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
+    CHECK(parseMg(bucketLine(board, "Center")) == 12);
+
+    // White pawn on e3: off the central mask, no bonus.
+    board.setFen("4k3/8/8/8/8/4P3/8/4K3 w - - 0 1");
+    CHECK(parseMg(bucketLine(board, "Center")) == 0);
+
+    // White pawn pair on d4 and e4: both primary squares fire.
+    board.setFen("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
+    CHECK(parseMg(bucketLine(board, "Center")) == 24);
+
+    // Extended center: pawn on c4 carries the smaller weight.
+    board.setFen("4k3/8/8/8/2P5/8/8/4K3 w - - 0 1");
+    CHECK(parseMg(bucketLine(board, "Center")) == 4);
+}
+
+TEST_CASE("Eval: central pawn bonus mirrors for black pawns", "[eval][center]") {
+    Board board;
+
+    // Black pawn on d5 is the black-side primary center square; the
+    // Center bucket tracks it as a negative contribution from white's
+    // perspective.
+    board.setFen("4k3/8/8/3p4/8/8/8/4K3 w - - 0 1");
+    CHECK(parseMg(bucketLine(board, "Center")) == -12);
+}
+
+// --- Bishop long diagonal ---
+
+TEST_CASE("Eval: bishop on unblocked long diagonal earns a bonus", "[eval][bishop]") {
+    Board board;
+
+    // White bishop on a1 sweeps the empty a1-h8 diagonal. The Pieces
+    // bucket absorbs the bonus; isolate it by comparing positions that
+    // differ only in whether the diagonal is open.
+    board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
+    int openMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Same bishop with a friendly pawn on d4 blocking the diagonal at
+    // the central square; the long-diagonal bonus does not fire.
+    board.setFen("4k3/8/8/8/3P4/8/8/B3K3 w - - 0 1");
+    int blockedMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Blocking the diagonal adds mobility and other deltas we cannot
+    // isolate exactly, but the open variant must be higher by at least
+    // the long-diagonal MG weight on the open-bishop side.
+    CHECK(openMg - blockedMg >= 30);
+}
+
+TEST_CASE("Eval: long diagonal bonus applies to both diagonals", "[eval][bishop]") {
+    Board board;
+
+    // White bishop on h1 sweeps a8-h1 (the anti-diagonal). This covers
+    // the mirror-diagonal path in the predicate.
+    board.setFen("4k3/8/8/8/8/8/8/4K2B w - - 0 1");
+    int openMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Same bishop with a friendly pawn on e4 blocking the anti-diagonal.
+    board.setFen("4k3/8/8/8/4P3/8/8/4K2B w - - 0 1");
+    int blockedMg = parseMg(bucketLine(board, "Pieces"));
+
+    CHECK(openMg - blockedMg >= 30);
+}
+
+// --- Initiative ---
+
+TEST_CASE("Eval: initiative is zero on a fully symmetric pawn position", "[eval][initiative]") {
+    Board board;
+
+    // Mirror symmetric position with pawns: the positional halves
+    // cancel, so the initiative magnitude is applied with sign zero and
+    // contributes nothing. Score reduces to the tempo bonus tapered at
+    // full phase.
+    board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+    CHECK(evaluate(board) == 24);
+}
+
+TEST_CASE("Eval: initiative rewards the side with advantage in an asymmetric middlegame",
+          "[eval][initiative]") {
+    Board board;
+
+    // White has a pawn-structure and space advantage in this d5 push
+    // position. Initiative must fire in White's favor, so the eg half
+    // of the Initiative row is strictly positive.
+    board.setFen("rnbqkbnr/pp2pppp/8/2pP4/8/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3");
+    CHECK(parseEg(bucketLine(board, "Initiative")) > 0);
+}
+
+TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiative]") {
+    Board board;
+
+    // No pawns on the board: the gate suppresses initiative entirely so
+    // a KQvK evaluation matches the pure material plus PST plus king
+    // safety baseline and is not damped by the initiative constant.
+    board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 3335);
+}
+
+TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
+    Board board;
+
+    // Baseline: asymmetric middlegame with no pawn tension pairs. White
+    // has a spatial edge so initiative sign is positive.
+    board.setFen("rnbqkbnr/pp2pppp/8/2pP4/8/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3");
+    int baseline = parseEg(bucketLine(board, "Initiative"));
+
+    // Same skeleton but white pushed e2 to e4 and black answered with
+    // f7 to f5, so white's e4 and black's f5 now attack each other.
+    // That puts the structure in mutual-capture reach and bumps the
+    // tension count, so the initiative magnitude rises.
+    board.setFen("rnbqkbnr/pp2p1pp/8/2pP1p2/4P3/8/PPP2PPP/RNBQKBNR w KQkq - 0 3");
+    int withTension = parseEg(bucketLine(board, "Initiative"));
+
+    CHECK(withTension > baseline);
+}
+
+// --- Wrong-colored bishop rook pawn scale ---
+
+TEST_CASE("Eval: wrong colored bishop with a single rook pawn scales to a draw", "[eval][scale]") {
+    Board board;
+
+    auto scaleLine = [](const Board &b) { return bucketLine(b, "Scale"); };
+
+    // White a-pawn plus a dark-squared bishop on c1 and a defender king
+    // camped on a8: promotion corner a8 is a light square, so the
+    // bishop is the wrong color and the fortress scale factor returns
+    // zero.
+    board.setFen("k7/8/8/8/8/8/P7/2B1K3 w - - 0 1");
+    CHECK(scaleLine(board).find("eg * 0/64") != std::string::npos);
+
+    // Same shape but with the bishop on b1 (light, matching the
+    // promotion corner): the predicate does not fire and the default
+    // scale of 64/64 remains in place.
+    board.setFen("k7/8/8/8/8/8/P7/1B2K3 w - - 0 1");
+    CHECK(scaleLine(board).find("eg * 64/64") != std::string::npos);
+}
+
+// --- Verbose grid layout ---
+
+TEST_CASE("Eval: verbose output renders a per side grid", "[eval][verbose]") {
+    Board board;
+    board.setFen("r1bqkbnr/pppp1ppp/2n5/4p3/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 2 3");
+
+    std::ostringstream out;
+    evaluateVerbose(board, out);
+    const std::string &text = out.str();
+
+    CHECK(text.find("White") != std::string::npos);
+    CHECK(text.find("Black") != std::string::npos);
+    CHECK(text.find("Total") != std::string::npos);
+    CHECK(text.find("Center") != std::string::npos);
+    CHECK(text.find("Initiative") != std::string::npos);
+    CHECK(text.find("WARNING") == std::string::npos);
+}
