@@ -613,38 +613,61 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         int shieldFileMin = std::max(0, kingFile - 1);
         int shieldFileMax = std::min(7, kingFile + 1);
 
-        // The pawn shield bonus is only meaningful for a king that has
-        // tucked into a flank. A king on the d or e file is still in the
-        // center, not sheltered by its pawns, and rewarding its e2 or
-        // e3 pawn distorts opening move selection: the pre-castle king
-        // gets the same shield credit whether the e-pawn sits on e2 or
-        // e3, which nudges the engine toward e3 over the classical e4
-        // push. Storm and open-file penalties still fire unconditionally
-        // because a central king is also genuinely exposed to file
-        // pressure from enemy rooks and pawn storms; only the reward
-        // half of the term is gated.
-        bool kingFlanked = kingFile <= 2 || kingFile >= 5;
+        // Pawn shield score for a hypothetical king on `kf`, summed over
+        // `kf` and its two adjacent files. Walks only the shield half of
+        // the term; storm and open-file penalties still fire at the
+        // actual king position because they reflect immediate danger,
+        // while shield is a latent safety signal the engine should
+        // associate with a reachable king location rather than only the
+        // current one.
+        auto shieldScoreAt = [&](int kf) -> Score {
+            Score result = 0;
+            int fMin = std::max(0, kf - 1);
+            int fMax = std::min(7, kf + 1);
+            for (int f = fMin; f <= fMax; f++) {
+                Bitboard fileMask = FileBB[f];
+                Bitboard ourPawnsOnFile = ourPawns & fileMask;
+                if (!ourPawnsOnFile) continue;
+                int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
+                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+                if (relRank == 1)
+                    result += evalParams.PawnShieldBonus[0];
+                else if (relRank == 2)
+                    result += evalParams.PawnShieldBonus[1];
+            }
+            return result;
+        };
 
-        // Pawn shield, pawn storm, and open file evaluation per shield file
+        // Use the best shield available between the king's current
+        // square and any castled square the rules still permit. A king
+        // that can castle kingside or queenside already has that
+        // shelter in reach, so the static eval should not reward
+        // actually playing the castle (the move ordering and king-to-
+        // corner PST are enough to pick it up), nor penalize the
+        // pre-castle king for having a central-file shield that is
+        // really a flank-file shield in disguise. This mirrors the
+        // shelter-at-current-or-castled-square convention that top
+        // classical evaluators use.
+        Score shield = shieldScoreAt(kingFile);
+        bool canKingside = (us == White) ? board.castleWK : board.castleBK;
+        bool canQueenside = (us == White) ? board.castleWQ : board.castleBQ;
+        if (canKingside) {
+            Score alt = shieldScoreAt(6);
+            if (mg_value(alt) > mg_value(shield)) shield = alt;
+        }
+        if (canQueenside) {
+            Score alt = shieldScoreAt(2);
+            if (mg_value(alt) > mg_value(shield)) shield = alt;
+        }
+        scores[us] += shield;
+
+        // Pawn storm and open file evaluation per shield file at the
+        // actual king position. These track danger, not latent safety,
+        // so the "best reachable square" trick above does not apply.
         for (int f = shieldFileMin; f <= shieldFileMax; f++) {
             Bitboard fileMask = FileBB[f];
             Bitboard ourPawnsOnFile = ourPawns & fileMask;
             Bitboard theirPawnsOnFile = theirPawns & fileMask;
-
-            // Pawn shield: find the closest friendly pawn to our back rank.
-            // When the file has no friendly pawn, the missing-shield signal
-            // is captured by the semi-open / open file penalties below, so
-            // no separate penalty is applied here.
-            if (kingFlanked && ourPawnsOnFile) {
-                int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
-                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
-
-                if (relRank == 1) {
-                    scores[us] += evalParams.PawnShieldBonus[0];
-                } else if (relRank == 2) {
-                    scores[us] += evalParams.PawnShieldBonus[1];
-                }
-            }
 
             // Pawn storm: find the most-advanced enemy pawn on this file
             if (theirPawnsOnFile) {
