@@ -1,6 +1,7 @@
 #ifndef MOVE_PICKER_H
 #define MOVE_PICKER_H
 
+#include "bitboard.h"
 #include "board.h"
 #include "search.h"
 #include <cstdint>
@@ -8,6 +9,27 @@
 // `ScoredMove` is declared in search.h so SearchState can preallocate the
 // picker's scratch buffers on the heap. The definition is pulled in via
 // the include above.
+
+// Cumulative "attacked by a piece of at most this class" map for the side
+// NOT to move, sampled once per search node. `byPawn` is the enemy pawn
+// attack set; `byMinor` adds enemy knights and bishops; `byRook` adds
+// enemy rooks. Queens and kings are omitted on purpose: the interesting
+// question is "is this square attacked by something strictly less valuable
+// than the piece sitting on it", and no piece is less valuable than a
+// queen (for rook-class threats) in a way move ordering can act on.
+// Layered this way, the picker and LMR can answer "is the mover attacked
+// by a lesser piece" with one AND against the tier that matches the
+// mover's own value class.
+struct ThreatMap {
+    Bitboard byPawn = 0;
+    Bitboard byMinor = 0;
+    Bitboard byRook = 0;
+};
+
+// Populate `out` with the enemy's layered attack map. Pawn, knight,
+// bishop, and rook attack sets are unioned in ascending material order so
+// every caller can query the tier that matches the attacked piece.
+void buildThreatMap(const Board &board, ThreatMap &out);
 
 // Phases are traversed in order: the picker advances through them each time
 // `next()` exhausts a buffer. The qsearch pipeline reuses the same enum and
@@ -53,8 +75,12 @@ class MovePicker {
     // Main-search constructor. `board` is captured by reference because the
     // picker may call `isLegalMove` internally, which requires a mutable
     // board. `state` / `ply` drive killer, counter-move, and continuation
-    // history lookups.
-    MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck);
+    // history lookups. `threats` is optional; when non-null, quiet scoring
+    // applies threat-escape bonuses and walk-in penalties on top of the
+    // usual history ordering. Passing null keeps the previous behaviour
+    // (tests construct pickers without a threat map).
+    MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck,
+               const ThreatMap *threats = nullptr);
 
     // Quiescence constructor. The bool tag disambiguates from the
     // main-search constructor; passing `true` selects the qsearch pipeline.
@@ -79,6 +105,7 @@ class MovePicker {
     Move counterMove_{};
     PickPhase phase_;
     bool inCheck_;
+    const ThreatMap *threats_ = nullptr;
 
     // Scratch buffers live on the heap via SearchState so the picker stays
     // small in stack footprint. At MAX_PLY deep recursion the previous

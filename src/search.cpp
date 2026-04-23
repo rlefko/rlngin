@@ -618,10 +618,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int bonus = std::min(depth * depth, 400);
     int movesSearched = 0;
 
+    // Enemy attack map, layered by attacker class. Built once per node and
+    // shared between the move picker and the LMR block so both speak the
+    // same language when they ask "is this square attacked by a lesser
+    // enemy piece".
+    ThreatMap threats;
+    buildThreatMap(board, threats);
+
     // Staged move picker: the excluded move is threaded through as `skipMove`
     // so the singular-extension path never sees the excluded candidate in any
     // phase, including from the TT slot.
-    MovePicker picker(board, state, ply, ttMove, inCheck);
+    MovePicker picker(board, state, ply, ttMove, inCheck, &threats);
     PickedMove pm;
     int moveIndex = 0;
     while (picker.next(pm, excludedMove)) {

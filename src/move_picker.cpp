@@ -11,6 +11,47 @@
 // contract; both files read and write the same table layout.
 static constexpr int CONT_HIST_OFFSETS[3] = {1, 2, 4};
 
+// Pawn capture-square set for one color. Mirrors the inline helper used
+// inside the evaluator's attack-map builder; duplicated here instead of
+// un-staticing that helper so the search module stays independent of
+// eval internals.
+static inline Bitboard enemyPawnAttacks(Bitboard pawns, Color c) {
+    if (c == White) {
+        return ((pawns & ~FileABB) << 7) | ((pawns & ~FileHBB) << 9);
+    }
+    return ((pawns & ~FileABB) >> 9) | ((pawns & ~FileHBB) >> 7);
+}
+
+void buildThreatMap(const Board &board, ThreatMap &out) {
+    Color us = board.sideToMove;
+    Color them = (us == White) ? Black : White;
+    Bitboard occ = board.occupied;
+
+    Bitboard byPawn = enemyPawnAttacks(board.byPiece[Pawn] & board.byColor[them], them);
+
+    Bitboard knightAttacks = 0;
+    Bitboard knights = board.byPiece[Knight] & board.byColor[them];
+    while (knights) {
+        knightAttacks |= KnightAttacks[popLsb(knights)];
+    }
+
+    Bitboard bishopAtk = 0;
+    Bitboard bishops = board.byPiece[Bishop] & board.byColor[them];
+    while (bishops) {
+        bishopAtk |= bishopAttacks(popLsb(bishops), occ);
+    }
+
+    Bitboard rookAtk = 0;
+    Bitboard rooks = board.byPiece[Rook] & board.byColor[them];
+    while (rooks) {
+        rookAtk |= rookAttacks(popLsb(rooks), occ);
+    }
+
+    out.byPawn = byPawn;
+    out.byMinor = byPawn | knightAttacks | bishopAtk;
+    out.byRook = out.byMinor | rookAtk;
+}
+
 bool isCapture(const Board &board, const Move &m) {
     if (board.squares[m.to].type != None) return true;
     if (board.squares[m.from].type == Pawn && m.to == board.enPassantSquare &&
@@ -231,9 +272,10 @@ static bool isFullyLegal(Board &board, const Move &m) {
     return isLegalMove(board, m);
 }
 
-MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck)
+MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck,
+                       const ThreatMap *threats)
     : board_(board), state_(state), ply_(ply), ttMove_(ttMove), phase_(PickPhase::TTMove),
-      inCheck_(inCheck), caps_(state.pickerBuffers[ply].caps),
+      inCheck_(inCheck), threats_(threats), caps_(state.pickerBuffers[ply].caps),
       quiets_(state.pickerBuffers[ply].quiets), badCapIdx_(state.pickerBuffers[ply].badCapIdx) {
     // Skip the TT-move phase outright when no candidate is on hand. Saves
     // the isPseudoLegalMove / isFullyLegal cost at every node that has no TT
