@@ -9,6 +9,7 @@ static void ensureInit() {
     static bool done = false;
     if (!done) {
         initBitboards();
+        initSearch();
         done = true;
     }
 }
