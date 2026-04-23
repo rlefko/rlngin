@@ -2,6 +2,7 @@
 #include "bitboard.h"
 #include "eval.h"
 #include "movegen.h"
+#include "search_params.h"
 #include "see.h"
 #include <algorithm>
 #include <cstdlib>
@@ -81,8 +82,27 @@ int contHistoryScore(const SearchState &state, int ply, PieceType currPt, int cu
     return score;
 }
 
+// Select the enemy-attacker tier relevant to a moving piece. A queen is
+// "under threat from a lesser piece" when any rook-or-lower attacks its
+// square, a rook when any minor-or-lower attacks it, and a minor piece
+// when any pawn attacks it. Pawns and kings are left to SEE / eval and
+// return a null bitboard so the caller short-circuits.
+static inline Bitboard lesserAttackerTier(const ThreatMap &threats, PieceType pt) {
+    switch (pt) {
+    case Queen:
+        return threats.byRook;
+    case Rook:
+        return threats.byMinor;
+    case Knight:
+    case Bishop:
+        return threats.byPawn;
+    default:
+        return 0;
+    }
+}
+
 int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
-              const SearchState &state, int *outQuietHistory) {
+              const SearchState &state, int *outQuietHistory, const ThreatMap *threats) {
     PieceType pt = board.squares[m.from].type;
     bool capture = isCapture(board, m);
     bool quietCandidate = !capture && m.promotion == None;
@@ -146,8 +166,30 @@ int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
         }
     }
 
-    // Plain quiet move: fall back to the precomputed history score.
-    return quietHist;
+    // Plain quiet move: fall back to the precomputed history score, folded
+    // with the threat-aware delta. The delta fires only when the move
+    // belongs to a class that exchanges unfavourably against the enemy's
+    // lesser attackers (minor under pawn attack, rook under minor attack,
+    // queen under rook-or-lower attack). `fromThreatened` and `toThreatened`
+    // are sampled against the same tier so the sign is consistent: evacuate
+    // when the source is hot and the destination is safe, penalize the
+    // reverse.
+    int threatDelta = 0;
+    if (threats) {
+        Bitboard tier = lesserAttackerTier(*threats, pt);
+        if (tier) {
+            Bitboard fromBB = squareBB(m.from);
+            Bitboard toBB = squareBB(m.to);
+            bool fromThreatened = (tier & fromBB) != 0;
+            bool toThreatened = (tier & toBB) != 0;
+            if (fromThreatened && !toThreatened) {
+                threatDelta += searchParams.ThreatEscapeBonus;
+            } else if (!fromThreatened && toThreatened) {
+                threatDelta -= searchParams.ThreatWalkInPenalty;
+            }
+        }
+    }
+    return quietHist + threatDelta;
 }
 
 static inline bool sameMove(const Move &a, const Move &b) {
@@ -338,7 +380,7 @@ void MovePicker::genQuiets() {
     for (const Move &m : pseudo) {
         if (numQuiets_ >= MOVE_PICKER_BUFFER_SIZE) break;
         int hist = 0;
-        int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist);
+        int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist, threats_);
         quiets_[numQuiets_++] = {score, hist, m};
     }
     std::sort(quiets_, quiets_ + numQuiets_,

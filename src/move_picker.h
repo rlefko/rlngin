@@ -148,9 +148,12 @@ bool isPseudoLegalMove(const Board &board, const Move &m);
 // Scoring routine shared with the picker. Implemented in move_picker.cpp.
 // `ply` of -1 selects the qsearch scoring path (MVV-LVA + capture history
 // only; no SEE). `outQuietHistory` receives the butterfly + continuation
-// history sum so LMR can reuse it without repeating the lookups.
+// history sum so LMR can reuse it without repeating the lookups. When
+// `threats` is non-null, quiet scoring adds a threat-escape bonus for
+// moves that evacuate a piece attacked by a less-valuable enemy and a
+// walk-in penalty for moves that step into the same kind of attack.
 int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
-              const SearchState &state, int *outQuietHistory);
+              const SearchState &state, int *outQuietHistory, const ThreatMap *threats = nullptr);
 
 // True when `m` removes material from the board: either a direct capture
 // or an en passant pawn capture. Quiet pawn pushes into the en passant

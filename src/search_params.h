@@ -59,6 +59,18 @@ struct SearchParams {
     // picker phase keeps TT moves, good captures, killers, and the counter
     // move unaffected, while the depth-scaled threshold softens at depth.
     int HistoryPruningCoef;
+
+    // Attack-aware quiet move ordering. Per-node enemy attack maps are
+    // sampled by attacker class (pawn, minor, rook); when a quiet move
+    // leaves a square attacked by a less-valuable enemy piece for a safe
+    // square, `ThreatEscapeBonus` lifts its score above mid-history
+    // quiets. The symmetric `ThreatWalkInPenalty` pushes a quiet that
+    // walks a safe piece into the same kind of attack behind mid-history
+    // quiets. Scaled to the same magnitude space as the butterfly +
+    // continuation history sum so a strong historical signal can still
+    // outrank a weak threat cue and vice versa.
+    int ThreatEscapeBonus;
+    int ThreatWalkInPenalty;
 };
 
 extern SearchParams searchParams;
