@@ -429,18 +429,21 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     bool ttHit = tt.probe(board.key, ttEntry, ply);
     if (ttHit) {
         ttMove = ttEntry.best_move;
-        if (!hasExcludedMove && ttEntry.depth >= depth) {
+        // PV nodes never take a TT score cutoff. A stale exact bound from an
+        // earlier root search, or even from an earlier iteration of the
+        // current search, can otherwise short-circuit the fresh verdict we
+        // are trying to compute and pin the engine on a move the deeper
+        // search would have rejected. The TT move above is still consumed
+        // for ordering, which is where the hint is actually useful.
+        if (!hasExcludedMove && !pvNode && ttEntry.depth >= depth) {
             if (ttEntry.flag == TT_EXACT) {
                 return ttEntry.score;
             }
-            // In PV nodes, only cut on exact matches to preserve the full PV line
-            if (!pvNode) {
-                if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) {
-                    return ttEntry.score;
-                }
-                if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) {
-                    return ttEntry.score;
-                }
+            if (ttEntry.flag == TT_LOWER_BOUND && ttEntry.score >= beta) {
+                return ttEntry.score;
+            }
+            if (ttEntry.flag == TT_UPPER_BOUND && ttEntry.score <= alpha) {
+                return ttEntry.score;
             }
         }
     }
