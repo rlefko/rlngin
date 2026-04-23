@@ -151,6 +151,47 @@ struct EvalParams {
     // field, the default, the use in evaluatePawns, and the tuner entry
     // together.
     // Score PhalanxBonus;
+
+    // Classical central pawn occupancy. [0] rewards own pawns on the
+    // primary center squares (d4/e4 for White, d5/e5 for Black); [1]
+    // rewards pawns on the extended center (c4/f4 and mirror). Kept
+    // middlegame-only because the endgame has no structural opinion on
+    // which file an extra pawn sits on. The PST carries a related signal
+    // but landed after the strict tune with nearly equal MG weights for
+    // an e2 pawn and an e4 pawn, so an explicit term is needed to bias
+    // classical center occupation at low search depths.
+    Score CentralPawnBonus[2];
+
+    // Bonus for a bishop whose long diagonal (a1-h8 or a8-h1) sweeps
+    // both central squares on that diagonal unobstructed. Applied at
+    // most once per bishop.
+    Score BishopLongDiagonalBonus;
+
+    // Position-wide "initiative" scalar. Features are accumulated into a
+    // non-negative magnitude, then signed by the side with the current
+    // positional advantage, and folded into the total so the score bends
+    // in favor of the better-placed side. The term is clamped to never
+    // flip the sign of an already small endgame score.
+    //
+    // Index meanings:
+    //   Passer      -- per passed pawn on either side
+    //   PawnCount   -- per pawn on the board (tiny weight, grows with pawns)
+    //   Outflank    -- popcount(kingside pawns) * popcount(queenside pawns)
+    //   Tension     -- enemy pawns under our pawn attacks plus mirror
+    //   Infiltrate  -- per king that has crossed into enemy territory
+    //   PureBase    -- flat when no non-pawn non-king material remains
+    //   Constant    -- baseline shift (typically negative)
+    //
+    // All seven carry MG=0 so the term is primarily an endgame effect,
+    // applied at half strength to MG inside evaluateInitiative so sharp
+    // middlegame positions still get a nudge.
+    Score InitiativePasser;
+    Score InitiativePawnCount;
+    Score InitiativeOutflank;
+    Score InitiativeTension;
+    Score InitiativeInfiltrate;
+    Score InitiativePureBase;
+    Score InitiativeConstant;
 };
 
 extern EvalParams evalParams;

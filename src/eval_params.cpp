@@ -170,6 +170,26 @@ static const EvalParams kDefaultEvalParams = {
     {S(-5, -2), S(-2, -1)}, // BlockedPawnPenalty (rel rank 5, 6)
     S( -5,  -8),            // PawnIslandPenalty (per island beyond the first)
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
+
+    // CentralPawnBonus: primary (d/e) then extended (c/f). MG-only because
+    // the endgame does not distinguish central from flank pawns.
+    {S(12, 0), S(4, 0)},
+
+    // BishopLongDiagonalBonus: MG-heavy because the long diagonal matters
+    // most when heavy pieces are still on the board and can be traded onto
+    // it; a small endgame trickle keeps fianchetto bishops relevant.
+    S(30, 5),
+
+    // Initiative weights: EG-only, small single-digit magnitudes. The
+    // constant is negative so a perfectly symmetric quiet position
+    // produces a near-zero magnitude before sign selection.
+    S(0,  9),  // InitiativePasser
+    S(0,  3),  // InitiativePawnCount
+    S(0,  8),  // InitiativeOutflank
+    S(0,  4),  // InitiativeTension
+    S(0, 12),  // InitiativeInfiltrate
+    S(0, 18),  // InitiativePureBase
+    S(0, -30), // InitiativeConstant
 };
 // clang-format on
 

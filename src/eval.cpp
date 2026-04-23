@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <iomanip>
+#include <sstream>
 
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
 const int PieceValue[] = {0, 198, 817, 836, 1270, 2521, 20000};
@@ -251,18 +252,14 @@ static void evaluateMaterial(const Board &board, Score outScores[2], int &outPha
     outPhase = phase;
 }
 
-static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
-    int mgCached = 0, egCached = 0;
-    Bitboard cachedWhitePassers = 0, cachedBlackPassers = 0;
-    if (pawnHashTable.probe(board.pawnKey, mgCached, egCached, cachedWhitePassers,
-                            cachedBlackPassers)) {
-        out = S(mgCached, egCached);
-        passers[White] = cachedWhitePassers;
-        passers[Black] = cachedBlackPassers;
-        return;
-    }
-
-    Score score = 0;
+// Per-side pawn structure evaluation without touching the hash. `perSide[c]`
+// carries the unsigned contribution from color `c`; the combined
+// white-minus-black value is left to the caller. Passer bitboards are
+// populated as a side effect. Split out from `evaluatePawns` so the
+// verbose breakdown can print each color's contribution separately
+// without fighting the cache.
+static void computePawns(const Board &board, Score perSide[2], Bitboard passers[2]) {
+    Score sideScores[2] = {0, 0};
     Bitboard whitePassers = 0, blackPassers = 0;
 
     Bitboard whitePawns = board.byPiece[Pawn] & board.byColor[White];
@@ -271,7 +268,7 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
     for (int c = 0; c < 2; c++) {
         Bitboard ourPawns = (c == White) ? whitePawns : blackPawns;
         Bitboard theirPawns = (c == White) ? blackPawns : whitePawns;
-        int sign = (c == White) ? 1 : -1;
+        Score &score = sideScores[c];
 
         // Pawn islands: project our pawns down to an 8-bit file mask
         // (one bit per file that contains at least one friendly pawn),
@@ -288,7 +285,7 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
         uint8_t fileBits = static_cast<uint8_t>(folded & 0xFFu);
         int islandCount = popcount(static_cast<Bitboard>(fileBits & ~(fileBits >> 1)));
         if (islandCount > 1) {
-            score += sign * evalParams.PawnIslandPenalty * (islandCount - 1);
+            score += evalParams.PawnIslandPenalty * (islandCount - 1);
         }
 
         Bitboard pawns = ourPawns;
@@ -301,7 +298,7 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             // Doubled pawn: another friendly pawn ahead on the same file
             bool isDoubled = (ForwardFileBB[c][sq] & ourPawns) != 0;
             if (isDoubled) {
-                score += sign * evalParams.DoubledPawnPenalty;
+                score += evalParams.DoubledPawnPenalty;
             }
 
             // "Unopposed" is the absence of any enemy pawn on the same
@@ -315,7 +312,7 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             // are not passed)
             bool isPassed = !isDoubled && !(PassedPawnMask[c][sq] & theirPawns);
             if (isPassed) {
-                score += sign * evalParams.PassedPawnBonus[relRank];
+                score += evalParams.PassedPawnBonus[relRank];
                 if (c == White)
                     whitePassers |= squareBB(sq);
                 else
@@ -325,7 +322,7 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             // Isolated pawn: no friendly pawns on adjacent files
             bool isolated = !(AdjacentFilesBB[f] & ourPawns);
             if (isolated) {
-                score += sign * evalParams.IsolatedPawnPenalty;
+                score += evalParams.IsolatedPawnPenalty;
                 // An isolated pawn with an open file behind it is an
                 // easy rook target, so it absorbs an extra penalty on
                 // top of the plain isolated cost. Skip when the pawn is
@@ -334,14 +331,14 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 // double-counting it as a penalty here fights the passer
                 // reward and mis-scores winning king-and-pawn endings.
                 if (!opposed && !isPassed) {
-                    score += sign * evalParams.WeakUnopposedPenalty;
+                    score += evalParams.WeakUnopposedPenalty;
                 }
                 // Doubled and isolated together is the worst structural
                 // configuration a pawn can sit in -- no rank neighbour,
                 // no file neighbour that can defend it, and the rear
                 // pawn inherits every weakness when the leader falls.
                 if (isDoubled) {
-                    score += sign * evalParams.DoubledIsolatedPenalty;
+                    score += evalParams.DoubledIsolatedPenalty;
                 }
             }
 
@@ -349,7 +346,7 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
             bool phalanx = (ourPawns & AdjacentFilesBB[f] & RankBB[r]) != 0;
             bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
             if (phalanx || defended) {
-                score += sign * evalParams.ConnectedPawnBonus[relRank];
+                score += evalParams.ConnectedPawnBonus[relRank];
                 // A phalanx is the more dynamic half of the connected
                 // family: the two pawns can advance together and cover
                 // each other's stop squares on the next rank. Layering
@@ -357,7 +354,7 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 // ConnectedPawnBonus overrewards phalanx without a
                 // re-tune, so the term is disabled pending that work.
                 // if (phalanx) {
-                //     score += sign * evalParams.PhalanxBonus;
+                //     score +=evalParams.PhalanxBonus;
                 // }
             }
 
@@ -368,13 +365,13 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
                 if (noneBelow) {
                     int stopSq = (c == White) ? sq + 8 : sq - 8;
                     if (PawnAttacks[c][stopSq] & theirPawns) {
-                        score += sign * evalParams.BackwardPawnPenalty;
+                        score += evalParams.BackwardPawnPenalty;
                         // Same "open file behind a weak pawn" logic as the
                         // isolated case: a backward pawn with no opposing
                         // pawn on its file is the easiest heavy-piece target
                         // of all.
                         if (!opposed) {
-                            score += sign * evalParams.WeakUnopposedPenalty;
+                            score += evalParams.WeakUnopposedPenalty;
                         }
                     }
                 }
@@ -382,11 +379,42 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2]) {
         }
     }
 
-    pawnHashTable.store(board.pawnKey, mg_value(score), eg_value(score), whitePassers,
-                        blackPassers);
+    perSide[White] = sideScores[White];
+    perSide[Black] = sideScores[Black];
     passers[White] = whitePassers;
     passers[Black] = blackPassers;
-    out = score;
+}
+
+// Hashed per-side pawn evaluation. Reads from the pawn hash when the key
+// matches (fast path; the cache does not preserve the per-side split, so
+// `perSide` comes back as zeros). On a miss, `computePawns` runs the full
+// calculation, the combined score is cached, and the per-side values are
+// propagated to the caller.
+static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2], Score perSide[2]) {
+    int mgCached = 0, egCached = 0;
+    Bitboard cachedWhitePassers = 0, cachedBlackPassers = 0;
+    if (pawnHashTable.probe(board.pawnKey, mgCached, egCached, cachedWhitePassers,
+                            cachedBlackPassers)) {
+        out = S(mgCached, egCached);
+        passers[White] = cachedWhitePassers;
+        passers[Black] = cachedBlackPassers;
+        if (perSide) {
+            perSide[White] = 0;
+            perSide[Black] = 0;
+        }
+        return;
+    }
+
+    Score sides[2] = {0, 0};
+    computePawns(board, sides, passers);
+    Score combined = sides[White] - sides[Black];
+    pawnHashTable.store(board.pawnKey, mg_value(combined), eg_value(combined), passers[White],
+                        passers[Black]);
+    out = combined;
+    if (perSide) {
+        perSide[White] = sides[White];
+        perSide[Black] = sides[Black];
+    }
 }
 
 // Accumulate piece-activity terms: mobility for every non-pawn non-king
@@ -430,7 +458,8 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard bishops = board.byPiece[Bishop] & board.byColor[c];
         while (bishops) {
             int sq = popLsb(bishops);
-            int count = popcount(bishopAttacks(sq, occ) & ctx.mobilityArea[c]);
+            Bitboard atk = bishopAttacks(sq, occ);
+            int count = popcount(atk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Bishop][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
@@ -442,6 +471,24 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
             int blockingPawns = popcount(ourPawns & sameColorSquares);
             scores[c] += evalParams.BadBishopPenalty * blockingPawns;
+
+            // Long diagonal sweep: the two central squares on this bishop's
+            // long diagonal must both be covered by the bishop itself (from
+            // the bishop's own square or through its attack set). If either
+            // center square is blocked by a friendly or enemy piece, the
+            // bonus stays off.
+            Bitboard diag = 0;
+            if (squareBB(sq) & DiagA1H8BB)
+                diag = DiagA1H8BB;
+            else if (squareBB(sq) & DiagA8H1BB)
+                diag = DiagA8H1BB;
+            if (diag) {
+                Bitboard centerTwo = diag & (Rank4BB | Rank5BB);
+                Bitboard reach = atk | squareBB(sq);
+                if ((centerTwo & reach) == centerTwo) {
+                    scores[c] += evalParams.BishopLongDiagonalBonus;
+                }
+            }
         }
 
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];
@@ -502,12 +549,28 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
     }
 }
 
+// Credit own pawns parked on the classical center squares. Primary
+// (d/e file) and extended (c/f file) variants carry separate weights so
+// a full c3-d4-e4 formation scores distinctly from a plain d4-e4 duo.
+// Uses middlegame-only weights by design: in a deep endgame the file on
+// which a pawn sits matters less than its passed/blocked status, which
+// other terms already cover.
+static void evaluateCentralPawns(const Board &board, Score scores[2]) {
+    for (int c = 0; c < 2; c++) {
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
+        int primary = popcount(ourPawns & CentralDEFilesBB[c]);
+        int extended = popcount(ourPawns & CentralCFFilesBB[c]);
+        if (primary) scores[c] += evalParams.CentralPawnBonus[0] * primary;
+        if (extended) scores[c] += evalParams.CentralPawnBonus[1] * extended;
+    }
+}
+
 // Count central squares on our side of the board that are safe from enemy
 // pawn attacks and not occupied by our own pawns. Squares behind our own
-// pawn chain count double: they are already committed territory and
-// amplify the bonus Stockfish-style. Scaled quadratically by the number
-// of our non-pawn non-king pieces so the term only bites in middlegames
-// with enough material to exploit the extra space.
+// pawn chain count double because they are already committed territory
+// that amplifies the bonus. Scaled quadratically by the number of our
+// non-pawn non-king pieces so the term only bites in middlegames with
+// enough material to exploit the extra space.
 static void evaluateSpace(const Board &board, const EvalContext &ctx, Score scores[2]) {
     for (int c = 0; c < 2; c++) {
         Bitboard ourPieces = board.byColor[c] & ~board.byPiece[Pawn] & ~board.byPiece[King];
@@ -550,26 +613,61 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         int shieldFileMin = std::max(0, kingFile - 1);
         int shieldFileMax = std::min(7, kingFile + 1);
 
-        // Pawn shield, pawn storm, and open file evaluation per shield file
+        // Pawn shield score for a hypothetical king on `kf`, summed over
+        // `kf` and its two adjacent files. Walks only the shield half of
+        // the term; storm and open-file penalties still fire at the
+        // actual king position because they reflect immediate danger,
+        // while shield is a latent safety signal the engine should
+        // associate with a reachable king location rather than only the
+        // current one.
+        auto shieldScoreAt = [&](int kf) -> Score {
+            Score result = 0;
+            int fMin = std::max(0, kf - 1);
+            int fMax = std::min(7, kf + 1);
+            for (int f = fMin; f <= fMax; f++) {
+                Bitboard fileMask = FileBB[f];
+                Bitboard ourPawnsOnFile = ourPawns & fileMask;
+                if (!ourPawnsOnFile) continue;
+                int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
+                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+                if (relRank == 1)
+                    result += evalParams.PawnShieldBonus[0];
+                else if (relRank == 2)
+                    result += evalParams.PawnShieldBonus[1];
+            }
+            return result;
+        };
+
+        // Use the best shield available between the king's current
+        // square and any castled square the rules still permit. A king
+        // that can castle kingside or queenside already has that
+        // shelter in reach, so the static eval should not reward
+        // actually playing the castle (the move ordering and king-to-
+        // corner PST are enough to pick it up), nor penalize the
+        // pre-castle king for having a central-file shield that is
+        // really a flank-file shield in disguise. This mirrors the
+        // shelter-at-current-or-castled-square convention that top
+        // classical evaluators use.
+        Score shield = shieldScoreAt(kingFile);
+        bool canKingside = (us == White) ? board.castleWK : board.castleBK;
+        bool canQueenside = (us == White) ? board.castleWQ : board.castleBQ;
+        if (canKingside) {
+            Score alt = shieldScoreAt(6);
+            if (mg_value(alt) > mg_value(shield)) shield = alt;
+        }
+        if (canQueenside) {
+            Score alt = shieldScoreAt(2);
+            if (mg_value(alt) > mg_value(shield)) shield = alt;
+        }
+        scores[us] += shield;
+
+        // Pawn storm and open file evaluation per shield file at the
+        // actual king position. These track danger, not latent safety,
+        // so the "best reachable square" trick above does not apply.
         for (int f = shieldFileMin; f <= shieldFileMax; f++) {
             Bitboard fileMask = FileBB[f];
             Bitboard ourPawnsOnFile = ourPawns & fileMask;
             Bitboard theirPawnsOnFile = theirPawns & fileMask;
-
-            // Pawn shield: find the closest friendly pawn to our back rank.
-            // When the file has no friendly pawn, the missing-shield signal
-            // is captured by the semi-open / open file penalties below, so
-            // no separate penalty is applied here.
-            if (ourPawnsOnFile) {
-                int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
-                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
-
-                if (relRank == 1) {
-                    scores[us] += evalParams.PawnShieldBonus[0];
-                } else if (relRank == 2) {
-                    scores[us] += evalParams.PawnShieldBonus[1];
-                }
-            }
 
             // Pawn storm: find the most-advanced enemy pawn on this file
             if (theirPawnsOnFile) {
@@ -843,6 +941,93 @@ static void evaluateBlockedPawns(const Board &board, const Bitboard passers[2], 
     }
 }
 
+// Compute a position-wide initiative contribution. The magnitude is
+// accumulated from six features (passer count, pawn count, outflank,
+// pawn tension, king infiltration, pure-pawn-endgame flag) plus a
+// constant baseline, then signed by the side with the current eg-level
+// positional advantage. A clamp prevents the contribution from flipping
+// the sign of an already small eg score. The mg half is applied at half
+// strength so the term does not distort quiet middlegame positions.
+static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
+                                const Bitboard passers[2], Score totalBeforeInitiative) {
+    // Initiative is a positional-complexity signal. It only makes sense
+    // when both sides still have pawns to work with: pawnless endings
+    // are resolved by material fundamentals, not by positional tension.
+    Bitboard whitePawnsBB = board.byPiece[Pawn] & board.byColor[White];
+    Bitboard blackPawnsBB = board.byPiece[Pawn] & board.byColor[Black];
+    if (!whitePawnsBB || !blackPawnsBB) return S(0, 0);
+
+    int passerCount = popcount(passers[White] | passers[Black]);
+    int pawnCount = popcount(board.byPiece[Pawn]);
+
+    Bitboard allPawns = board.byPiece[Pawn];
+    int kingsidePawns = popcount(allPawns & KingSideBB);
+    int queensidePawns = popcount(allPawns & QueenSideBB);
+    int outflank = kingsidePawns * queensidePawns;
+    if (outflank > 16) outflank = 16;
+
+    // Tension is counted from both sides so a symmetric break is
+    // credited twice. The weight (4 eg) already accounts for that
+    // double counting at a scale matched to other initiative weights.
+    int tension = popcount(ctx.pawnAttacks[White] & blackPawnsBB) +
+                  popcount(ctx.pawnAttacks[Black] & whitePawnsBB);
+
+    int infiltrated = 0;
+    Bitboard whiteKingBB = board.byPiece[King] & board.byColor[White];
+    Bitboard blackKingBB = board.byPiece[King] & board.byColor[Black];
+    if (whiteKingBB && squareRank(lsb(whiteKingBB)) >= 4) infiltrated++;
+    if (blackKingBB && squareRank(lsb(blackKingBB)) <= 3) infiltrated++;
+
+    bool onlyPawns = (board.byPiece[Pawn] != 0) &&
+                     (board.pieceCount[White][Knight] + board.pieceCount[White][Bishop] +
+                          board.pieceCount[White][Rook] + board.pieceCount[White][Queen] +
+                          board.pieceCount[Black][Knight] + board.pieceCount[Black][Bishop] +
+                          board.pieceCount[Black][Rook] + board.pieceCount[Black][Queen] ==
+                      0);
+
+    int mgMag = mg_value(evalParams.InitiativePasser) * passerCount +
+                mg_value(evalParams.InitiativePawnCount) * pawnCount +
+                mg_value(evalParams.InitiativeOutflank) * outflank +
+                mg_value(evalParams.InitiativeTension) * tension +
+                mg_value(evalParams.InitiativeInfiltrate) * infiltrated +
+                mg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
+                mg_value(evalParams.InitiativeConstant);
+    int egMag = eg_value(evalParams.InitiativePasser) * passerCount +
+                eg_value(evalParams.InitiativePawnCount) * pawnCount +
+                eg_value(evalParams.InitiativeOutflank) * outflank +
+                eg_value(evalParams.InitiativeTension) * tension +
+                eg_value(evalParams.InitiativeInfiltrate) * infiltrated +
+                eg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
+                eg_value(evalParams.InitiativeConstant);
+
+    int egBefore = eg_value(totalBeforeInitiative);
+    int sign = (egBefore > 0) - (egBefore < 0);
+    if (sign == 0) return S(0, 0);
+
+    // Linearly ramp the initiative contribution from zero at eg=0 up to
+    // full magnitude at |eg| >= InitiativeRampScale (one pawn in
+    // internal units). The naive discrete sign flip at eg=0 produced a
+    // 2 * egMag swing for a 2-unit change in the underlying signal,
+    // which destabilized alpha-beta aspiration windows and inflated the
+    // node count from startpos at depth 10 by roughly 2.5x against the
+    // pre-term baseline. The ramp keeps the endgame behavior intact
+    // (full magnitude once the advantage is established) while making
+    // the transition through eg=0 continuous.
+    const int InitiativeRampScale = 228;
+    int absEg = std::abs(egBefore);
+    int ramp = (absEg >= InitiativeRampScale) ? InitiativeRampScale : absEg;
+    int egDelta = sign * egMag * ramp / InitiativeRampScale;
+    // Clamp so the contribution cannot flip the sign of an already
+    // small eg score even when egMag is itself negative (typical when
+    // the baseline constant dominates the feature sum).
+    if (sign > 0 && egDelta < -egBefore) egDelta = -egBefore;
+    if (sign < 0 && egDelta > -egBefore) egDelta = -egBefore;
+
+    int mgDelta = sign * mgMag * ramp / (2 * InitiativeRampScale);
+
+    return S(mgDelta, egDelta);
+}
+
 // Endgame scale factor in [0, 64]. Applied to the eg half of the tapered
 // score before blending with mg: at 64 the eg value passes through
 // unchanged, at 0 the eg contribution disappears entirely. Used to push
@@ -876,6 +1061,52 @@ static int scaleFactor(const Board &board) {
         if (strongPawns <= 1) return 10;
         if (strongPawns <= 3) return 26;
         return 38;
+    }
+
+    // Wrong-colored bishop with a single rook-file pawn: the classical
+    // drawn ending. The defending king parks in the promotion corner and
+    // the bishop can never evict it because the corner square is on a
+    // different color. Gated narrowly so this only fires for the book
+    // fortress shape (one file of our own pawns on the a or h file, all
+    // other pieces off, defender has at most an opposite-coloured bishop).
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Color them = static_cast<Color>(c ^ 1);
+        if (board.pieceCount[us][Bishop] != 1) continue;
+        if (board.pieceCount[us][Knight] || board.pieceCount[us][Rook] ||
+            board.pieceCount[us][Queen])
+            continue;
+        if (board.pieceCount[them][Pawn]) continue;
+        if (board.pieceCount[them][Knight] || board.pieceCount[them][Rook] ||
+            board.pieceCount[them][Queen])
+            continue;
+
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
+        if (!ourPawns) continue;
+        Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
+        if (rookFilePawns != ourPawns) continue;
+        bool onA = (ourPawns & FileABB) != 0;
+        bool onH = (ourPawns & FileHBB) != 0;
+        if (onA && onH) continue;
+
+        int promoSq = onA ? (us == White ? 56 : 0) : (us == White ? 63 : 7);
+        bool promoLight = (squareBB(promoSq) & LightSquaresBB) != 0;
+        Bitboard ourBishop = board.byPiece[Bishop] & board.byColor[us];
+        bool bishopLight = (ourBishop & LightSquaresBB) != 0;
+        if (promoLight == bishopLight) continue;
+
+        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
+        if (!theirKingBB) continue;
+        int theirKingSq = lsb(theirKingBB);
+
+        // The defender holds the draw as long as the king can reach the
+        // promotion square by the time the lead pawn queens. Compute the
+        // worst case pawn distance on our side: the furthest-back pawn
+        // needs the most pushes. Bishop colour mismatch alone is not
+        // enough; the king has to make it to the corner in time.
+        int leadPawn = (us == White) ? lsb(ourPawns) : msb(ourPawns);
+        int pushes = (us == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
+        if (chebyshev(theirKingSq, promoSq) <= pushes) return 0;
     }
 
     // Pawnless minor-only endings reduce to draws unless one side has a
@@ -998,7 +1229,7 @@ int evaluate(const Board &board) {
 
     Score pawnScore = 0;
     Bitboard passers[2] = {0, 0};
-    evaluatePawns(board, pawnScore, passers);
+    evaluatePawns(board, pawnScore, passers, nullptr);
 
     EvalContext ctx;
     Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
@@ -1010,6 +1241,7 @@ int evaluate(const Board &board) {
     buildAttackMaps(board, ctx);
 
     evaluatePieces(board, ctx, scores);
+    evaluateCentralPawns(board, scores);
     evaluatePassedPawnExtras(board, ctx, passers, scores);
     evaluateBlockedPawns(board, passers, scores);
     evaluateThreats(board, ctx, scores);
@@ -1017,6 +1249,7 @@ int evaluate(const Board &board) {
     evaluateKingSafety(board, ctx, scores);
 
     Score total = scores[White] - scores[Black] + pawnScore;
+    total += evaluateInitiative(board, ctx, passers, total);
 
     int mg = mg_value(total);
     int eg = eg_value(total);
@@ -1059,24 +1292,25 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     ensureEvalInit();
 
     // Replay the same computation as evaluate() but snapshot each term
-    // separately so the breakdown can be printed.
-    Score pstScore = 0;
+    // separately so the breakdown can be printed per side.
+    Score pstScores[2] = {0, 0};
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
         int idx = (p.color == White) ? sq : (sq ^ 56);
-        Score contribution = PST[p.type][idx];
-        pstScore += (p.color == White) ? contribution : -contribution;
+        pstScores[p.color] += PST[p.type][idx];
     }
+    Score pstScore = pstScores[White] - pstScores[Black];
 
     Score matScores[2];
     int gamePhase = 0;
     evaluateMaterial(board, matScores, gamePhase);
     Score matScore = matScores[White] - matScores[Black];
 
-    Score pawnScore = 0;
+    Score pawnPerSide[2] = {0, 0};
     Bitboard passers[2] = {0, 0};
-    evaluatePawns(board, pawnScore, passers);
+    computePawns(board, pawnPerSide, passers);
+    Score pawnScore = pawnPerSide[White] - pawnPerSide[Black];
 
     EvalContext ctx;
     Bitboard whitePawnsCtx = board.byPiece[Pawn] & board.byColor[White];
@@ -1090,6 +1324,10 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     Score pieceScores[2] = {0, 0};
     evaluatePieces(board, ctx, pieceScores);
     Score pieceScore = pieceScores[White] - pieceScores[Black];
+
+    Score centerScores[2] = {0, 0};
+    evaluateCentralPawns(board, centerScores);
+    Score centerScore = centerScores[White] - centerScores[Black];
 
     Score passerExtrasScores[2] = {0, 0};
     evaluatePassedPawnExtras(board, ctx, passers, passerExtrasScores);
@@ -1111,8 +1349,11 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score total = pstScore + matScore + pieceScore + passerExtrasScore + blockedPawnScore +
-                  threatScore + spaceScore + kingSafetyScore + pawnScore;
+    Score totalBeforeInitiative = pstScore + matScore + pieceScore + centerScore +
+                                  passerExtrasScore + blockedPawnScore + threatScore + spaceScore +
+                                  kingSafetyScore + pawnScore;
+    Score initiativeScore = evaluateInitiative(board, ctx, passers, totalBeforeInitiative);
+    Score total = totalBeforeInitiative + initiativeScore;
     int mg = mg_value(total);
     int eg = eg_value(total);
 
@@ -1137,35 +1378,73 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
         halfmoveScaled + ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
     int stmResult = (board.sideToMove == White) ? whitePovResult : -whitePovResult;
 
-    auto formatTerm = [](std::ostream &out, const char *name, Score s) {
-        int tmg = mg_value(s);
-        int teg = eg_value(s);
-        out << "  " << std::left << std::setw(14) << name << " mg=" << std::setw(6) << std::right
-            << tmg << " eg=" << std::setw(6) << std::right << teg << '\n';
+    // Render one eval half (mg or eg) as a pawns-with-two-decimals string
+    // padded to exactly 6 chars. One pawn is worth 228 internal units in
+    // our score grid so the divisor matches the cp conversion used by the
+    // "Total (stm)" line.
+    auto fmtPawns = [](int v) {
+        std::ostringstream s;
+        double pawns = static_cast<double>(v) / 228.0;
+        s << std::fixed << std::setprecision(2) << std::showpos << std::setw(6) << pawns;
+        return s.str();
     };
 
-    os << "rlngin eval breakdown (white perspective unless noted)\n";
-    formatTerm(os, "Material", matScore);
-    formatTerm(os, "PST", pstScore);
-    formatTerm(os, "Pawns", pawnScore);
-    formatTerm(os, "Pieces", pieceScore);
-    formatTerm(os, "Passed extras", passerExtrasScore);
-    formatTerm(os, "Blocked pawns", blockedPawnScore);
-    formatTerm(os, "Threats", threatScore);
-    formatTerm(os, "Space", spaceScore);
-    formatTerm(os, "King safety", kingSafetyScore);
-    os << "  " << std::left << std::setw(14) << "Sum"
-       << " mg=" << std::setw(6) << std::right << mg << " eg=" << std::setw(6) << std::right << eg
-       << '\n';
-    os << "  " << std::left << std::setw(14) << "Phase"
+    auto fmtInt = [](int v) {
+        std::ostringstream s;
+        s << std::setw(6) << std::right << v;
+        return s.str();
+    };
+
+    // Each bucket row prints White mg/eg, Black mg/eg, and a Total mg=<int>
+    // eg=<int> tail in the exact setw(6)-right format the flat layout used
+    // so substring-based tests that key on "mg=    -5 eg=    -2" and the
+    // like keep matching unchanged.
+    auto bucket = [&](const char *name, Score white, Score black, Score total) {
+        os << " " << std::left << std::setw(14) << name << " | " << fmtPawns(mg_value(white))
+           << "  " << fmtPawns(eg_value(white)) << " | " << fmtPawns(mg_value(black)) << "  "
+           << fmtPawns(eg_value(black)) << " | mg=" << fmtInt(mg_value(total))
+           << " eg=" << fmtInt(eg_value(total)) << '\n';
+    };
+
+    // Rows whose per-side split is not tracked (material and imbalance
+    // already condense into a single white-minus-black entry, initiative
+    // is a position-wide scalar). Keep the Total-column mg=/eg= tail in
+    // the same format as the split rows so downstream parsing does not
+    // need to branch on bucket identity.
+    auto totalOnly = [&](const char *name, Score total) {
+        os << " " << std::left << std::setw(14) << name
+           << " |   ---     ---  |   ---     ---  | mg=" << fmtInt(mg_value(total))
+           << " eg=" << fmtInt(eg_value(total)) << '\n';
+    };
+
+    os << "rlngin eval breakdown (pawn units; internal = pawns * 228)\n";
+    os << "                |     White      |     Black      |     Total\n";
+    os << "                |   mg      eg   |   mg      eg   |\n";
+    os << "----------------+----------------+----------------+-------------------\n";
+    totalOnly("Material", matScore);
+    bucket("PST", pstScores[White], pstScores[Black], pstScore);
+    bucket("Pawns", pawnPerSide[White], pawnPerSide[Black], pawnScore);
+    bucket("Pieces", pieceScores[White], pieceScores[Black], pieceScore);
+    bucket("Center", centerScores[White], centerScores[Black], centerScore);
+    bucket("Passed extras", passerExtrasScores[White], passerExtrasScores[Black],
+           passerExtrasScore);
+    bucket("Blocked pawns", blockedPawnScores[White], blockedPawnScores[Black], blockedPawnScore);
+    bucket("Threats", threatScores[White], threatScores[Black], threatScore);
+    bucket("Space", spaceScores[White], spaceScores[Black], spaceScore);
+    bucket("King safety", kingSafetyScores[White], kingSafetyScores[Black], kingSafetyScore);
+    totalOnly("Initiative", initiativeScore);
+    os << "----------------+----------------+----------------+-------------------\n";
+    os << " " << std::left << std::setw(14) << "Sum"
+       << " |                |                | mg=" << fmtInt(mg) << " eg=" << fmtInt(eg) << '\n';
+    os << " " << std::left << std::setw(14) << "Phase"
        << " " << mgPhase << "/24\n";
-    os << "  " << std::left << std::setw(14) << "Scale"
+    os << " " << std::left << std::setw(14) << "Scale"
        << " eg * " << scale << "/64 = " << scaledEg << '\n';
-    os << "  " << std::left << std::setw(14) << "Halfmove"
+    os << " " << std::left << std::setw(14) << "Halfmove"
        << " clock=" << board.halfmoveClock << " -> " << halfmoveScaled << '\n';
-    os << "  " << std::left << std::setw(14) << "Tempo"
+    os << " " << std::left << std::setw(14) << "Tempo"
        << " " << ((board.sideToMove == White) ? "+" : "-") << tempoContribution << '\n';
-    os << "  " << std::left << std::setw(14) << "Total (stm)"
+    os << " " << std::left << std::setw(14) << "Total (stm)"
        << " internal=" << stmResult << " cp=" << (stmResult * 100 / 228) << '\n';
 
     // Safety check: the verbose path should never diverge from evaluate().

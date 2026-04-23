@@ -13,6 +13,8 @@ Bitboard PawnSpanMask[2][64];
 
 Bitboard OutpostRanks[2];
 Bitboard SpaceMask[2];
+Bitboard CentralDEFilesBB[2];
+Bitboard CentralCFFilesBB[2];
 Bitboard KingSideBB;
 Bitboard QueenSideBB;
 
@@ -321,6 +323,11 @@ static void initPieceActivityMasks() {
     Bitboard centerFiles = FileCBB | FileDBB | FileEBB | FileFBB;
     SpaceMask[White] = centerFiles & (Rank2BB | Rank3BB | Rank4BB);
     SpaceMask[Black] = centerFiles & (Rank5BB | Rank6BB | Rank7BB);
+
+    CentralDEFilesBB[White] = (FileDBB | FileEBB) & Rank4BB;
+    CentralDEFilesBB[Black] = (FileDBB | FileEBB) & Rank5BB;
+    CentralCFFilesBB[White] = (FileCBB | FileFBB) & Rank4BB;
+    CentralCFFilesBB[Black] = (FileCBB | FileFBB) & Rank5BB;
 
     KingSideBB = FileFBB | FileGBB | FileHBB;
     QueenSideBB = FileABB | FileBBB | FileCBB;
