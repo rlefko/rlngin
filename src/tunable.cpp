@@ -81,7 +81,7 @@ TunableSpec makeScoreHalfSpec(std::string name, Score *target, bool isMg, int mi
 //     holds through every SPSA perturbation.
 std::vector<TunableSpec> buildRegistry() {
     std::vector<TunableSpec> out;
-    out.reserve(20);
+    out.reserve(24);
 
     // --- Search pruning and reduction scalars ---
     //
@@ -140,6 +140,20 @@ std::vector<TunableSpec> buildRegistry() {
     // anything below average".
     out.push_back(makeIntSpec("HistoryPruningCoef", &searchParams.HistoryPruningCoef, 1000, 12000,
                               400.0, 150.0));
+
+    // --- Attack-aware quiet ordering and threat-based LMR ---
+    // Bonuses stay in the butterfly + continuation history magnitude space
+    // (cap at 65,536 = 2 * MAX_HISTORY) so SPSA can explore the regime where
+    // a strong historical signal still outranks a threat cue. LMR deltas
+    // stay integer-ply because the reduction table is integer-valued;
+    // sub-unit perturbations never cross a reduction boundary so bounding
+    // them tight to [0, 2] keeps the search space meaningful.
+    out.push_back(
+        makeIntSpec("ThreatEscapeBonus", &searchParams.ThreatEscapeBonus, 0, 65536, 2048.0, 512.0));
+    out.push_back(makeIntSpec("ThreatWalkInPenalty", &searchParams.ThreatWalkInPenalty, 0, 65536,
+                              2048.0, 512.0));
+    out.push_back(makeIntSpec("LmrThreatEscape", &searchParams.LmrThreatEscape, 0, 2, 0.5, 0.25));
+    out.push_back(makeIntSpec("LmrThreatWalkIn", &searchParams.LmrThreatWalkIn, 0, 2, 0.5, 0.25));
 
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
