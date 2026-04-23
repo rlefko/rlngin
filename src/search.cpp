@@ -113,13 +113,17 @@ static int corrHistBonus(int baseEval, int bestValue, int depth, int max) {
 // The pawn, non-pawn, and minor tables are keyed purely by position features.
 // At ply 1 and 2 the `cappedDepth`-scaled bonus is at its largest and the
 // feature keys overlap heavily with keys that sibling root moves will visit
-// in their own subtrees: writes accumulated while the first root move is
-// searched therefore bias the correction that every later-searched root move
-// reads. Gating those writes on ply >= 3 breaks the sibling-pollution loop
-// while preserving learning from the overwhelming majority of update sites.
-// The continuation table is keyed on the two moves leading into the node, so
-// sibling root moves write to disjoint cells by construction; its update
-// fires at every ply where both preceding moves are available.
+// in their own subtrees, so writes accumulated while the first root move is
+// searched would otherwise bias the correction every later-searched root
+// move reads. Rather than dropping shallow writes outright, we taper them:
+// `ply == 1` lands a quarter of the bonus, `ply == 2` lands half, and every
+// ply from 3 onward lands the full bonus. That keeps the learning signal
+// Stockfish-style engines rely on at shallow ply, while shrinking the per
+// update magnitude below the threshold where sibling pollution flips the
+// root best move between iterations. The continuation table is keyed on
+// the two moves leading into the node, so sibling root moves write to
+// disjoint cells by construction; its update fires at every ply where both
+// preceding moves are available and does not need tapering.
 static void updateCorrectionHistories(const Board &board, SearchState &state, int ply, int baseEval,
                                       int bestValue, int depth) {
     if (baseEval == -INF_SCORE) return;
@@ -127,17 +131,23 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
     int bonus = corrHistBonus(baseEval, bestValue, depth, MAX_CORR_HIST);
     auto &h = *state.historyTables;
 
-    if (ply >= 3) {
+    int posBonus = bonus;
+    if (ply == 1) {
+        posBonus = bonus / 4;
+    } else if (ply == 2) {
+        posBonus = bonus / 2;
+    }
+    {
         int pawnIdx = static_cast<int>(board.pawnKey % CORR_HIST_SIZE);
-        applyHistoryBonus(h.pawnCorrHist[stm][pawnIdx], bonus, MAX_CORR_HIST);
+        applyHistoryBonus(h.pawnCorrHist[stm][pawnIdx], posBonus, MAX_CORR_HIST);
 
         int whiteIdx = static_cast<int>(board.nonPawnKey[White] % CORR_HIST_SIZE);
         int blackIdx = static_cast<int>(board.nonPawnKey[Black] % CORR_HIST_SIZE);
-        applyHistoryBonus(h.nonPawnCorrHist[stm][White][whiteIdx], bonus, MAX_CORR_HIST);
-        applyHistoryBonus(h.nonPawnCorrHist[stm][Black][blackIdx], bonus, MAX_CORR_HIST);
+        applyHistoryBonus(h.nonPawnCorrHist[stm][White][whiteIdx], posBonus, MAX_CORR_HIST);
+        applyHistoryBonus(h.nonPawnCorrHist[stm][Black][blackIdx], posBonus, MAX_CORR_HIST);
 
         int minorIdx = static_cast<int>(board.minorKey % CORR_HIST_SIZE);
-        applyHistoryBonus(h.minorCorrHist[stm][minorIdx], bonus, MAX_CORR_HIST);
+        applyHistoryBonus(h.minorCorrHist[stm][minorIdx], posBonus, MAX_CORR_HIST);
     }
 
     if (ply >= 2) {
