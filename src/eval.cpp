@@ -969,13 +969,26 @@ static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
     int sign = (egBefore > 0) - (egBefore < 0);
     if (sign == 0) return S(0, 0);
 
-    int egDelta = sign * egMag;
-    // Never flip the sign of an already small eg score: clamp the
-    // magnitude so the resulting eg keeps the sign it had.
+    // Linearly ramp the initiative contribution from zero at eg=0 up to
+    // full magnitude at |eg| >= InitiativeRampScale (one pawn in
+    // internal units). The naive discrete sign flip at eg=0 produced a
+    // 2 * egMag swing for a 2-unit change in the underlying signal,
+    // which destabilized alpha-beta aspiration windows and inflated the
+    // node count from startpos at depth 10 by roughly 2.5x against the
+    // pre-term baseline. The ramp keeps the endgame behavior intact
+    // (full magnitude once the advantage is established) while making
+    // the transition through eg=0 continuous.
+    const int InitiativeRampScale = 228;
+    int absEg = std::abs(egBefore);
+    int ramp = (absEg >= InitiativeRampScale) ? InitiativeRampScale : absEg;
+    int egDelta = sign * egMag * ramp / InitiativeRampScale;
+    // Clamp so the contribution cannot flip the sign of an already
+    // small eg score even when egMag is itself negative (typical when
+    // the baseline constant dominates the feature sum).
     if (sign > 0 && egDelta < -egBefore) egDelta = -egBefore;
     if (sign < 0 && egDelta > -egBefore) egDelta = -egBefore;
 
-    int mgDelta = sign * mgMag / 2;
+    int mgDelta = sign * mgMag * ramp / (2 * InitiativeRampScale);
 
     return S(mgDelta, egDelta);
 }
