@@ -784,6 +784,29 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     }
                 }
 
+                // Cut-node bonus: null-window nodes are expected to fail
+                // high, so later quiets past the first few candidates
+                // should be sampled shallower. Matches the Stockfish
+                // cutNode heuristic; the moveIndex gate keeps the first
+                // couple of candidate refutations searched at current
+                // depth in case the TT or killer slots already pointed
+                // at the right move.
+                if (!pvNode && moveIndex >= 3) {
+                    reduction += 1;
+                }
+
+                // TT-PV discount: a prior iteration resolved a PV node to
+                // an exact bound, so quiet moves below it are likely
+                // close to the true PV and benefit from a shallower
+                // reduction. Gated on pvNode so the discount only fires
+                // in the subtree that actually carries a PV signal,
+                // which avoids polluting deep null-window subtrees with
+                // TT entries that happen to be exact for unrelated
+                // reasons.
+                if (pvNode && ttHit && ttEntry.flag == TT_EXACT) {
+                    reduction -= 1;
+                }
+
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 
