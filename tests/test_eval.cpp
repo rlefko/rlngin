@@ -782,12 +782,15 @@ TEST_CASE("Eval: central rook has more mobility than cornered rook", "[eval][mob
 TEST_CASE("Eval: bishop blocked by own pawn scores lower than open bishop", "[eval][mobility]") {
     Board board;
 
-    // Bishop on a1 with an own pawn on b2 shuts down the long diagonal
+    // Bishop on a1 with an own pawn on b2 shuts down the long diagonal.
+    // The pawn sits on a non-rook file so the wrong-bishop fortress scale
+    // cannot fire and distort the mobility-only comparison.
     board.setFen("4k3/8/8/8/8/8/1P6/B3K3 w - - 0 1");
     int blocked = evaluate(board);
 
-    // Same material but the pawn sits on a3 and leaves the diagonal open
-    board.setFen("4k3/8/8/8/8/P7/8/B3K3 w - - 0 1");
+    // Same material with the pawn on b3 (off the long diagonal), so the
+    // bishop's a1-h8 sweep is now open from a1 through to h8.
+    board.setFen("4k3/8/8/8/8/1P6/8/B3K3 w - - 0 1");
     int open = evaluate(board);
 
     CHECK(blocked < open);
