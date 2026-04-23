@@ -109,6 +109,17 @@ static int corrHistBonus(int baseEval, int bestValue, int depth, int max) {
 // corrected eval lets the bonus self-regulate: as the correction converges
 // the residual shrinks and updates stop accumulating. Every table shares the
 // same storage bound, so the per-table bonus is also shared.
+//
+// The pawn, non-pawn, and minor tables are keyed purely by position features.
+// At ply 1 and 2 the `cappedDepth`-scaled bonus is at its largest and the
+// feature keys overlap heavily with keys that sibling root moves will visit
+// in their own subtrees: writes accumulated while the first root move is
+// searched therefore bias the correction that every later-searched root move
+// reads. Gating those writes on ply >= 3 breaks the sibling-pollution loop
+// while preserving learning from the overwhelming majority of update sites.
+// The continuation table is keyed on the two moves leading into the node, so
+// sibling root moves write to disjoint cells by construction; its update
+// fires at every ply where both preceding moves are available.
 static void updateCorrectionHistories(const Board &board, SearchState &state, int ply, int baseEval,
                                       int bestValue, int depth) {
     if (baseEval == -INF_SCORE) return;
@@ -116,16 +127,18 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
     int bonus = corrHistBonus(baseEval, bestValue, depth, MAX_CORR_HIST);
     auto &h = *state.historyTables;
 
-    int pawnIdx = static_cast<int>(board.pawnKey % CORR_HIST_SIZE);
-    applyHistoryBonus(h.pawnCorrHist[stm][pawnIdx], bonus, MAX_CORR_HIST);
+    if (ply >= 3) {
+        int pawnIdx = static_cast<int>(board.pawnKey % CORR_HIST_SIZE);
+        applyHistoryBonus(h.pawnCorrHist[stm][pawnIdx], bonus, MAX_CORR_HIST);
 
-    int whiteIdx = static_cast<int>(board.nonPawnKey[White] % CORR_HIST_SIZE);
-    int blackIdx = static_cast<int>(board.nonPawnKey[Black] % CORR_HIST_SIZE);
-    applyHistoryBonus(h.nonPawnCorrHist[stm][White][whiteIdx], bonus, MAX_CORR_HIST);
-    applyHistoryBonus(h.nonPawnCorrHist[stm][Black][blackIdx], bonus, MAX_CORR_HIST);
+        int whiteIdx = static_cast<int>(board.nonPawnKey[White] % CORR_HIST_SIZE);
+        int blackIdx = static_cast<int>(board.nonPawnKey[Black] % CORR_HIST_SIZE);
+        applyHistoryBonus(h.nonPawnCorrHist[stm][White][whiteIdx], bonus, MAX_CORR_HIST);
+        applyHistoryBonus(h.nonPawnCorrHist[stm][Black][blackIdx], bonus, MAX_CORR_HIST);
 
-    int minorIdx = static_cast<int>(board.minorKey % CORR_HIST_SIZE);
-    applyHistoryBonus(h.minorCorrHist[stm][minorIdx], bonus, MAX_CORR_HIST);
+        int minorIdx = static_cast<int>(board.minorKey % CORR_HIST_SIZE);
+        applyHistoryBonus(h.minorCorrHist[stm][minorIdx], bonus, MAX_CORR_HIST);
+    }
 
     if (ply >= 2) {
         PieceType prev2Pt = state.movedPiece[ply - 2];
@@ -845,15 +858,11 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // we have a quiet best move and a bound that actually informs the
         // correction: exact, a passing lower bound, or a failing upper bound.
         // Captures and promotions skew the correction target so we omit them.
-        // Updates at ply 1 and 2 also skew sibling root moves: the position
-        // keys at those plies overlap heavily with keys visited elsewhere in
-        // the tree, and the cappedDepth-scaled bonus is at its largest there,
-        // so writes accumulated while the first root move is searched bias
-        // the correction that later-searched root moves read. Gating on
-        // ply >= 3 preserves the overwhelming majority of update sites while
-        // breaking the sibling-pollution loop.
-        if (!inCheck && ply >= 3 && depth >= 2 && bestMove.from != bestMove.to &&
-            !isCapture(board, bestMove) && bestMove.promotion == None) {
+        // The ply gate for the position-keyed tables is applied inside
+        // `updateCorrectionHistories` so the continuation-keyed term can still
+        // update at ply 2 where it remains safe.
+        if (!inCheck && depth >= 2 && bestMove.from != bestMove.to && !isCapture(board, bestMove) &&
+            bestMove.promotion == None) {
             bool boundUseful = (flag == TT_EXACT) ||
                                (flag == TT_LOWER_BOUND && bestScore >= beta) ||
                                (flag == TT_UPPER_BOUND && bestScore <= origAlpha);
