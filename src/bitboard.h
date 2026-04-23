@@ -69,10 +69,16 @@ extern Bitboard PawnSpanMask[2][64];
 //       can plant themselves beyond easy pawn challenge.
 //   SpaceMask[c]    -- the central c-f files on relative ranks 2-4 where
 //       unchallenged squares grant a middlegame space bonus.
+//   CentralDEFilesBB[c] -- the two "classical center" squares on d4/e4 for
+//       White and d5/e5 for Black.
+//   CentralCFFilesBB[c] -- the extended center squares c4/f4 for White and
+//       c5/f5 for Black.
 //   KingSideBB / QueenSideBB -- flank file unions used by the trapped-rook
 //       detection.
 extern Bitboard OutpostRanks[2];
 extern Bitboard SpaceMask[2];
+extern Bitboard CentralDEFilesBB[2];
+extern Bitboard CentralCFFilesBB[2];
 extern Bitboard KingSideBB;
 extern Bitboard QueenSideBB;
 

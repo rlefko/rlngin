@@ -502,12 +502,28 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
     }
 }
 
+// Credit own pawns parked on the classical center squares. Primary
+// (d/e file) and extended (c/f file) variants carry separate weights so
+// a full c3-d4-e4 formation scores distinctly from a plain d4-e4 duo.
+// Uses middlegame-only weights by design: in a deep endgame the file on
+// which a pawn sits matters less than its passed/blocked status, which
+// other terms already cover.
+static void evaluateCentralPawns(const Board &board, Score scores[2]) {
+    for (int c = 0; c < 2; c++) {
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
+        int primary = popcount(ourPawns & CentralDEFilesBB[c]);
+        int extended = popcount(ourPawns & CentralCFFilesBB[c]);
+        if (primary) scores[c] += evalParams.CentralPawnBonus[0] * primary;
+        if (extended) scores[c] += evalParams.CentralPawnBonus[1] * extended;
+    }
+}
+
 // Count central squares on our side of the board that are safe from enemy
 // pawn attacks and not occupied by our own pawns. Squares behind our own
-// pawn chain count double: they are already committed territory and
-// amplify the bonus Stockfish-style. Scaled quadratically by the number
-// of our non-pawn non-king pieces so the term only bites in middlegames
-// with enough material to exploit the extra space.
+// pawn chain count double because they are already committed territory
+// that amplifies the bonus. Scaled quadratically by the number of our
+// non-pawn non-king pieces so the term only bites in middlegames with
+// enough material to exploit the extra space.
 static void evaluateSpace(const Board &board, const EvalContext &ctx, Score scores[2]) {
     for (int c = 0; c < 2; c++) {
         Bitboard ourPieces = board.byColor[c] & ~board.byPiece[Pawn] & ~board.byPiece[King];
@@ -1010,6 +1026,7 @@ int evaluate(const Board &board) {
     buildAttackMaps(board, ctx);
 
     evaluatePieces(board, ctx, scores);
+    evaluateCentralPawns(board, scores);
     evaluatePassedPawnExtras(board, ctx, passers, scores);
     evaluateBlockedPawns(board, passers, scores);
     evaluateThreats(board, ctx, scores);
@@ -1091,6 +1108,10 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluatePieces(board, ctx, pieceScores);
     Score pieceScore = pieceScores[White] - pieceScores[Black];
 
+    Score centerScores[2] = {0, 0};
+    evaluateCentralPawns(board, centerScores);
+    Score centerScore = centerScores[White] - centerScores[Black];
+
     Score passerExtrasScores[2] = {0, 0};
     evaluatePassedPawnExtras(board, ctx, passers, passerExtrasScores);
     Score passerExtrasScore = passerExtrasScores[White] - passerExtrasScores[Black];
@@ -1111,8 +1132,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score total = pstScore + matScore + pieceScore + passerExtrasScore + blockedPawnScore +
-                  threatScore + spaceScore + kingSafetyScore + pawnScore;
+    Score total = pstScore + matScore + pieceScore + centerScore + passerExtrasScore +
+                  blockedPawnScore + threatScore + spaceScore + kingSafetyScore + pawnScore;
     int mg = mg_value(total);
     int eg = eg_value(total);
 
@@ -1149,6 +1170,7 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     formatTerm(os, "PST", pstScore);
     formatTerm(os, "Pawns", pawnScore);
     formatTerm(os, "Pieces", pieceScore);
+    formatTerm(os, "Center", centerScore);
     formatTerm(os, "Passed extras", passerExtrasScore);
     formatTerm(os, "Blocked pawns", blockedPawnScore);
     formatTerm(os, "Threats", threatScore);

@@ -170,6 +170,10 @@ static const EvalParams kDefaultEvalParams = {
     {S(-5, -2), S(-2, -1)}, // BlockedPawnPenalty (rel rank 5, 6)
     S( -5,  -8),            // PawnIslandPenalty (per island beyond the first)
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
+
+    // CentralPawnBonus: primary (d/e) then extended (c/f). MG-only because
+    // the endgame does not distinguish central from flank pawns.
+    {S(12, 0), S(4, 0)},
 };
 // clang-format on
 
