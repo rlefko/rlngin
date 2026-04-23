@@ -984,6 +984,18 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         return a.from == b.from && a.to == b.to && a.promotion == b.promotion;
     };
 
+    // Cross-iteration stability signal. searchAgainCounter grows when the
+    // previous iteration's aspiration saw a fail-low land after a fail-high,
+    // which is the conventional "root score oscillated within a single
+    // window" indicator that the search is still hunting for the true
+    // verdict. It feeds adjustedDepth so oscillating searches spend less
+    // depth per aspiration retry, recovering time that iterative deepening
+    // will reinvest once the root choice stabilizes. The counter is
+    // monotonic within a single root search and reset to zero at each new
+    // startSearch call.
+    int searchAgainCounter = 0;
+    bool prevIterationFailLowAfterFailHigh = false;
+
     for (int depth = 1; depth <= maxDepth; depth++) {
         state.rootDepth = depth;
         state.extensionsOnPath[0] = 0;
@@ -999,6 +1011,10 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
         Move slotZeroBest = rootMoves[0];
         bool mateFound = false;
+        // Aggregated across slots: did any aspiration loop on this iteration
+        // fail low after already failing high? That oscillation is the signal
+        // we pass through to next iteration's searchAgainCounter increment.
+        bool iterFailLowAfterFailHigh = false;
 
         for (int slot = 0; slot < numSlots; slot++) {
             int delta = 60;
@@ -1040,18 +1056,24 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             // attempt. A fail-low resets the counter so the next retry runs
             // at the full requested depth, because a fail-low signals that
             // the previous bound was too optimistic and we need real depth
-            // to pin down the new worst case accurately.
+            // to pin down the new worst case accurately. sawFailHigh and
+            // sawFailLowAfterFailHigh track the within-iteration oscillation
+            // pattern that feeds the cross-iteration searchAgainCounter.
             int failedHighCnt = 0;
+            bool sawFailHigh = false;
+            bool sawFailLowAfterFailHigh = false;
 
             while (true) {
                 // Shorten the retry by one ply for every consecutive fail-high
-                // in this aspiration loop. Once the aspiration has already
-                // refused a high bound, the widened re-search does not need
-                // the same depth to reconfirm it; reducing depth makes the
-                // retry cheap and less anchored to entries stored at the
-                // previous attempt. max(1, ...) preserves a floor so repeated
-                // re-widens never collapse the root into qsearch.
-                int adjustedDepth = std::max(1, depth - failedHighCnt);
+                // in this aspiration loop, plus a gradual cross-iteration term
+                // derived from searchAgainCounter. The `3 * (n + 1) / 4`
+                // scaling yields roughly one extra ply of reduction per four
+                // bestmove changes, matching the cadence convention strong
+                // engines have converged on for the searchAgain idiom.
+                // max(1, ...) preserves a floor so repeated re-widens never
+                // collapse the root into qsearch.
+                int adjustedDepth =
+                    std::max(1, depth - failedHighCnt - 3 * (searchAgainCounter + 1) / 4);
 
                 state.seldepth = 0;
                 currentBestScore = -INF_SCORE;
@@ -1141,6 +1163,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     // the full requested depth so the widened window gets an
                     // accurate verdict rather than a shallower estimate.
                     failedHighCnt = 0;
+                    if (sawFailHigh) sawFailLowAfterFailHigh = true;
                     delta *= 4;
                 } else if (currentBestScore >= beta) {
                     // Fail-high: score is above the window, widen upward.
@@ -1148,6 +1171,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER, slot + 1);
                     beta = std::min(currentBestScore + delta, INF_SCORE);
                     failedHighCnt++;
+                    sawFailHigh = true;
                     delta *= 4;
                 } else {
                     // Exact: score is within the aspiration window
@@ -1159,6 +1183,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             }
 
             if (state.stopped) break;
+
+            if (sawFailLowAfterFailHigh) iterFailLowAfterFailHigh = true;
 
             prevSlotScores[slot] = currentBestScore;
 
@@ -1192,6 +1218,23 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 break;
             }
         }
+
+        // Growing the cross-iteration stability signal. The next iteration
+        // tightens its aspiration retry budget when the previous iteration
+        // already oscillated across its own window (a fail-low that landed
+        // after a fail-high), because that oscillation is the clearest
+        // signal the engine has that the true root score still sits beyond
+        // where the current window is looking. Tying the counter to a
+        // specific oscillation pattern rather than to any bestmove change
+        // keeps stable searches at full depth and only spends the
+        // searchAgain reduction when it is actually likely to help. The
+        // counter only grows past an opening warmup threshold to avoid
+        // biting at shallow depths where iterative deepening naturally
+        // oscillates.
+        if (depth > 6 && prevIterationFailLowAfterFailHigh) {
+            searchAgainCounter++;
+        }
+        prevIterationFailLowAfterFailHigh = iterFailLowAfterFailHigh;
 
         if (mateFound) break;
     }
