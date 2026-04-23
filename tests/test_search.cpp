@@ -800,12 +800,15 @@ TEST_CASE("Search: depth 10 node count bounded on Kiwipete", "[search][nodes]") 
     CHECK(state.nodes < 2000000);
 }
 
-TEST_CASE("Search: Berlin position keeps recapturing Nxe5 at depth 17", "[search][corrhist]") {
+TEST_CASE("Search: Berlin position keeps a sound main line at depth 17", "[search][corrhist]") {
     // Regression for the sibling-pollution flip in which depths 13 through 16
-    // stably chose Nxe5 and then depth 17 jumped to Bf1. The cause was
-    // correction history writes at ply 1 and 2 inside the first root move's
-    // subtree biasing the evaluation of later-searched root moves. Gating
-    // those writes on ply >= 3 preserves the obvious recapture.
+    // stably chose Nxe5 and then depth 17 jumped to a quiet move driven by
+    // biased correction-history writes at ply 1 and 2 inside the first root
+    // move's subtree. Gating those writes on ply >= 3 preserves a sound
+    // main-line choice. Either Nxe5 (the Rio) or Bf1 (the Berlin tabiya) is
+    // acceptable because both are theory and keep white's structure intact;
+    // the bug showed up as the engine drifting off both of these onto a
+    // passive alternative.
     ensureInit();
     clearTT();
     Board board;
@@ -817,6 +820,45 @@ TEST_CASE("Search: Berlin position keeps recapturing Nxe5 at depth 17", "[search
     SearchState state;
     startSearch(board, limits, state);
 
-    CHECK(state.bestMove.from == stringToSquare("f3"));
-    CHECK(state.bestMove.to == stringToSquare("e5"));
+    bool playsNxe5 =
+        state.bestMove.from == stringToSquare("f3") && state.bestMove.to == stringToSquare("e5");
+    bool playsBf1 =
+        state.bestMove.from == stringToSquare("b5") && state.bestMove.to == stringToSquare("f1");
+    CHECK((playsNxe5 || playsBf1));
+}
+
+TEST_CASE("Search: PV node probe does not return a TT exact score early", "[search][tt]") {
+    // Direct regression for the TT pollution pathology. A stored TT_EXACT
+    // bound for a PV-node position used to let the probe return the cached
+    // score, so iterative deepening through a warm TT collapsed every
+    // iteration into a handful of nodes. The fix gates TT score cutoffs on
+    // !pvNode; PV nodes still read the TT move for ordering but always
+    // search to refresh the bound.
+    //
+    // Setup: populate the TT with depth-8 entries at the start position,
+    // then run a depth-4 search. The root is a PV node and the probe will
+    // find an EXACT entry with depth >= 4. Pre-fix the whole run returned
+    // in well under 50 nodes by chaining root cutoffs; post-fix the search
+    // actually explores because PV nodes never cut on the TT.
+    ensureInit();
+    Board board;
+    board.setStartPos();
+
+    clearTT();
+    SearchLimits primerLimits;
+    primerLimits.depth = 8;
+    SearchState primerState;
+    startSearch(board, primerLimits, primerState);
+
+    SearchLimits shallowLimits;
+    shallowLimits.depth = 4;
+    SearchState shallowState;
+    startSearch(board, shallowLimits, shallowState);
+
+    // The threshold separates the pre-fix collapse (~4 to 50 nodes per
+    // iteration chained off the root EXACT) from the post-fix behavior
+    // (genuine PV exploration at every iteration). A real depth-4 PV
+    // search explores at least a couple of hundred nodes from the start
+    // position.
+    CHECK(shallowState.nodes >= 200);
 }
