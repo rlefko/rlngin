@@ -56,9 +56,10 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     CHECK(evaluate(board) == 25);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
-    // is scaled to zero. The mg half still reflects material and PSTs.
+    // is scaled to zero. The mg half reflects material, PSTs, and the
+    // long-diagonal sweep the a1-h8 diagonal earns on an empty board.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 41);
+    CHECK(evaluate(board) == 42);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color

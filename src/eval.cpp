@@ -430,7 +430,8 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard bishops = board.byPiece[Bishop] & board.byColor[c];
         while (bishops) {
             int sq = popLsb(bishops);
-            int count = popcount(bishopAttacks(sq, occ) & ctx.mobilityArea[c]);
+            Bitboard atk = bishopAttacks(sq, occ);
+            int count = popcount(atk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Bishop][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
@@ -442,6 +443,24 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
             int blockingPawns = popcount(ourPawns & sameColorSquares);
             scores[c] += evalParams.BadBishopPenalty * blockingPawns;
+
+            // Long diagonal sweep: the two central squares on this bishop's
+            // long diagonal must both be covered by the bishop itself (from
+            // the bishop's own square or through its attack set). If either
+            // center square is blocked by a friendly or enemy piece, the
+            // bonus stays off.
+            Bitboard diag = 0;
+            if (squareBB(sq) & DiagA1H8BB)
+                diag = DiagA1H8BB;
+            else if (squareBB(sq) & DiagA8H1BB)
+                diag = DiagA8H1BB;
+            if (diag) {
+                Bitboard centerTwo = diag & (Rank4BB | Rank5BB);
+                Bitboard reach = atk | squareBB(sq);
+                if ((centerTwo & reach) == centerTwo) {
+                    scores[c] += evalParams.BishopLongDiagonalBonus;
+                }
+            }
         }
 
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];

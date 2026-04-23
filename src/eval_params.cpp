@@ -174,6 +174,11 @@ static const EvalParams kDefaultEvalParams = {
     // CentralPawnBonus: primary (d/e) then extended (c/f). MG-only because
     // the endgame does not distinguish central from flank pawns.
     {S(12, 0), S(4, 0)},
+
+    // BishopLongDiagonalBonus: MG-heavy because the long diagonal matters
+    // most when heavy pieces are still on the board and can be traded onto
+    // it; a small endgame trickle keeps fianchetto bishops relevant.
+    S(30, 5),
 };
 // clang-format on
 

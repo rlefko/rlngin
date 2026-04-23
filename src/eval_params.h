@@ -161,6 +161,11 @@ struct EvalParams {
     // an e2 pawn and an e4 pawn, so an explicit term is needed to bias
     // classical center occupation at low search depths.
     Score CentralPawnBonus[2];
+
+    // Bonus for a bishop whose long diagonal (a1-h8 or a8-h1) sweeps
+    // both central squares on that diagonal unobstructed. Applied at
+    // most once per bishop.
+    Score BishopLongDiagonalBonus;
 };
 
 extern EvalParams evalParams;

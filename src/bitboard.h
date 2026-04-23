@@ -31,6 +31,11 @@ constexpr Bitboard Rank8BB = 0xFF00000000000000ULL;
 constexpr Bitboard LightSquaresBB = 0x55AA55AA55AA55AAULL;
 constexpr Bitboard DarkSquaresBB = 0xAA55AA55AA55AA55ULL;
 
+// Long diagonal masks: a1-h8 and a8-h1. A bishop sweeping either diagonal
+// through both central squares on it earns a coordination bonus.
+constexpr Bitboard DiagA1H8BB = 0x8040201008040201ULL;
+constexpr Bitboard DiagA8H1BB = 0x0102040810204080ULL;
+
 inline int popcount(Bitboard b) {
     return __builtin_popcountll(b);
 }
