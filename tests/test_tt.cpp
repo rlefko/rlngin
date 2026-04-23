@@ -167,23 +167,87 @@ TEST_CASE("TT: clear resets the generation counter", "[tt]") {
     CHECK(table.generation() == 0);
 }
 
-TEST_CASE("TT: same-key store refreshes regardless of depth", "[tt]") {
+TEST_CASE("TT: same-key shallow non-exact store preserves deeper bound", "[tt]") {
     TranspositionTable table(1);
     Move deep = {1, 2, None};
     Move shallow = {3, 4, None};
 
     table.new_search();
     table.store(0xABC, 100, 0, 10, TT_EXACT, deep, 0);
-    // Later information about the same position wins even if searched less
-    // deeply, since it reflects the newest evaluation of that key.
+    // A shallower non-exact write for the same key must not clobber the
+    // deeper exact bound: the deeper entry carries more information and
+    // erasing it here would bleed depth out of the table on every PV
+    // node re-search that hits the same transposition at a smaller
+    // remaining depth than its prior visit.
     table.store(0xABC, 250, 0, 3, TT_LOWER_BOUND, shallow, 0);
+
+    TTEntry entry;
+    REQUIRE(table.probe(0xABC, entry, 0));
+    CHECK(entry.score == 100);
+    CHECK(entry.depth == 10);
+    CHECK(entry.flag == TT_EXACT);
+    CHECK(entry.best_move.from == 1);
+}
+
+TEST_CASE("TT: exact store overwrites a deeper same-key non-exact bound", "[tt]") {
+    TranspositionTable table(1);
+    Move deep = {1, 2, None};
+    Move shallow = {3, 4, None};
+
+    table.new_search();
+    table.store(0xABC, 100, 0, 10, TT_LOWER_BOUND, deep, 0);
+    // EXACT carries maximal information about a position, so it wins
+    // over a deeper non-exact bound. This prevents a stale lowerbound
+    // from pinning future probes to an incorrect cutoff when we have
+    // newer, more definitive information.
+    table.store(0xABC, 250, 0, 3, TT_EXACT, shallow, 0);
 
     TTEntry entry;
     REQUIRE(table.probe(0xABC, entry, 0));
     CHECK(entry.score == 250);
     CHECK(entry.depth == 3);
-    CHECK(entry.flag == TT_LOWER_BOUND);
+    CHECK(entry.flag == TT_EXACT);
     CHECK(entry.best_move.from == 3);
+}
+
+TEST_CASE("TT: same-key store at comparable depth takes over", "[tt]") {
+    TranspositionTable table(1);
+    Move before = {1, 2, None};
+    Move after = {3, 4, None};
+
+    table.new_search();
+    table.store(0xABC, 100, 0, 10, TT_LOWER_BOUND, before, 0);
+    // Within the tolerance band the newer search wins even if its depth is
+    // one ply shallower, because that information reflects the current
+    // search's move ordering and bound tightness.
+    table.store(0xABC, 250, 0, 9, TT_LOWER_BOUND, after, 0);
+
+    TTEntry entry;
+    REQUIRE(table.probe(0xABC, entry, 0));
+    CHECK(entry.score == 250);
+    CHECK(entry.depth == 9);
+    CHECK(entry.best_move.from == 3);
+}
+
+TEST_CASE("TT: same-key store preserves an existing best move on empty write", "[tt]") {
+    TranspositionTable table(1);
+    Move real = {5, 21, None};
+    Move empty = {0, 0, None};
+
+    table.new_search();
+    table.store(0xABC, 100, 0, 6, TT_EXACT, real, 0);
+    // Leaf-level stand-pat writes and fail-high paths that never tried a
+    // move can store with an empty best move. Those writes should not wipe
+    // the previously cached move hint, because the hint is useful for
+    // ordering the next visit even when the score itself is refreshed.
+    table.store(0xABC, 120, 0, 6, TT_LOWER_BOUND, empty, 0);
+
+    TTEntry entry;
+    REQUIRE(table.probe(0xABC, entry, 0));
+    CHECK(entry.score == 120);
+    CHECK(entry.flag == TT_LOWER_BOUND);
+    CHECK(entry.best_move.from == 5);
+    CHECK(entry.best_move.to == 21);
 }
 
 TEST_CASE("TT: aging evicts stale deep entries before fresh shallow ones", "[tt]") {

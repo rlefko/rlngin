@@ -68,9 +68,11 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
     // fresh shallow one once the stale entry trails the current search by
     // several generations.
     TTEntry *target = nullptr;
+    bool sameKey = false;
     for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
         if (cluster.entries[i].key == key && cluster.entries[i].flag != TT_NONE) {
             target = &cluster.entries[i];
+            sameKey = true;
             break;
         }
     }
@@ -98,13 +100,39 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
         }
     }
 
+    // Same-key replacement gate. A shallow non-EXACT write must not clobber a
+    // deeper same-key entry from a more thorough search: doing so bleeds depth
+    // out of the table every time a PV node re-searches a transposition at a
+    // smaller remaining depth than its prior visit. An EXACT bound always
+    // wins because it carries maximally useful information; otherwise the new
+    // depth must land within 3 ply of the existing entry to take over. The
+    // bestMove hint is preserved across rejected overwrites: a valid prior
+    // move stays put rather than being erased by a store that could not supply
+    // one of its own (for instance a leaf-level stand-pat write).
+    if (sameKey && flag != TT_EXACT && target->flag == TT_EXACT && depth < target->depth) {
+        // Preserve the deeper exact bound. Only refresh the generation so the
+        // aging replacement logic does not treat it as stale.
+        target->generation = generation_;
+        return;
+    }
+    if (sameKey && flag != TT_EXACT && depth + 4 <= target->depth) {
+        // New entry is meaningfully shallower than the existing same-key bound
+        // and carries no stronger flag, so keep the deeper result intact.
+        target->generation = generation_;
+        return;
+    }
+
+    bool incomingHasMove = best_move.from != 0 || best_move.to != 0;
+    Move preservedMove = target->best_move;
+    bool preservedHasMove = sameKey && (preservedMove.from != 0 || preservedMove.to != 0);
+
     target->key = key;
     target->score = scoreToTT(score, ply);
     target->depth = static_cast<int16_t>(depth);
     target->eval = static_cast<int16_t>(eval);
     target->flag = flag;
     target->generation = generation_;
-    target->best_move = best_move;
+    target->best_move = (!incomingHasMove && preservedHasMove) ? preservedMove : best_move;
 }
 
 void TranspositionTable::prefetch(uint64_t key) const {
