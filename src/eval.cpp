@@ -878,6 +878,80 @@ static void evaluateBlockedPawns(const Board &board, const Bitboard passers[2], 
     }
 }
 
+// Compute a position-wide initiative contribution. The magnitude is
+// accumulated from six features (passer count, pawn count, outflank,
+// pawn tension, king infiltration, pure-pawn-endgame flag) plus a
+// constant baseline, then signed by the side with the current eg-level
+// positional advantage. A clamp prevents the contribution from flipping
+// the sign of an already small eg score. The mg half is applied at half
+// strength so the term does not distort quiet middlegame positions.
+static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
+                                const Bitboard passers[2], Score totalBeforeInitiative) {
+    // Initiative is a positional-complexity signal. It only makes sense
+    // when both sides still have pawns to work with: pawnless endings
+    // are resolved by material fundamentals, not by positional tension.
+    Bitboard whitePawnsBB = board.byPiece[Pawn] & board.byColor[White];
+    Bitboard blackPawnsBB = board.byPiece[Pawn] & board.byColor[Black];
+    if (!whitePawnsBB || !blackPawnsBB) return S(0, 0);
+
+    int passerCount = popcount(passers[White] | passers[Black]);
+    int pawnCount = popcount(board.byPiece[Pawn]);
+
+    Bitboard allPawns = board.byPiece[Pawn];
+    int kingsidePawns = popcount(allPawns & KingSideBB);
+    int queensidePawns = popcount(allPawns & QueenSideBB);
+    int outflank = kingsidePawns * queensidePawns;
+    if (outflank > 16) outflank = 16;
+
+    // Tension is counted from both sides so a symmetric break is
+    // credited twice. The weight (4 eg) already accounts for that
+    // double counting at a scale matched to other initiative weights.
+    int tension = popcount(ctx.pawnAttacks[White] & blackPawnsBB) +
+                  popcount(ctx.pawnAttacks[Black] & whitePawnsBB);
+
+    int infiltrated = 0;
+    Bitboard whiteKingBB = board.byPiece[King] & board.byColor[White];
+    Bitboard blackKingBB = board.byPiece[King] & board.byColor[Black];
+    if (whiteKingBB && squareRank(lsb(whiteKingBB)) >= 4) infiltrated++;
+    if (blackKingBB && squareRank(lsb(blackKingBB)) <= 3) infiltrated++;
+
+    bool onlyPawns = (board.byPiece[Pawn] != 0) &&
+                     (board.pieceCount[White][Knight] + board.pieceCount[White][Bishop] +
+                          board.pieceCount[White][Rook] + board.pieceCount[White][Queen] +
+                          board.pieceCount[Black][Knight] + board.pieceCount[Black][Bishop] +
+                          board.pieceCount[Black][Rook] + board.pieceCount[Black][Queen] ==
+                      0);
+
+    int mgMag = mg_value(evalParams.InitiativePasser) * passerCount +
+                mg_value(evalParams.InitiativePawnCount) * pawnCount +
+                mg_value(evalParams.InitiativeOutflank) * outflank +
+                mg_value(evalParams.InitiativeTension) * tension +
+                mg_value(evalParams.InitiativeInfiltrate) * infiltrated +
+                mg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
+                mg_value(evalParams.InitiativeConstant);
+    int egMag = eg_value(evalParams.InitiativePasser) * passerCount +
+                eg_value(evalParams.InitiativePawnCount) * pawnCount +
+                eg_value(evalParams.InitiativeOutflank) * outflank +
+                eg_value(evalParams.InitiativeTension) * tension +
+                eg_value(evalParams.InitiativeInfiltrate) * infiltrated +
+                eg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
+                eg_value(evalParams.InitiativeConstant);
+
+    int egBefore = eg_value(totalBeforeInitiative);
+    int sign = (egBefore > 0) - (egBefore < 0);
+    if (sign == 0) return S(0, 0);
+
+    int egDelta = sign * egMag;
+    // Never flip the sign of an already small eg score: clamp the
+    // magnitude so the resulting eg keeps the sign it had.
+    if (sign > 0 && egDelta < -egBefore) egDelta = -egBefore;
+    if (sign < 0 && egDelta > -egBefore) egDelta = -egBefore;
+
+    int mgDelta = sign * mgMag / 2;
+
+    return S(mgDelta, egDelta);
+}
+
 // Endgame scale factor in [0, 64]. Applied to the eg half of the tapered
 // score before blending with mg: at 64 the eg value passes through
 // unchanged, at 0 the eg contribution disappears entirely. Used to push
@@ -1053,6 +1127,7 @@ int evaluate(const Board &board) {
     evaluateKingSafety(board, ctx, scores);
 
     Score total = scores[White] - scores[Black] + pawnScore;
+    total += evaluateInitiative(board, ctx, passers, total);
 
     int mg = mg_value(total);
     int eg = eg_value(total);
@@ -1151,8 +1226,11 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score total = pstScore + matScore + pieceScore + centerScore + passerExtrasScore +
-                  blockedPawnScore + threatScore + spaceScore + kingSafetyScore + pawnScore;
+    Score totalBeforeInitiative = pstScore + matScore + pieceScore + centerScore +
+                                  passerExtrasScore + blockedPawnScore + threatScore + spaceScore +
+                                  kingSafetyScore + pawnScore;
+    Score initiativeScore = evaluateInitiative(board, ctx, passers, totalBeforeInitiative);
+    Score total = totalBeforeInitiative + initiativeScore;
     int mg = mg_value(total);
     int eg = eg_value(total);
 
@@ -1195,6 +1273,7 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     formatTerm(os, "Threats", threatScore);
     formatTerm(os, "Space", spaceScore);
     formatTerm(os, "King safety", kingSafetyScore);
+    formatTerm(os, "Initiative", initiativeScore);
     os << "  " << std::left << std::setw(14) << "Sum"
        << " mg=" << std::setw(6) << std::right << mg << " eg=" << std::setw(6) << std::right << eg
        << '\n';

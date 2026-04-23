@@ -166,6 +166,32 @@ struct EvalParams {
     // both central squares on that diagonal unobstructed. Applied at
     // most once per bishop.
     Score BishopLongDiagonalBonus;
+
+    // Position-wide "initiative" scalar. Features are accumulated into a
+    // non-negative magnitude, then signed by the side with the current
+    // positional advantage, and folded into the total so the score bends
+    // in favor of the better-placed side. The term is clamped to never
+    // flip the sign of an already small endgame score.
+    //
+    // Index meanings:
+    //   Passer      -- per passed pawn on either side
+    //   PawnCount   -- per pawn on the board (tiny weight, grows with pawns)
+    //   Outflank    -- popcount(kingside pawns) * popcount(queenside pawns)
+    //   Tension     -- enemy pawns under our pawn attacks plus mirror
+    //   Infiltrate  -- per king that has crossed into enemy territory
+    //   PureBase    -- flat when no non-pawn non-king material remains
+    //   Constant    -- baseline shift (typically negative)
+    //
+    // All seven carry MG=0 so the term is primarily an endgame effect,
+    // applied at half strength to MG inside evaluateInitiative so sharp
+    // middlegame positions still get a nudge.
+    Score InitiativePasser;
+    Score InitiativePawnCount;
+    Score InitiativeOutflank;
+    Score InitiativeTension;
+    Score InitiativeInfiltrate;
+    Score InitiativePureBase;
+    Score InitiativeConstant;
 };
 
 extern EvalParams evalParams;
