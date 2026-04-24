@@ -1228,21 +1228,25 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // double counted against the threat-by-minor and threat-by-rook
         // bonuses that already credit the direct attack.
         Bitboard enemyQueens = theirPieces & board.byPiece[Queen];
-        if (enemyQueens) {
+        Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
+        Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
+        if (enemyQueens && (ourBishops | ourRooks)) {
             Bitboard occ = board.occupied;
-            Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
-            Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
             int diagXrays = 0;
             int orthoXrays = 0;
             Bitboard queensIter = enemyQueens;
             while (queensIter) {
                 int qSq = popLsb(queensIter);
-                Bitboard firstDiag = bishopAttacks(qSq, occ) & occ;
-                Bitboard xraySquaresDiag = bishopAttacks(qSq, occ ^ firstDiag);
-                diagXrays += popcount(xraySquaresDiag & ourBishops & ~firstDiag);
-                Bitboard firstOrtho = rookAttacks(qSq, occ) & occ;
-                Bitboard xraySquaresOrtho = rookAttacks(qSq, occ ^ firstOrtho);
-                orthoXrays += popcount(xraySquaresOrtho & ourRooks & ~firstOrtho);
+                if (ourBishops) {
+                    Bitboard firstDiag = bishopAttacks(qSq, occ) & occ;
+                    Bitboard xraySquaresDiag = bishopAttacks(qSq, occ ^ firstDiag);
+                    diagXrays += popcount(xraySquaresDiag & ourBishops & ~firstDiag);
+                }
+                if (ourRooks) {
+                    Bitboard firstOrtho = rookAttacks(qSq, occ) & occ;
+                    Bitboard xraySquaresOrtho = rookAttacks(qSq, occ ^ firstOrtho);
+                    orthoXrays += popcount(xraySquaresOrtho & ourRooks & ~firstOrtho);
+                }
             }
             scores[us] += evalParams.SliderOnQueenBishop * diagXrays;
             scores[us] += evalParams.SliderOnQueenRook * orthoXrays;
