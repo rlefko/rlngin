@@ -196,6 +196,8 @@ static const EvalParams kDefaultEvalParams = {
 
     S(15,  8), // SliderOnQueenBishop
     S(20, 10), // SliderOnQueenRook
+
+    S( 2,  1), // RestrictedPiece
 };
 // clang-format on
 

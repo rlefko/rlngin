@@ -1238,6 +1238,16 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
             scores[us] += evalParams.SliderOnQueenRook * orthoXrays;
         }
 
+        // Restricted piece: every square we attack that an enemy knight,
+        // bishop, rook, or queen also attacks, minus squares their pawns
+        // defend. Each such square limits one of their pieces from
+        // retreating or rotating through, which is the positional
+        // coordination signal the term models.
+        Bitboard theirPieceAttacks = ctx.attackedBy[them][Knight] | ctx.attackedBy[them][Bishop] |
+                                     ctx.attackedBy[them][Rook] | ctx.attackedBy[them][Queen];
+        Bitboard restricted = theirPieceAttacks & ctx.allAttacks[us] & ~ctx.pawnAttacks[them];
+        scores[us] += evalParams.RestrictedPiece * popcount(restricted);
+
         // Safe pawn push threat: single- or double-push targets that are
         // empty, not attacked by enemy pawns, and either not attacked by
         // the enemy at all or defended by our own pieces. From those

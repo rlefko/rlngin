@@ -217,6 +217,15 @@ struct EvalParams {
     // variants are scored per counted slider.
     Score SliderOnQueenBishop;
     Score SliderOnQueenRook;
+
+    // Bonus per square that both sides' non-pawn pieces attack, minus
+    // squares the opponent's pawns defend. A square we attack that the
+    // opponent's knight, bishop, rook, or queen also attacks is a square
+    // the opponent cannot comfortably use for retreat or rotation: every
+    // such square restricts an opposing piece's freedom of movement.
+    // Pawn-defended squares are excluded because our attacker is already
+    // outvalued there and the recapture is immediate.
+    Score RestrictedPiece;
 };
 
 extern EvalParams evalParams;

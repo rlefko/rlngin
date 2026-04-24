@@ -262,6 +262,14 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("SliderOnQueenRookEg", &evalParams.SliderOnQueenRook, false, 0,
                                     80, 5.0, 2.0));
 
+    // --- Restricted piece: bonus per square of shared attack pressure.
+    // Counts in the 10 to 40 range are common, so the per-square weight
+    // is intentionally tiny. ---
+    out.push_back(
+        makeScoreHalfSpec("RestrictedPieceMg", &evalParams.RestrictedPiece, true, 0, 20, 1.5, 0.5));
+    out.push_back(makeScoreHalfSpec("RestrictedPieceEg", &evalParams.RestrictedPiece, false, 0, 20,
+                                    1.5, 0.5));
+
     // --- Pawn islands penalty: penalty-signed so SPSA cannot flip it
     // into a bonus. The first penalty-valued scalar exposed via SPSA, so
     // the bounds follow the "bonuses stay bonuses" invariant inverted:

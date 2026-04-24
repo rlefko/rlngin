@@ -213,6 +213,9 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop);
     addMgEg("SliderOnQueenRook", &evalParams.SliderOnQueenRook);
 
+    // --- Restricted piece ---
+    addMgEg("RestrictedPiece", &evalParams.RestrictedPiece);
+
     return out;
 }
 
@@ -562,6 +565,7 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.SliderOnQueenBishop)
               << ", // SliderOnQueenBishop\n";
     std::cout << "    " << fmtScore(evalParams.SliderOnQueenRook) << ", // SliderOnQueenRook\n";
+    std::cout << "    " << fmtScore(evalParams.RestrictedPiece) << ", // RestrictedPiece\n";
     std::cout << "};\n";
 }
 
