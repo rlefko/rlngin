@@ -164,11 +164,15 @@ static std::vector<ParamRef> collectParams() {
     // --- Pawn shield and storm, king-zone scalars ---
     for (int i = 0; i < 2; i++)
         addMgEg("PawnShieldBonus[" + std::to_string(i) + "]", &evalParams.PawnShieldBonus[i]);
-    for (int i = 0; i < 5; i++)
-        // Consumed with `scores -= PawnStormPenalty[idx]`, so magnitudes must
-        // stay non-negative to preserve the "enemy advance hurts us" prior.
-        out.push_back({"PawnStormPenalty[" + std::to_string(i) + "].mg",
-                       &evalParams.PawnStormPenalty[i], true, nonNegative()});
+    for (int i = 0; i < 5; i++) {
+        // Consumed with `scores -= <Blocked|Unblocked>PawnStorm[idx]`, so
+        // magnitudes must stay non-negative to preserve the "enemy advance
+        // hurts us" prior.
+        out.push_back({"BlockedPawnStorm[" + std::to_string(i) + "].mg",
+                       &evalParams.BlockedPawnStorm[i], true, nonNegative()});
+        out.push_back({"UnblockedPawnStorm[" + std::to_string(i) + "].mg",
+                       &evalParams.UnblockedPawnStorm[i], true, nonNegative()});
+    }
     out.push_back({"SemiOpenFileNearKing.mg", &evalParams.SemiOpenFileNearKing, true,
                    nonPositive()});
     out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, nonPositive()});
@@ -533,10 +537,16 @@ static void printCurrentValues() {
               << fmtScore(evalParams.PawnShieldBonus[1]) << "}, // PawnShieldBonus\n";
     std::cout << "    {";
     for (int i = 0; i < 5; i++) {
-        std::cout << fmtScore(evalParams.PawnStormPenalty[i]);
+        std::cout << fmtScore(evalParams.BlockedPawnStorm[i]);
         if (i < 4) std::cout << ", ";
     }
-    std::cout << "}, // PawnStormPenalty\n";
+    std::cout << "}, // BlockedPawnStorm\n";
+    std::cout << "    {";
+    for (int i = 0; i < 5; i++) {
+        std::cout << fmtScore(evalParams.UnblockedPawnStorm[i]);
+        if (i < 4) std::cout << ", ";
+    }
+    std::cout << "}, // UnblockedPawnStorm\n";
     std::cout << "    " << fmtScore(evalParams.SemiOpenFileNearKing)
               << ", // SemiOpenFileNearKing\n";
     std::cout << "    " << fmtScore(evalParams.OpenFileNearKing) << ", // OpenFileNearKing\n";

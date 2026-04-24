@@ -696,12 +696,21 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             Bitboard ourPawnsOnFile = ourPawns & fileMask;
             Bitboard theirPawnsOnFile = theirPawns & fileMask;
 
-            // Pawn storm: find the most-advanced enemy pawn on this file
+            // Pawn storm: find the most-advanced enemy pawn on this file.
+            // Classify it as blocked when one of our pawns sits directly
+            // in front of it from the attacker's pushing direction: a
+            // frontally blocked ram cannot open the file without a trade,
+            // so it deserves a much smaller penalty than an unblocked
+            // ram driving toward the shield.
             if (theirPawnsOnFile) {
                 int stormSq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
                 int distance = std::abs(squareRank(stormSq) - kingRank);
                 int idx = std::max(0, 4 - std::min(4, distance));
-                scores[us] -= evalParams.PawnStormPenalty[idx];
+                int stopSq = (us == White) ? stormSq - 8 : stormSq + 8;
+                bool blocked = (stopSq >= 0 && stopSq < 64) && (ourPawns & squareBB(stopSq));
+                Score penalty =
+                    blocked ? evalParams.BlockedPawnStorm[idx] : evalParams.UnblockedPawnStorm[idx];
+                scores[us] -= penalty;
             }
 
             // Open and semi-open file penalties

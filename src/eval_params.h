@@ -96,7 +96,13 @@ struct EvalParams {
     // King-safety scalar tables (structural divisors for the king-danger
     // quadratic remain static const inside eval.cpp).
     Score PawnShieldBonus[2];
-    Score PawnStormPenalty[5];
+    // Pawn storm penalty indexed by distance bucket (0..4 where bucket 4
+    // is closest). Split into blocked and unblocked variants because a
+    // storm pawn frontally blocked by a friendly shield pawn cannot open
+    // lines without a trade, so its effective penalty is much smaller
+    // than an unblocked ram on the same file.
+    Score BlockedPawnStorm[5];
+    Score UnblockedPawnStorm[5];
     Score SemiOpenFileNearKing;
     Score OpenFileNearKing;
     Score UndefendedKingZoneSq;
