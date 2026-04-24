@@ -1107,6 +1107,10 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             int delta = 60;
             int alpha, beta;
             int slotPrev = prevSlotScores[slot];
+            // Snapshot the leader for this slot before the search reorders the
+            // tail, so the post-sort promotion step can keep the former leader
+            // adjacent when the PV flips.
+            Move slotPrevLeader = rootMoves[slot].move;
 
             // Aspiration windows only seed slot 0 and only once the previous
             // score is reliable; other slots start at full width because
@@ -1290,6 +1294,28 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             std::stable_sort(
                 rootMoves.begin() + slot, rootMoves.end(),
                 [](const RootMove &a, const RootMove &b) { return a.score > b.score; });
+
+            // Preserve the previous slot leader near the top when the PV
+            // flips. Non-PV root moves are scored by null-window PVS probes
+            // that bound the true score from above but can be noisy, so a
+            // mediocre move's probe can end up numerically higher than the
+            // former PV's full-window score. Demoting the former PV deep
+            // into the list costs extra null-window work (and an aspiration
+            // retry) to rediscover it if the PV flips back. Explicitly
+            // promoting it to slot + 1 keeps both the current and previous
+            // PV candidates searched first next iteration, which is the
+            // primary thing move ordering is supposed to buy us here.
+            if (!isSameMove(rootMoves[slot].move, slotPrevLeader)) {
+                size_t promoteTo = slot + 1;
+                if (promoteTo < rootMoves.size()) {
+                    for (size_t i = promoteTo + 1; i < rootMoves.size(); i++) {
+                        if (isSameMove(rootMoves[i].move, slotPrevLeader)) {
+                            std::swap(rootMoves[promoteTo], rootMoves[i]);
+                            break;
+                        }
+                    }
+                }
+            }
 
             if (sawFailLowAfterFailHigh) iterFailLowAfterFailHigh = true;
 
