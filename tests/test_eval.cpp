@@ -1441,6 +1441,31 @@ TEST_CASE("Eval: bishop xraying the enemy queen through a blocker scores a bonus
     CHECK(xrayMg > idleMg);
 }
 
+TEST_CASE("Eval: slider on queen does not double count a direct attacker",
+          "[eval][slider-on-queen]") {
+    Board board;
+
+    // Baseline with bishops on b7 and h1 but no enemy queen. Nothing in
+    // the Threats bucket can fire against a non-existent queen.
+    board.setFen("7k/1B6/8/8/8/8/8/4K2B w - - 0 1");
+    int noQueen = parseMg(bucketLine(board, "Threats"));
+
+    // Add a black queen on a8. Bb7 directly attacks it so
+    // ThreatByMinor[Queen] fires and Bh1 x-rays the queen through b7 so
+    // SliderOnQueenBishop fires exactly once. Without the direct-attacker
+    // filter the x-ray term would also fire for Bb7, inflating the
+    // Threats bucket by an extra SliderOnQueenBishop contribution.
+    board.setFen("q6k/1B6/8/8/8/8/8/4K2B w - - 0 1");
+    int withQueen = parseMg(bucketLine(board, "Threats"));
+
+    int delta = withQueen - noQueen;
+    // With the fix, delta is roughly ThreatByMinor[Queen] + one
+    // SliderOnQueenBishop. Without the fix it would be ThreatByMinor
+    // plus two SliderOnQueenBishop contributions. The bound is loose
+    // enough to tolerate small re-tunes on either weight.
+    CHECK(delta < 155);
+}
+
 TEST_CASE("Eval: rook xraying the enemy queen through a blocker scores a bonus",
           "[eval][slider-on-queen]") {
     Board board;
