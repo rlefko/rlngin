@@ -191,6 +191,35 @@ TEST_CASE("MovePicker: illegal castling TT move is filtered without board corrup
     CHECK(board.squares[7].type == Rook);
 }
 
+TEST_CASE("MovePicker: threat-escape quiets precede neutral quiets", "[move_picker][threats]") {
+    ensureInit();
+    Board board;
+    // White knight on d5 is attacked by the black pawn on e6. The white
+    // rook on a1 is not threatened. With an empty history table, quiet
+    // ordering is driven entirely by the threat delta: every knight quiet
+    // evacuates the threatened square, so the first move served in the
+    // Quiets phase must be a knight move.
+    board.setFen("4k3/8/4p3/3N4/8/8/R7/4K3 w - - 0 1");
+
+    ThreatMap threats;
+    buildThreatMap(board, threats);
+
+    SearchState state;
+    Move noTT = {0, 0, None};
+    MovePicker picker(board, state, 0, noTT, false, &threats);
+    auto picks = drainPicker(picker);
+
+    const PickedMove *firstQuiet = nullptr;
+    for (const auto &p : picks) {
+        if (p.phase == PickPhase::Quiets) {
+            firstQuiet = &p;
+            break;
+        }
+    }
+    REQUIRE(firstQuiet != nullptr);
+    CHECK(firstQuiet->move.from == stringToSquare("d5"));
+}
+
 TEST_CASE("MovePicker: qsearch in check yields every legal evasion", "[move_picker]") {
     ensureInit();
     Board board;

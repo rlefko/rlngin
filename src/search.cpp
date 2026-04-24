@@ -621,10 +621,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     int bonus = std::min(depth * depth, 400);
     int movesSearched = 0;
 
+    // Enemy attack map, layered by attacker class. Built once per node and
+    // shared between the move picker and the LMR block so both speak the
+    // same language when they ask "is this square attacked by a lesser
+    // enemy piece".
+    ThreatMap threats;
+    buildThreatMap(board, threats);
+
     // Staged move picker: the excluded move is threaded through as `skipMove`
     // so the singular-extension path never sees the excluded candidate in any
     // phase, including from the TT slot.
-    MovePicker picker(board, state, ply, ttMove, inCheck);
+    MovePicker picker(board, state, ply, ttMove, inCheck, &threats);
     PickedMove pm;
     int moveIndex = 0;
     while (picker.next(pm, excludedMove)) {
@@ -755,6 +762,53 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
                 // Reduce less when position is improving
                 reduction -= improving;
+
+                // Threat-aware adjustment. The tier sampled by the piece's own
+                // value class answers "is the move entering or leaving a
+                // square attacked by a strictly less-valuable enemy piece".
+                // Evacuating a threatened piece onto a safe square deserves
+                // a deeper look; walking a quiet piece into the same kind of
+                // attack deserves a shallower one. Gated to the Quiets phase
+                // so killer / counter / bad-capture moves (which have their
+                // own priority signals) do not get reshuffled in depth.
+                if (pm.phase == PickPhase::Quiets) {
+                    PieceType movedPt = state.movedPiece[ply];
+                    Bitboard tier = lesserAttackerTier(threats, movedPt);
+                    if (tier) {
+                        Bitboard fromBB = squareBB(m.from);
+                        Bitboard toBB = squareBB(m.to);
+                        bool fromThreatened = (tier & fromBB) != 0;
+                        bool toThreatened = (tier & toBB) != 0;
+                        if (fromThreatened && !toThreatened) {
+                            reduction -= searchParams.LmrThreatEscape;
+                        } else if (!fromThreatened && toThreatened) {
+                            reduction += searchParams.LmrThreatWalkIn;
+                        }
+                    }
+                }
+
+                // Cut-node bonus: null-window nodes are expected to fail
+                // high, so later quiets past the first few candidates
+                // should be sampled shallower. Matches the Stockfish
+                // cutNode heuristic; the moveIndex gate keeps the first
+                // couple of candidate refutations searched at current
+                // depth in case the TT or killer slots already pointed
+                // at the right move.
+                if (!pvNode && moveIndex >= 3) {
+                    reduction += 1;
+                }
+
+                // TT-PV discount: a prior iteration resolved a PV node to
+                // an exact bound, so quiet moves below it are likely
+                // close to the true PV and benefit from a shallower
+                // reduction. Gated on pvNode so the discount only fires
+                // in the subtree that actually carries a PV signal,
+                // which avoids polluting deep null-window subtrees with
+                // TT entries that happen to be exact for unrelated
+                // reasons.
+                if (pvNode && ttHit && ttEntry.flag == TT_EXACT) {
+                    reduction -= 1;
+                }
 
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }

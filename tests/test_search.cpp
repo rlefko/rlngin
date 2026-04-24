@@ -875,3 +875,18 @@ TEST_CASE("Search: PV node probe does not return a TT exact score early", "[sear
     // position.
     CHECK(shallowState.nodes >= 200);
 }
+
+TEST_CASE("Search: evacuates a knight under pawn attack at shallow depth", "[search][threats]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // White knight on d5 is attacked by the black pawn on e6. White has
+    // plenty of quiet alternatives that do not save the knight; the
+    // correct reply is any knight move off d5. The threat-aware move
+    // ordering should surface the knight escape early so even a shallow
+    // search picks it.
+    board.setFen("4k3/8/4p3/3N4/8/8/R7/4K3 w - - 0 1");
+
+    Move best = findBestMove(board, 2);
+    CHECK(best.from == stringToSquare("d5"));
+}
