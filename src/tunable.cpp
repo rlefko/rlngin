@@ -248,6 +248,20 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(
         makeScoreHalfSpec("KingProtectorEg", &evalParams.KingProtector, false, -20, 0, 2.0, 1.0));
 
+    // --- Slider on queen x-ray: bonus-signed per indirect diagonal or
+    // orthogonal pressure line ending at the enemy queen. Bishop and
+    // rook variants carry separate bands because rook x-rays tend to
+    // ride open files and score a touch higher at parity with heavy
+    // pieces on the board. ---
+    out.push_back(makeScoreHalfSpec("SliderOnQueenBishopMg", &evalParams.SliderOnQueenBishop, true,
+                                    0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("SliderOnQueenBishopEg", &evalParams.SliderOnQueenBishop, false,
+                                    0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("SliderOnQueenRookMg", &evalParams.SliderOnQueenRook, true, 0,
+                                    80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("SliderOnQueenRookEg", &evalParams.SliderOnQueenRook, false, 0,
+                                    80, 5.0, 2.0));
+
     // --- Pawn islands penalty: penalty-signed so SPSA cannot flip it
     // into a bonus. The first penalty-valued scalar exposed via SPSA, so
     // the bounds follow the "bonuses stay bonuses" invariant inverted:

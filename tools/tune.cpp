@@ -209,6 +209,10 @@ static std::vector<ParamRef> collectParams() {
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
+    // --- Slider on queen x-ray ---
+    addMgEg("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop);
+    addMgEg("SliderOnQueenRook", &evalParams.SliderOnQueenRook);
+
     return out;
 }
 
@@ -555,6 +559,9 @@ static void printCurrentValues() {
     // PhalanxBonus is disabled in eval_params.h; re-enable the dump when the
     // field and tuner entry come back.
     // std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
+    std::cout << "    " << fmtScore(evalParams.SliderOnQueenBishop)
+              << ", // SliderOnQueenBishop\n";
+    std::cout << "    " << fmtScore(evalParams.SliderOnQueenRook) << ", // SliderOnQueenRook\n";
     std::cout << "};\n";
 }
 

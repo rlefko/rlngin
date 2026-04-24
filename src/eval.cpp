@@ -1210,6 +1210,34 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard weakQueen = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
         if (weakQueen) scores[us] += evalParams.WeakQueen;
 
+        // Slider on queen: every friendly bishop or rook whose ray to an
+        // enemy queen passes through exactly one intermediate piece. Done
+        // from the queen's square by first finding the first blockers on
+        // each ray, then re-casting with those blockers removed so the
+        // second-line attackers show up. Direct attackers are excluded
+        // structurally: they are the first blockers themselves, so the
+        // re-cast never lands back on them.
+        Bitboard enemyQueens = theirPieces & board.byPiece[Queen];
+        if (enemyQueens) {
+            Bitboard occ = board.occupied;
+            Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
+            Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
+            int diagXrays = 0;
+            int orthoXrays = 0;
+            Bitboard queensIter = enemyQueens;
+            while (queensIter) {
+                int qSq = popLsb(queensIter);
+                Bitboard firstDiag = bishopAttacks(qSq, occ) & occ;
+                Bitboard xraySquaresDiag = bishopAttacks(qSq, occ ^ firstDiag);
+                diagXrays += popcount(xraySquaresDiag & ourBishops);
+                Bitboard firstOrtho = rookAttacks(qSq, occ) & occ;
+                Bitboard xraySquaresOrtho = rookAttacks(qSq, occ ^ firstOrtho);
+                orthoXrays += popcount(xraySquaresOrtho & ourRooks);
+            }
+            scores[us] += evalParams.SliderOnQueenBishop * diagXrays;
+            scores[us] += evalParams.SliderOnQueenRook * orthoXrays;
+        }
+
         // Safe pawn push threat: single- or double-push targets that are
         // empty, not attacked by enemy pawns, and either not attacked by
         // the enemy at all or defended by our own pieces. From those

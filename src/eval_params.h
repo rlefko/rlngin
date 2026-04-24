@@ -207,6 +207,16 @@ struct EvalParams {
     Score InitiativeInfiltrate;
     Score InitiativePureBase;
     Score InitiativeConstant;
+
+    // Bonus per friendly slider that "x-rays" the enemy queen through
+    // exactly one intermediate blocker: our bishop or rook shares a ray
+    // with the queen and there is one piece (of either color) between
+    // them. Direct attackers are already credited by the threat-by-minor
+    // and threat-by-rook terms plus the weak-queen flag, so this term
+    // fires only on the indirect-pressure case. Both bishop and rook
+    // variants are scored per counted slider.
+    Score SliderOnQueenBishop;
+    Score SliderOnQueenRook;
 };
 
 extern EvalParams evalParams;

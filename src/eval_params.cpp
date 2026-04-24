@@ -193,6 +193,9 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 12),  // InitiativeInfiltrate
     S(0, 18),  // InitiativePureBase
     S(0, -30), // InitiativeConstant
+
+    S(15,  8), // SliderOnQueenBishop
+    S(20, 10), // SliderOnQueenRook
 };
 // clang-format on
 
