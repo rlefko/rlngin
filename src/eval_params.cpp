@@ -137,8 +137,8 @@ static const EvalParams kDefaultEvalParams = {
     S(  8,  74), // BishopPair
 
     {S(68, -12), S(52, -13)},                        // PawnShieldBonus
-    {S(0, 0), S( 2, 0), S( 4, 0), S(1, 0), S(0, 0)}, // BlockedPawnStorm
-    {S(0, 0), S(14, 0), S(22, 0), S(6, 0), S(0, 0)}, // UnblockedPawnStorm
+    {S(0, 0), S( 3, 0), S( 5, 0), S(1, 0), S(0, 0)}, // BlockedPawnStorm
+    {S(0, 0), S(12, 0), S(19, 0), S(5, 0), S(0, 0)}, // UnblockedPawnStorm
 
     S(-20, 0), // SemiOpenFileNearKing
     S(-95, 0), // OpenFileNearKing
