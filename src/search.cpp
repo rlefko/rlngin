@@ -27,6 +27,15 @@ static TranspositionTable tt(16);
 
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
+// Root move record used only inside startSearch. Carrying a score per move
+// lets iterative deepening reorder the root by the latest search verdict
+// instead of leaving the movegen order frozen behind a single swap-to-front.
+struct RootMove {
+    Move move;
+    int score = -INF_SCORE;
+    int previousScore = -INF_SCORE;
+};
+
 // Saturating gravity update used by every history table. The gravity term
 // pulls `entry` toward zero in proportion to its current magnitude; clamping
 // into `[-max, max]` prevents transient overshoot from runaway bonuses.
@@ -1025,13 +1034,17 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     int maxDepth = (limits.depth > 0) ? limits.depth : 100;
 
     Board pos = board;
-    std::vector<Move> rootMoves = generateLegalMoves(pos);
-    if (rootMoves.empty()) return;
+    std::vector<Move> legalMoves = generateLegalMoves(pos);
+    if (legalMoves.empty()) return;
+    std::vector<RootMove> rootMoves;
+    rootMoves.reserve(legalMoves.size());
+    for (const Move &m : legalMoves)
+        rootMoves.push_back({m});
 
     // Seed the PV with a legal move so that if the iter-deepening loop exits
     // before any aspiration iteration completes, the fallback info line at
     // the bottom of this function still has a move to report.
-    state.pv[0][0] = rootMoves[0];
+    state.pv[0][0] = rootMoves[0].move;
     state.pvLength[0] = 1;
 
     // Snapshot the MultiPV setting for the whole search. The UCI loop drains
@@ -1072,11 +1085,18 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         // correction tables evolve during the iteration.
         state.staticEvals[0] = correctedEval(rootRawEval, board, state, 0);
 
+        // Roll each root move's score into previousScore and reset the live
+        // score so an iteration cut short by state.stopped cannot leak stale
+        // scores into the next iteration's sort.
+        for (auto &rm : rootMoves) {
+            rm.previousScore = rm.score;
+            rm.score = -INF_SCORE;
+        }
+
         const int numSlots = std::min<int>(multiPVRequested, static_cast<int>(rootMoves.size()));
         std::vector<Move> excludedMoves;
         excludedMoves.reserve(numSlots);
 
-        Move slotZeroBest = rootMoves[0];
         bool mateFound = false;
         // Aggregated across slots: did any aspiration loop on this iteration
         // fail low after already failing high? That oscillation is the signal
@@ -1102,16 +1122,16 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             // Seed currentBest with the first non-excluded move so we always
             // have a valid move to emit even on full fail-low.
             Move currentBest = {0, 0, None};
-            for (const Move &m : rootMoves) {
+            for (const RootMove &rm : rootMoves) {
                 bool excluded = false;
                 for (const Move &ex : excludedMoves) {
-                    if (isSameMove(ex, m)) {
+                    if (isSameMove(ex, rm.move)) {
                         excluded = true;
                         break;
                     }
                 }
                 if (!excluded) {
-                    currentBest = m;
+                    currentBest = rm.move;
                     break;
                 }
             }
@@ -1149,7 +1169,8 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 bool firstSearched = false;
 
                 for (size_t mi = 0; mi < rootMoves.size(); mi++) {
-                    const Move &m = rootMoves[mi];
+                    RootMove &rm = rootMoves[mi];
+                    const Move &m = rm.move;
 
                     bool excluded = false;
                     for (const Move &ex : excludedMoves) {
@@ -1195,6 +1216,14 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
                     pos.unmakeMove(m, undo);
                     if (state.stopped) break;
+
+                    // Stamp the latest negamax result onto the RootMove so the
+                    // end-of-aspiration sort can order the tail by relative
+                    // strength. Null-window upper bounds are fine here: a
+                    // move that failed low is by construction worse than the
+                    // current best, so the ordering remains correct.
+                    rm.score = score;
+
                     if (score > currentBestScore) {
                         currentBestScore = score;
                         currentBest = m;
@@ -1253,6 +1282,15 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
             if (state.stopped) break;
 
+            // Stably sort the tail of rootMoves by the scores just written
+            // this iteration so the next slot (and the next iteration's
+            // slot 0) sees the strongest candidates first. The slice
+            // [slot, end) is the right range because earlier slots already
+            // locked in their MultiPV picks and must not be reordered.
+            std::stable_sort(
+                rootMoves.begin() + slot, rootMoves.end(),
+                [](const RootMove &a, const RootMove &b) { return a.score > b.score; });
+
             if (sawFailLowAfterFailHigh) iterFailLowAfterFailHigh = true;
 
             prevSlotScores[slot] = currentBestScore;
@@ -1263,7 +1301,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     .count();
 
             if (slot == 0) {
-                slotZeroBest = currentBest;
                 state.bestMove = currentBest;
                 if (state.pvLength[0] >= 2) {
                     state.ponderMove = state.pv[0][1];
@@ -1280,14 +1317,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         }
 
         if (state.stopped) break;
-
-        // Move the slot-0 best move to the front for the next iteration
-        for (size_t i = 0; i < rootMoves.size(); i++) {
-            if (isSameMove(rootMoves[i], slotZeroBest)) {
-                std::swap(rootMoves[0], rootMoves[i]);
-                break;
-            }
-        }
 
         // Growing the cross-iteration stability signal. The next iteration
         // tightens its aspiration retry budget when the previous iteration
@@ -1310,7 +1339,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     }
 
     if (state.bestMove.from == 0 && state.bestMove.to == 0 && !rootMoves.empty()) {
-        state.bestMove = rootMoves[0];
+        state.bestMove = rootMoves[0].move;
     }
 
     // Fallback for searches that were stopped before any aspiration iteration
