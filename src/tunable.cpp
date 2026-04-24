@@ -226,6 +226,19 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("MinorBehindPawnBonusEg", &evalParams.MinorBehindPawnBonus,
                                     false, 0, 60, 5.0, 2.0));
 
+    // --- Piece on king ring: per-piece linear bonus whose trigger is
+    // shared with the multi-attacker king-danger accumulator, so the
+    // SPSA ranges stay small to keep the two buckets independently
+    // observable without a joint retune. ---
+    out.push_back(
+        makeScoreHalfSpec("MinorOnKingRingMg", &evalParams.MinorOnKingRing, true, 0, 40, 3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("MinorOnKingRingEg", &evalParams.MinorOnKingRing, false, 0, 20,
+                                    2.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("RookOnKingRingMg", &evalParams.RookOnKingRing, true, 0, 60, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("RookOnKingRingEg", &evalParams.RookOnKingRing, false, 0, 30, 2.0, 1.0));
+
     // --- Pawn islands penalty: penalty-signed so SPSA cannot flip it
     // into a bonus. The first penalty-valued scalar exposed via SPSA, so
     // the bounds follow the "bonuses stay bonuses" invariant inverted:

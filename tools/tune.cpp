@@ -154,6 +154,8 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus);
     addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus);
     addMgEg("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus);
+    addMgEg("MinorOnKingRing", &evalParams.MinorOnKingRing);
+    addMgEg("RookOnKingRing", &evalParams.RookOnKingRing);
 
     // --- Bishop pair ---
     addMgEg("BishopPair", &evalParams.BishopPair);
@@ -508,6 +510,14 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.BishopOutpostBonus) << ", // BishopOutpostBonus\n";
     std::cout << "    " << fmtScore(evalParams.TrappedRookByKingPenalty)
               << ", // TrappedRookByKingPenalty\n";
+    std::cout << "    " << fmtScore(evalParams.RookBehindOurPasserBonus)
+              << ", // RookBehindOurPasserBonus\n";
+    std::cout << "    " << fmtScore(evalParams.RookBehindTheirPasserBonus)
+              << ", // RookBehindTheirPasserBonus\n";
+    std::cout << "    " << fmtScore(evalParams.MinorBehindPawnBonus)
+              << ", // MinorBehindPawnBonus\n";
+    std::cout << "    " << fmtScore(evalParams.MinorOnKingRing) << ", // MinorOnKingRing\n";
+    std::cout << "    " << fmtScore(evalParams.RookOnKingRing) << ", // RookOnKingRing\n";
     std::cout << "    " << fmtScore(evalParams.BishopPair) << ", // BishopPair\n";
 
     std::cout << "    {" << fmtScore(evalParams.PawnShieldBonus[0]) << ", "

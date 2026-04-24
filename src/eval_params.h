@@ -75,6 +75,13 @@ struct EvalParams {
     // of N f3 + P g4 + B g2 (or similar) gets credited cleanly.
     Score MinorBehindPawnBonus;
 
+    // Piece pressure on the enemy king ring, scored per piece whose
+    // pseudo-attack set intersects the enemy king zone. Lives outside
+    // the multi-attacker king-danger accumulator so single-attacker
+    // pressure (a lone outposted knight on f5, say) still gets credit.
+    Score MinorOnKingRing;
+    Score RookOnKingRing;
+
     // Piece pair synergy.
     Score BishopPair;
 

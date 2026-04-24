@@ -430,6 +430,10 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
         Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[c ^ 1];
 
+        Bitboard theirKingOnly = board.byPiece[King] & board.byColor[c ^ 1];
+        Bitboard theirKingRing =
+            theirKingOnly ? kingZoneBB(lsb(theirKingOnly), static_cast<Color>(c ^ 1)) : 0;
+
         // Minor behind pawn: a friendly knight or bishop sitting directly
         // one rank behind a friendly pawn is shielded against frontal
         // attacks and cannot be easily chased by an enemy pawn on the
@@ -446,12 +450,17 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard knights = board.byPiece[Knight] & board.byColor[c];
         while (knights) {
             int sq = popLsb(knights);
-            int count = popcount(KnightAttacks[sq] & ctx.mobilityArea[c]);
+            Bitboard atk = KnightAttacks[sq];
+            int count = popcount(atk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Knight][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
                 !(PawnSpanMask[c][sq] & theirPawns)) {
                 scores[c] += evalParams.KnightOutpostBonus;
+            }
+
+            if (theirKingRing && (atk & theirKingRing)) {
+                scores[c] += evalParams.MinorOnKingRing;
             }
         }
 
@@ -489,6 +498,10 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                     scores[c] += evalParams.BishopLongDiagonalBonus;
                 }
             }
+
+            if (theirKingRing && (atk & theirKingRing)) {
+                scores[c] += evalParams.MinorOnKingRing;
+            }
         }
 
         Bitboard kingBB = board.byPiece[King] & board.byColor[c];
@@ -500,7 +513,8 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
         while (rooks) {
             int sq = popLsb(rooks);
-            int count = popcount(rookAttacks(sq, occ) & ctx.mobilityArea[c]);
+            Bitboard rAtk = rookAttacks(sq, occ);
+            int count = popcount(rAtk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Rook][count];
 
             Bitboard fileMask = FileBB[squareFile(sq)];
@@ -537,6 +551,10 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                     if (lostShortCastle && lostLongCastle) penalty *= 2;
                     scores[c] += penalty;
                 }
+            }
+
+            if (theirKingRing && (rAtk & theirKingRing)) {
+                scores[c] += evalParams.RookOnKingRing;
             }
         }
 
