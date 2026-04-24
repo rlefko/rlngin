@@ -1028,11 +1028,24 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     std::vector<Move> rootMoves = generateLegalMoves(pos);
     if (rootMoves.empty()) return;
 
+    // Seed the PV with a legal move so that if the iter-deepening loop exits
+    // before any aspiration iteration completes, the fallback info line at
+    // the bottom of this function still has a move to report.
+    state.pv[0][0] = rootMoves[0];
+    state.pvLength[0] = 1;
+
     // Snapshot the MultiPV setting for the whole search. The UCI loop drains
     // any in-flight search before accepting another setoption, but the
     // snapshot keeps per-search state self-consistent regardless.
     const int multiPVRequested = getMultiPV();
     std::vector<int> prevSlotScores(multiPVRequested, 0);
+
+    // Tracks whether any scored info line has been emitted during this
+    // search. If the search is stopped before iteration 1 completes (for
+    // example under tight time controls on complex positions) we fall back
+    // to a single scored info line before returning so that UCI consumers
+    // walking stdout for the engine's last score always find one.
+    bool anyInfoPrinted = false;
 
     auto isSameMove = [](const Move &a, const Move &b) {
         return a.from == b.from && a.to == b.to && a.promotion == b.promotion;
@@ -1211,6 +1224,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                         state.pvLength[0] = 1;
                     }
                     printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_UPPER, slot + 1);
+                    anyInfoPrinted = true;
                     beta = (alpha + beta) / 2;
                     alpha = std::max(currentBestScore - delta, -INF_SCORE);
                     // Reset the fail-high counter: the next retry returns to
@@ -1223,6 +1237,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     // Fail-high: score is above the window, widen upward.
                     if (slot == 0) state.bestMove = currentBest;
                     printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_LOWER, slot + 1);
+                    anyInfoPrinted = true;
                     beta = std::min(currentBestScore + delta, INF_SCORE);
                     failedHighCnt++;
                     sawFailHigh = true;
@@ -1259,6 +1274,7 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             }
 
             printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT, slot + 1);
+            anyInfoPrinted = true;
 
             excludedMoves.push_back(currentBest);
         }
@@ -1295,6 +1311,17 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
     if (state.bestMove.from == 0 && state.bestMove.to == 0 && !rootMoves.empty()) {
         state.bestMove = rootMoves[0];
+    }
+
+    // Fallback for searches that were stopped before any aspiration iteration
+    // emitted a scored info line. Without this, fastchess (and any other UCI
+    // consumer that scans stdout for the engine's last reported score) would
+    // see a bestmove with no score context and warn.
+    if (!anyInfoPrinted) {
+        auto now = std::chrono::steady_clock::now();
+        int64_t timeMs =
+            std::chrono::duration_cast<std::chrono::milliseconds>(now - state.startTime).count();
+        printSearchInfo(1, state, state.staticEvals[0], timeMs, BOUND_EXACT, 1);
     }
 }
 

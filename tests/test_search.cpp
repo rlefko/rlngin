@@ -4,6 +4,10 @@
 #include "movegen.h"
 #include "search.h"
 #include "search_params.h"
+#include <chrono>
+#include <iostream>
+#include <sstream>
+#include <thread>
 
 static void ensureInit() {
     static bool done = false;
@@ -889,4 +893,39 @@ TEST_CASE("Search: evacuates a knight under pawn attack at shallow depth", "[sea
 
     Move best = findBestMove(board, 2);
     CHECK(best.from == stringToSquare("d5"));
+}
+
+TEST_CASE("Search: always emits a scored info line before returning", "[search][uci]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    board.setFen("r3k2r/p1ppqpb1/bn2pnp1/3PN3/1p2P3/2N2Q1p/PPPBBPPP/R3K2R w KQkq - 0 1");
+
+    std::stringstream captured;
+    std::streambuf *oldBuf = std::cout.rdbuf(captured.rdbuf());
+
+    SearchLimits limits;
+    limits.infinite = true;
+    SearchState state;
+
+    // Run the search on a worker thread and race the stop flag against it so
+    // that state.stopped is very likely to be observed true before the first
+    // aspiration iteration completes. The exact timing is not critical; the
+    // invariant under test is that startSearch always emits at least one info
+    // line containing " score " regardless of when the stop lands. Without
+    // the fallback, an abort before iteration 1 emits its exact-bound info
+    // would leave the output scoreless and trigger fastchess's
+    // "Last info string with score not found" warning.
+    std::thread worker([&]() { startSearch(board, limits, state); });
+
+    auto spinStart = std::chrono::steady_clock::now();
+    while (std::chrono::steady_clock::now() - spinStart < std::chrono::milliseconds(2)) {
+        state.stopped = true;
+    }
+    worker.join();
+
+    std::cout.rdbuf(oldBuf);
+
+    const std::string output = captured.str();
+    CHECK(output.find(" score ") != std::string::npos);
 }
