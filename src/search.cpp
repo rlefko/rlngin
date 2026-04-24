@@ -1107,10 +1107,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             int delta = 60;
             int alpha, beta;
             int slotPrev = prevSlotScores[slot];
-            // Snapshot the leader for this slot before the search reorders the
-            // tail, so the post-sort promotion step can keep the former leader
-            // adjacent when the PV flips.
-            Move slotPrevLeader = rootMoves[slot].move;
 
             // Aspiration windows only seed slot 0 and only once the previous
             // score is reliable; other slots start at full width because
@@ -1205,6 +1201,12 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
                     UndoInfo undo = pos.makeMove(m);
 
+                    // Capture state before the search so the post-search stamp
+                    // decision can tell apart "first move" from "later move
+                    // that happened to beat alpha".
+                    const bool isFirstMove = !firstSearched;
+                    const int alphaAtMoveStart = localAlpha;
+
                     int score;
                     if (!firstSearched) {
                         score = -negamax(pos, adjustedDepth - 1, 1, -beta, -localAlpha, state);
@@ -1221,12 +1223,20 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     pos.unmakeMove(m, undo);
                     if (state.stopped) break;
 
-                    // Stamp the latest negamax result onto the RootMove so the
-                    // end-of-aspiration sort can order the tail by relative
-                    // strength. Null-window upper bounds are fine here: a
-                    // move that failed low is by construction worse than the
-                    // current best, so the ordering remains correct.
-                    rm.score = score;
+                    // Match Stockfish's root bookkeeping: only record a real
+                    // score when the result is meaningful. The first move
+                    // always gets a full-window search, and any later move
+                    // that beat alpha was re-searched with a full window. A
+                    // move that just failed the null window returns an upper
+                    // bound from an essentially unconstrained search below
+                    // alpha; stamping that bound would let it outrank the
+                    // former PV's real full-window score simply because the
+                    // bound happened to land higher numerically. Leaving
+                    // rm.score at its top-of-iteration -INF_SCORE sentinel
+                    // clusters those moves together at the bottom of the
+                    // sort in a stable order, keeping the current and former
+                    // PVs naturally adjacent at the top.
+                    if (isFirstMove || score > alphaAtMoveStart) rm.score = score;
 
                     if (score > currentBestScore) {
                         currentBestScore = score;
@@ -1288,34 +1298,17 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
             // Stably sort the tail of rootMoves by the scores just written
             // this iteration so the next slot (and the next iteration's
-            // slot 0) sees the strongest candidates first. The slice
-            // [slot, end) is the right range because earlier slots already
-            // locked in their MultiPV picks and must not be reordered.
+            // slot 0) sees the strongest candidates first. Moves with a
+            // real score (the PV, any fail-high, and the first searched
+            // move) float to the top; moves that only failed the null
+            // window keep the -INF_SCORE sentinel from the top-of-iteration
+            // reset and stable-sort into a deterministic tail preserving
+            // their prior relative order. The slice [slot, end) is the
+            // right range because earlier slots already locked in their
+            // MultiPV picks and must not be reordered.
             std::stable_sort(
                 rootMoves.begin() + slot, rootMoves.end(),
                 [](const RootMove &a, const RootMove &b) { return a.score > b.score; });
-
-            // Preserve the previous slot leader near the top when the PV
-            // flips. Non-PV root moves are scored by null-window PVS probes
-            // that bound the true score from above but can be noisy, so a
-            // mediocre move's probe can end up numerically higher than the
-            // former PV's full-window score. Demoting the former PV deep
-            // into the list costs extra null-window work (and an aspiration
-            // retry) to rediscover it if the PV flips back. Explicitly
-            // promoting it to slot + 1 keeps both the current and previous
-            // PV candidates searched first next iteration, which is the
-            // primary thing move ordering is supposed to buy us here.
-            if (!isSameMove(rootMoves[slot].move, slotPrevLeader)) {
-                size_t promoteTo = slot + 1;
-                if (promoteTo < rootMoves.size()) {
-                    for (size_t i = promoteTo + 1; i < rootMoves.size(); i++) {
-                        if (isSameMove(rootMoves[i].move, slotPrevLeader)) {
-                            std::swap(rootMoves[promoteTo], rootMoves[i]);
-                            break;
-                        }
-                    }
-                }
-            }
 
             if (sawFailLowAfterFailHigh) iterFailLowAfterFailHigh = true;
 
