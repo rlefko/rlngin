@@ -82,6 +82,14 @@ struct EvalParams {
     Score MinorOnKingRing;
     Score RookOnKingRing;
 
+    // Penalty per square of Chebyshev distance from our own king to each
+    // of our knights and bishops. Linear in distance because distances to
+    // the king are bounded at 7 and nearly all meaningful credit lands in
+    // the 2 to 4 range where a table adds no resolution over a slope.
+    // Signed negative so a minor drifting away from the defense costs a
+    // small amount of eval per step.
+    Score KingProtector;
+
     // Piece pair synergy.
     Score BishopPair;
 

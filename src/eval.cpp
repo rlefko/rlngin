@@ -430,6 +430,9 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
         Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[c ^ 1];
 
+        Bitboard ourKingBB = board.byPiece[King] & board.byColor[c];
+        int ourKingSq = ourKingBB ? lsb(ourKingBB) : -1;
+
         Bitboard theirKingOnly = board.byPiece[King] & board.byColor[c ^ 1];
         Bitboard theirKingRing =
             theirKingOnly ? kingZoneBB(lsb(theirKingOnly), static_cast<Color>(c ^ 1)) : 0;
@@ -461,6 +464,10 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
 
             if (theirKingRing && (atk & theirKingRing)) {
                 scores[c] += evalParams.MinorOnKingRing;
+            }
+
+            if (ourKingSq >= 0) {
+                scores[c] += evalParams.KingProtector * chebyshev(sq, ourKingSq);
             }
         }
 
@@ -502,11 +509,13 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             if (theirKingRing && (atk & theirKingRing)) {
                 scores[c] += evalParams.MinorOnKingRing;
             }
+
+            if (ourKingSq >= 0) {
+                scores[c] += evalParams.KingProtector * chebyshev(sq, ourKingSq);
+            }
         }
 
-        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
-        int kingSq = kingBB ? lsb(kingBB) : -1;
-        int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
+        int kingFile = (ourKingSq >= 0) ? squareFile(ourKingSq) : -1;
         bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
         bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
 
@@ -543,7 +552,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             // mobility rather than piece-square heuristics avoids the old
             // loophole where stepping the king off the back rank silenced
             // the penalty without actually freeing the rook.
-            if (count <= 3 && kingSq >= 0) {
+            if (count <= 3 && ourKingSq >= 0) {
                 int rookFile = squareFile(sq);
                 bool sameSide = (kingFile < 4) == (rookFile < kingFile);
                 if (sameSide) {

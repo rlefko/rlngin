@@ -239,6 +239,15 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(
         makeScoreHalfSpec("RookOnKingRingEg", &evalParams.RookOnKingRing, false, 0, 30, 2.0, 1.0));
 
+    // --- King protector: per-Chebyshev-step penalty that keeps knights
+    // and bishops anchored near our own king. Penalty-signed so SPSA
+    // cannot flip it into a bonus; the band stays narrow because the
+    // per-step cost already multiplies by up to seven. ---
+    out.push_back(
+        makeScoreHalfSpec("KingProtectorMg", &evalParams.KingProtector, true, -20, 0, 2.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("KingProtectorEg", &evalParams.KingProtector, false, -20, 0, 2.0, 1.0));
+
     // --- Pawn islands penalty: penalty-signed so SPSA cannot flip it
     // into a bonus. The first penalty-valued scalar exposed via SPSA, so
     // the bounds follow the "bonuses stay bonuses" invariant inverted:

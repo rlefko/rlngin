@@ -156,6 +156,7 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus);
     addMgEg("MinorOnKingRing", &evalParams.MinorOnKingRing);
     addMgEg("RookOnKingRing", &evalParams.RookOnKingRing);
+    addMgEgConstr("KingProtector", &evalParams.KingProtector, nonPositive());
 
     // --- Bishop pair ---
     addMgEg("BishopPair", &evalParams.BishopPair);
@@ -518,6 +519,7 @@ static void printCurrentValues() {
               << ", // MinorBehindPawnBonus\n";
     std::cout << "    " << fmtScore(evalParams.MinorOnKingRing) << ", // MinorOnKingRing\n";
     std::cout << "    " << fmtScore(evalParams.RookOnKingRing) << ", // RookOnKingRing\n";
+    std::cout << "    " << fmtScore(evalParams.KingProtector) << ", // KingProtector\n";
     std::cout << "    " << fmtScore(evalParams.BishopPair) << ", // BishopPair\n";
 
     std::cout << "    {" << fmtScore(evalParams.PawnShieldBonus[0]) << ", "
