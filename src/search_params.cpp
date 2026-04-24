@@ -28,6 +28,10 @@ static const SearchParams kDefaultSearchParams = {
     16,    // ContCorrWeight    (two-ply keyed table; modest weight keeps magnitude in check)
     16384, // CorrHistGrain     (shared denominator; also the per-table clamp max)
     4000,  // HistoryPruningCoef (threshold per depth ply for late-history pruning)
+    32768, // ThreatEscapeBonus (attack-aware quiet escape lift; see SearchParams.h)
+    32768, // ThreatWalkInPenalty (symmetric walk-into-threat quiet penalty)
+    1,     // LmrThreatEscape (ply discount for evacuating a threatened piece)
+    1,     // LmrThreatWalkIn (ply surcharge for walking into a lesser-piece attack)
 };
 
 SearchParams searchParams = kDefaultSearchParams;

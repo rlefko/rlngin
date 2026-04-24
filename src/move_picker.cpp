@@ -2,6 +2,7 @@
 #include "bitboard.h"
 #include "eval.h"
 #include "movegen.h"
+#include "search_params.h"
 #include "see.h"
 #include <algorithm>
 #include <cstdlib>
@@ -10,6 +11,47 @@
 // 4-ply back. Kept in sync with the updater in search.cpp via the header
 // contract; both files read and write the same table layout.
 static constexpr int CONT_HIST_OFFSETS[3] = {1, 2, 4};
+
+// Pawn capture-square set for one color. Mirrors the inline helper used
+// inside the evaluator's attack-map builder; duplicated here instead of
+// un-staticing that helper so the search module stays independent of
+// eval internals.
+static inline Bitboard enemyPawnAttacks(Bitboard pawns, Color c) {
+    if (c == White) {
+        return ((pawns & ~FileABB) << 7) | ((pawns & ~FileHBB) << 9);
+    }
+    return ((pawns & ~FileABB) >> 9) | ((pawns & ~FileHBB) >> 7);
+}
+
+void buildThreatMap(const Board &board, ThreatMap &out) {
+    Color us = board.sideToMove;
+    Color them = (us == White) ? Black : White;
+    Bitboard occ = board.occupied;
+
+    Bitboard byPawn = enemyPawnAttacks(board.byPiece[Pawn] & board.byColor[them], them);
+
+    Bitboard knightAttacks = 0;
+    Bitboard knights = board.byPiece[Knight] & board.byColor[them];
+    while (knights) {
+        knightAttacks |= KnightAttacks[popLsb(knights)];
+    }
+
+    Bitboard bishopAtk = 0;
+    Bitboard bishops = board.byPiece[Bishop] & board.byColor[them];
+    while (bishops) {
+        bishopAtk |= bishopAttacks(popLsb(bishops), occ);
+    }
+
+    Bitboard rookAtk = 0;
+    Bitboard rooks = board.byPiece[Rook] & board.byColor[them];
+    while (rooks) {
+        rookAtk |= rookAttacks(popLsb(rooks), occ);
+    }
+
+    out.byPawn = byPawn;
+    out.byMinor = byPawn | knightAttacks | bishopAtk;
+    out.byRook = out.byMinor | rookAtk;
+}
 
 bool isCapture(const Board &board, const Move &m) {
     if (board.squares[m.to].type != None) return true;
@@ -41,7 +83,7 @@ int contHistoryScore(const SearchState &state, int ply, PieceType currPt, int cu
 }
 
 int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
-              const SearchState &state, int *outQuietHistory) {
+              const SearchState &state, int *outQuietHistory, const ThreatMap *threats) {
     PieceType pt = board.squares[m.from].type;
     bool capture = isCapture(board, m);
     bool quietCandidate = !capture && m.promotion == None;
@@ -105,8 +147,30 @@ int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
         }
     }
 
-    // Plain quiet move: fall back to the precomputed history score.
-    return quietHist;
+    // Plain quiet move: fall back to the precomputed history score, folded
+    // with the threat-aware delta. The delta fires only when the move
+    // belongs to a class that exchanges unfavourably against the enemy's
+    // lesser attackers (minor under pawn attack, rook under minor attack,
+    // queen under rook-or-lower attack). `fromThreatened` and `toThreatened`
+    // are sampled against the same tier so the sign is consistent: evacuate
+    // when the source is hot and the destination is safe, penalize the
+    // reverse.
+    int threatDelta = 0;
+    if (threats) {
+        Bitboard tier = lesserAttackerTier(*threats, pt);
+        if (tier) {
+            Bitboard fromBB = squareBB(m.from);
+            Bitboard toBB = squareBB(m.to);
+            bool fromThreatened = (tier & fromBB) != 0;
+            bool toThreatened = (tier & toBB) != 0;
+            if (fromThreatened && !toThreatened) {
+                threatDelta += searchParams.ThreatEscapeBonus;
+            } else if (!fromThreatened && toThreatened) {
+                threatDelta -= searchParams.ThreatWalkInPenalty;
+            }
+        }
+    }
+    return quietHist + threatDelta;
 }
 
 static inline bool sameMove(const Move &a, const Move &b) {
@@ -231,9 +295,10 @@ static bool isFullyLegal(Board &board, const Move &m) {
     return isLegalMove(board, m);
 }
 
-MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck)
+MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck,
+                       const ThreatMap *threats)
     : board_(board), state_(state), ply_(ply), ttMove_(ttMove), phase_(PickPhase::TTMove),
-      inCheck_(inCheck), caps_(state.pickerBuffers[ply].caps),
+      inCheck_(inCheck), threats_(threats), caps_(state.pickerBuffers[ply].caps),
       quiets_(state.pickerBuffers[ply].quiets), badCapIdx_(state.pickerBuffers[ply].badCapIdx) {
     // Skip the TT-move phase outright when no candidate is on hand. Saves
     // the isPseudoLegalMove / isFullyLegal cost at every node that has no TT
@@ -296,7 +361,7 @@ void MovePicker::genQuiets() {
     for (const Move &m : pseudo) {
         if (numQuiets_ >= MOVE_PICKER_BUFFER_SIZE) break;
         int hist = 0;
-        int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist);
+        int score = scoreMove(m, board_, ttMove_, ply_, state_, &hist, threats_);
         quiets_[numQuiets_++] = {score, hist, m};
     }
     std::sort(quiets_, quiets_ + numQuiets_,

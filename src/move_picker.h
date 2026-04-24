@@ -1,6 +1,7 @@
 #ifndef MOVE_PICKER_H
 #define MOVE_PICKER_H
 
+#include "bitboard.h"
 #include "board.h"
 #include "search.h"
 #include <cstdint>
@@ -8,6 +9,46 @@
 // `ScoredMove` is declared in search.h so SearchState can preallocate the
 // picker's scratch buffers on the heap. The definition is pulled in via
 // the include above.
+
+// Cumulative "attacked by a piece of at most this class" map for the side
+// NOT to move, sampled once per search node. `byPawn` is the enemy pawn
+// attack set; `byMinor` adds enemy knights and bishops; `byRook` adds
+// enemy rooks. Queens and kings are omitted on purpose: the interesting
+// question is "is this square attacked by something strictly less valuable
+// than the piece sitting on it", and no piece is less valuable than a
+// queen (for rook-class threats) in a way move ordering can act on.
+// Layered this way, the picker and LMR can answer "is the mover attacked
+// by a lesser piece" with one AND against the tier that matches the
+// mover's own value class.
+struct ThreatMap {
+    Bitboard byPawn = 0;
+    Bitboard byMinor = 0;
+    Bitboard byRook = 0;
+};
+
+// Populate `out` with the enemy's layered attack map. Pawn, knight,
+// bishop, and rook attack sets are unioned in ascending material order so
+// every caller can query the tier that matches the attacked piece.
+void buildThreatMap(const Board &board, ThreatMap &out);
+
+// The enemy-attacker tier that matters for a piece of type `pt`. A queen
+// cares about rook-and-lower attackers, a rook about minor-and-lower, a
+// knight or bishop about pawn attackers only. Pawns and kings return an
+// empty set because pawn captures resolve through SEE / MVV-LVA and king
+// safety has its own eval-side machinery.
+inline Bitboard lesserAttackerTier(const ThreatMap &threats, PieceType pt) {
+    switch (pt) {
+    case Queen:
+        return threats.byRook;
+    case Rook:
+        return threats.byMinor;
+    case Knight:
+    case Bishop:
+        return threats.byPawn;
+    default:
+        return 0;
+    }
+}
 
 // Phases are traversed in order: the picker advances through them each time
 // `next()` exhausts a buffer. The qsearch pipeline reuses the same enum and
@@ -53,8 +94,12 @@ class MovePicker {
     // Main-search constructor. `board` is captured by reference because the
     // picker may call `isLegalMove` internally, which requires a mutable
     // board. `state` / `ply` drive killer, counter-move, and continuation
-    // history lookups.
-    MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck);
+    // history lookups. `threats` is optional; when non-null, quiet scoring
+    // applies threat-escape bonuses and walk-in penalties on top of the
+    // usual history ordering. Passing null keeps the previous behaviour
+    // (tests construct pickers without a threat map).
+    MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck,
+               const ThreatMap *threats = nullptr);
 
     // Quiescence constructor. The bool tag disambiguates from the
     // main-search constructor; passing `true` selects the qsearch pipeline.
@@ -79,6 +124,7 @@ class MovePicker {
     Move counterMove_{};
     PickPhase phase_;
     bool inCheck_;
+    const ThreatMap *threats_ = nullptr;
 
     // Scratch buffers live on the heap via SearchState so the picker stays
     // small in stack footprint. At MAX_PLY deep recursion the previous
@@ -121,9 +167,12 @@ bool isPseudoLegalMove(const Board &board, const Move &m);
 // Scoring routine shared with the picker. Implemented in move_picker.cpp.
 // `ply` of -1 selects the qsearch scoring path (MVV-LVA + capture history
 // only; no SEE). `outQuietHistory` receives the butterfly + continuation
-// history sum so LMR can reuse it without repeating the lookups.
+// history sum so LMR can reuse it without repeating the lookups. When
+// `threats` is non-null, quiet scoring adds a threat-escape bonus for
+// moves that evacuate a piece attacked by a less-valuable enemy and a
+// walk-in penalty for moves that step into the same kind of attack.
 int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
-              const SearchState &state, int *outQuietHistory);
+              const SearchState &state, int *outQuietHistory, const ThreatMap *threats = nullptr);
 
 // True when `m` removes material from the board: either a direct capture
 // or an en passant pawn capture. Quiet pawn pushes into the en passant
