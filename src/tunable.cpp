@@ -105,6 +105,8 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeIntSpec("SeeCaptureCoef", &searchParams.SeeCaptureCoef, 25, 90, 4.0, 1.5));
     out.push_back(makeIntSpec("SeeQuietCoef", &searchParams.SeeQuietCoef, 60, 200, 8.0, 3.0));
     out.push_back(makeIntSpec("QsDeltaMargin", &searchParams.QsDeltaMargin, 300, 1200, 30.0, 10.0));
+    out.push_back(makeIntSpec("SingularDoubleMargin", &searchParams.SingularDoubleMargin, 0, 100,
+                              4.0, 1.5));
 
     // --- LMR table coefficients (scaled x100, table is rebuilt on write) ---
     // c_end values here are deliberately larger than the prior spec: LmrBase

@@ -37,6 +37,13 @@ struct SearchParams {
     // realistic best-case eval after the exchange resolves.
     int QsDeltaMargin;
 
+    // Singular extension depth-2 gate: the TT move gets a second ply of
+    // extension when the singular search returns below
+    //   singularBeta - SingularDoubleMargin
+    // i.e. no alternative even comes close. Non-PV only; PV double-
+    // extensions stack with check extensions and blow the per-path cap.
+    int SingularDoubleMargin;
+
     // Late move reductions table: scaled integers that are divided by 100
     // at table-fill time. Formula:
     //   lmrReductions[d][m] = int(LmrBase/100 + log(d) * log(m) / (LmrDivisor/100))

@@ -586,8 +586,22 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
     }
 
-    // Restricted singular extensions: if the TT move is much better than all
-    // alternatives, extend its search by one ply to resolve critical lines
+    // Restricted singular extensions. The TT move is searched against a
+    // reduced null-window probe with the TT move itself excluded, so the
+    // score reflects the best alternative. We fan out on that result:
+    //   - singularScore < singularBeta:            the TT move dominates.
+    //     Extend by 1 ply; extend by 2 at non-PV nodes when the gap is
+    //     wide enough that even a modest alternative did not close it.
+    //   - singularScore >= singularBeta >= beta:   multi-cut. The TT
+    //     move's own bound already implies ttScore >= singularBeta, and
+    //     the probe just produced a second move that also reaches
+    //     singularBeta. Two distinct moves beat singularBeta, which is
+    //     itself >= beta, so this node fails high immediately.
+    //   - singularScore >= singularBeta otherwise: the TT move has a
+    //     competing alternative instead of being dominant. At non-PV
+    //     nodes, contract the TT move's own search by 1 ply (negative
+    //     extension) so the ply budget shifts toward exploring the
+    //     rival moves. Skipped at PV to avoid destabilizing the PV.
     int singularExtension = 0;
     if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove && ttMove.from != 0 &&
         ttEntry.depth >= depth - 3 &&
@@ -602,6 +616,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
+            if (!pvNode && singularScore < singularBeta - searchParams.SingularDoubleMargin) {
+                singularExtension = 2;
+            }
+        } else if (singularBeta >= beta) {
+            return singularBeta;
+        } else if (!pvNode) {
+            singularExtension = -1;
         }
     }
 
@@ -639,7 +660,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         // Compute extensions before makeMove so piece types are still on the board
         int moveExtension = 0;
-        if (singularExtension > 0 && m.from == ttMove.from && m.to == ttMove.to &&
+        if (singularExtension != 0 && m.from == ttMove.from && m.to == ttMove.to &&
             m.promotion == ttMove.promotion) {
             moveExtension = singularExtension;
         }
@@ -706,11 +727,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         if (givesCheck && checkExtPass) {
             moveExtension = std::max(moveExtension, 1);
         }
+        // Positive extensions consume the per-path budget. Negative
+        // extensions from the singular branch return budget, so they
+        // always pass through without clamping.
         int extBudget = 2 * state.rootDepth - state.extensionsOnPath[ply];
-        if (extBudget <= 0) {
-            moveExtension = 0;
-        } else if (moveExtension > extBudget) {
-            moveExtension = extBudget;
+        if (moveExtension > 0) {
+            if (extBudget <= 0) {
+                moveExtension = 0;
+            } else if (moveExtension > extBudget) {
+                moveExtension = extBudget;
+            }
         }
         state.extensionsOnPath[ply + 1] = state.extensionsOnPath[ply] + moveExtension;
 

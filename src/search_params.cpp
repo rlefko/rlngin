@@ -20,6 +20,7 @@ static const SearchParams kDefaultSearchParams = {
     38,    // SeeCaptureCoef
     97,    // SeeQuietCoef
     724,   // QsDeltaMargin
+    20,    // SingularDoubleMargin (gap below singularBeta that triggers the non-PV depth-2 extension)
     74,    // LmrBase           (scaled x100; 0.74 in LMR formula)
     181,   // LmrDivisor        (scaled x100; 1.81 in LMR formula)
     128,   // PawnCorrWeight    (preserves the prior pawn-only correction at full strength)
