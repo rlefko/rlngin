@@ -200,6 +200,21 @@ static std::vector<ParamRef> collectParams() {
                        &evalParams.KingSafeSqPenalty[i], false, egChain});
     }
 
+    // --- King-danger accumulator weights. Each per-attacker weight feeds
+    // the quadratic king-danger term; non-negative so an extra attacker
+    // never reduces danger. KingNoQueenDiscount is subtracted from the
+    // accumulator, so its magnitude must also stay non-negative.
+    addMgEgConstr("KingAttackByKnight", &evalParams.KingAttackByKnight, nonNegative());
+    addMgEgConstr("KingAttackByBishop", &evalParams.KingAttackByBishop, nonNegative());
+    addMgEgConstr("KingAttackByRook", &evalParams.KingAttackByRook, nonNegative());
+    addMgEgConstr("KingAttackByQueen", &evalParams.KingAttackByQueen, nonNegative());
+    for (int pt = Knight; pt <= Queen; pt++) {
+        addMgEgConstr("KingSafeCheck[" + std::to_string(pt) + "]",
+                      &evalParams.KingSafeCheck[pt], nonNegative());
+    }
+    addMgEgConstr("KingRingWeakWeight", &evalParams.KingRingWeakWeight, nonNegative());
+    addMgEgConstr("KingNoQueenDiscount", &evalParams.KingNoQueenDiscount, nonNegative());
+
     // --- Pawn-structure penalties ---
     addMgEgConstr("IsolatedPawnPenalty", &evalParams.IsolatedPawnPenalty, nonPositive());
     addMgEgConstr("DoubledPawnPenalty", &evalParams.DoubledPawnPenalty, nonPositive());
@@ -212,6 +227,33 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("PawnIslandPenalty", &evalParams.PawnIslandPenalty, nonPositive());
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
+
+    // --- Central pawn occupancy. Eg structurally zero per
+    // eval_params.h:184; only the mg half is exposed.
+    out.push_back({"CentralPawnBonus[0].mg", &evalParams.CentralPawnBonus[0], true,
+                   nonNegative()});
+    out.push_back({"CentralPawnBonus[1].mg", &evalParams.CentralPawnBonus[1], true,
+                   nonNegative()});
+
+    // --- Bishop long diagonal sweep ---
+    addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus, nonNegative());
+
+    // --- Initiative system. All seven scalars carry mg=0 by construction
+    // (see eval_params.h:206-208) and live entirely in the eg half. The
+    // first six are positive features; InitiativeConstant is the
+    // negative baseline shift.
+    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, nonNegative()});
+    out.push_back({"InitiativePawnCount.eg", &evalParams.InitiativePawnCount, false,
+                   nonNegative()});
+    out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false,
+                   nonNegative()});
+    out.push_back({"InitiativeTension.eg", &evalParams.InitiativeTension, false, nonNegative()});
+    out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
+                   nonNegative()});
+    out.push_back({"InitiativePureBase.eg", &evalParams.InitiativePureBase, false,
+                   nonNegative()});
+    out.push_back({"InitiativeConstant.eg", &evalParams.InitiativeConstant, false,
+                   nonPositive()});
 
     // --- Slider on queen x-ray ---
     addMgEg("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop);
@@ -559,6 +601,23 @@ static void printCurrentValues() {
     }
     std::cout << "}, // KingSafeSqPenalty\n";
 
+    std::cout << "    " << fmtScore(evalParams.KingAttackByKnight)
+              << ", // KingAttackByKnight\n";
+    std::cout << "    " << fmtScore(evalParams.KingAttackByBishop)
+              << ", // KingAttackByBishop\n";
+    std::cout << "    " << fmtScore(evalParams.KingAttackByRook) << ", // KingAttackByRook\n";
+    std::cout << "    " << fmtScore(evalParams.KingAttackByQueen) << ", // KingAttackByQueen\n";
+    std::cout << "    {";
+    for (int i = 0; i < 7; i++) {
+        std::cout << fmtScore(evalParams.KingSafeCheck[i]);
+        if (i < 6) std::cout << ", ";
+    }
+    std::cout << "}, // KingSafeCheck\n";
+    std::cout << "    " << fmtScore(evalParams.KingRingWeakWeight)
+              << ", // KingRingWeakWeight\n";
+    std::cout << "    " << fmtScore(evalParams.KingNoQueenDiscount)
+              << ", // KingNoQueenDiscount\n";
+
     std::cout << "    " << fmtScore(evalParams.IsolatedPawnPenalty) << ", // IsolatedPawnPenalty\n";
     std::cout << "    " << fmtScore(evalParams.DoubledPawnPenalty) << ", // DoubledPawnPenalty\n";
     std::cout << "    " << fmtScore(evalParams.BackwardPawnPenalty) << ", // BackwardPawnPenalty\n";
@@ -569,9 +628,26 @@ static void printCurrentValues() {
     std::cout << "    {" << fmtScore(evalParams.BlockedPawnPenalty[0]) << ", "
               << fmtScore(evalParams.BlockedPawnPenalty[1])
               << "}, // BlockedPawnPenalty (rel rank 5, 6)\n";
+    std::cout << "    " << fmtScore(evalParams.PawnIslandPenalty) << ", // PawnIslandPenalty\n";
     // PhalanxBonus is disabled in eval_params.h; re-enable the dump when the
     // field and tuner entry come back.
     // std::cout << "    " << fmtScore(evalParams.PhalanxBonus) << ", // PhalanxBonus\n";
+    std::cout << "    {" << fmtScore(evalParams.CentralPawnBonus[0]) << ", "
+              << fmtScore(evalParams.CentralPawnBonus[1]) << "}, // CentralPawnBonus\n";
+    std::cout << "    " << fmtScore(evalParams.BishopLongDiagonalBonus)
+              << ", // BishopLongDiagonalBonus\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativePasser) << ", // InitiativePasser\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativePawnCount)
+              << ", // InitiativePawnCount\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativeOutflank)
+              << ", // InitiativeOutflank\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativeTension) << ", // InitiativeTension\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativeInfiltrate)
+              << ", // InitiativeInfiltrate\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativePureBase)
+              << ", // InitiativePureBase\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativeConstant)
+              << ", // InitiativeConstant\n";
     std::cout << "    " << fmtScore(evalParams.SliderOnQueenBishop)
               << ", // SliderOnQueenBishop\n";
     std::cout << "    " << fmtScore(evalParams.SliderOnQueenRook) << ", // SliderOnQueenRook\n";
