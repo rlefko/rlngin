@@ -23,9 +23,11 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -406,6 +408,98 @@ static void clampToConstraints(std::vector<ParamRef> &params) {
     std::cerr << "clamped " << snapped << " scalars into the constraint region\n";
 }
 
+// Dump every collected scalar to `path` as `<name> <value>\n`. Acts as a
+// crash-safe per-pass checkpoint so a long tune that gets killed mid-run
+// can resume without redoing the work that already landed.
+static void writeCheckpoint(const std::string &path, const std::vector<ParamRef> &params) {
+    std::ofstream out(path);
+    if (!out) {
+        std::cerr << "warning: failed to open checkpoint path " << path << "\n";
+        return;
+    }
+    for (const auto &p : params)
+        out << p.name << " " << p.read() << "\n";
+}
+
+// Inverse of writeCheckpoint: read `<name> <value>` lines and stamp the
+// values into `evalParams` via the matching ParamRef setters. Names that
+// no longer exist in the registry are skipped with a warning.
+static void loadCheckpoint(const std::string &path, const std::vector<ParamRef> &params) {
+    std::unordered_map<std::string, const ParamRef *> byName;
+    for (const auto &p : params)
+        byName[p.name] = &p;
+    std::ifstream in(path);
+    if (!in) {
+        std::cerr << "could not open checkpoint " << path << "\n";
+        std::exit(1);
+    }
+    std::string name;
+    int value;
+    int loaded = 0, missing = 0;
+    while (in >> name >> value) {
+        auto it = byName.find(name);
+        if (it == byName.end()) {
+            missing++;
+            continue;
+        }
+        it->second->write(value);
+        loaded++;
+    }
+    std::cerr << "loaded " << loaded << " params from " << path;
+    if (missing) std::cerr << " (" << missing << " unknown names skipped)";
+    std::cerr << "\n";
+}
+
+// Reconstruct in-memory tuner state by replaying every accepted change
+// from a previous tune.log against the compile-time defaults. Picks up
+// both the constraint clamps that fire before pass 0 and the
+// coordinate-descent steps that follow. Writes the resulting state out
+// as a checkpoint so the resumed tune can pick up via --from.
+static void replayLog(const std::string &logPath, const std::string &outPath) {
+    auto params = collectParams();
+    std::unordered_map<std::string, const ParamRef *> byName;
+    for (const auto &p : params)
+        byName[p.name] = &p;
+
+    std::ifstream in(logPath);
+    if (!in) {
+        std::cerr << "could not open log " << logPath << "\n";
+        std::exit(1);
+    }
+
+    static const std::regex passRe(R"(\s*pass\s+\d+\s+(\S+):\s+(-?\d+)\s+->\s+(-?\d+))");
+    static const std::regex clampRe(R"(\s*clamp\s+(\S+):\s+(-?\d+)\s+->\s+(-?\d+))");
+
+    std::string line;
+    int clamps = 0, replays = 0, mismatches = 0, unknown = 0;
+    while (std::getline(in, line)) {
+        std::smatch m;
+        bool isClamp = std::regex_search(line, m, clampRe);
+        if (!isClamp && !std::regex_search(line, m, passRe)) continue;
+
+        std::string name = m[1].str();
+        int from = std::stoi(m[2].str());
+        int to = std::stoi(m[3].str());
+        auto it = byName.find(name);
+        if (it == byName.end()) {
+            unknown++;
+            continue;
+        }
+        if (it->second->read() != from) mismatches++;
+        it->second->write(to);
+        if (isClamp)
+            clamps++;
+        else
+            replays++;
+    }
+    std::cerr << "replay: " << clamps << " clamp updates, " << replays
+              << " coordinate-descent steps applied, " << mismatches
+              << " from-value mismatches, " << unknown << " unknown names\n";
+
+    writeCheckpoint(outPath, params);
+    std::cerr << "checkpoint written to " << outPath << "\n";
+}
+
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
                  int maxPasses) {
     auto params = collectParams();
@@ -462,6 +556,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         }
         std::cerr << "pass " << pass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
+        writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
     }
 }
@@ -658,19 +753,52 @@ static void printCurrentValues() {
 } // namespace
 
 int main(int argc, char **argv) {
-    if (argc < 2) {
-        std::cerr << "usage: tune <dataset> [threads=6] [maxPasses=30]\n";
+    auto usage = [] {
+        std::cerr << "usage: tune [--from <ckpt>] <dataset> [threads=6] [maxPasses=30]\n";
+        std::cerr << "       tune --replay <log> <ckpt-out>\n";
+    };
+
+    // Replay subcommand: parse a previous tune.log and write a checkpoint
+    // that captures every accepted clamp / coordinate-descent step.
+    if (argc >= 2 && std::string(argv[1]) == "--replay") {
+        if (argc < 4) {
+            usage();
+            return 1;
+        }
+        zobrist::init();
+        initBitboards();
+        replayLog(argv[2], argv[3]);
+        return 0;
+    }
+
+    // Optional --from <ckpt> prefix loads a checkpoint over the
+    // compile-time defaults before any tuning starts.
+    std::string fromCheckpoint;
+    int argIdx = 1;
+    if (argc >= 3 && std::string(argv[1]) == "--from") {
+        fromCheckpoint = argv[2];
+        argIdx = 3;
+    }
+
+    if (argc <= argIdx) {
+        usage();
         return 1;
     }
-    std::string dataset = argv[1];
-    int numThreads = argc >= 3 ? std::atoi(argv[2]) : 6;
-    int maxPasses = argc >= 4 ? std::atoi(argv[3]) : 30;
+
+    std::string dataset = argv[argIdx];
+    int numThreads = argc > argIdx + 1 ? std::atoi(argv[argIdx + 1]) : 6;
+    int maxPasses = argc > argIdx + 2 ? std::atoi(argv[argIdx + 2]) : 30;
 
     zobrist::init();
     // Qsearch calls movegen (isSquareAttacked, generateLegalCaptures)
     // which depends on the bitboard attack tables; evaluate()'s usual
     // lazy init can race in the tuner's multi-threaded loss loop.
     initBitboards();
+
+    if (!fromCheckpoint.empty()) {
+        auto params = collectParams();
+        loadCheckpoint(fromCheckpoint, params);
+    }
 
     std::cerr << "loading " << dataset << "...\n";
     auto positions = loadDataset(dataset);
