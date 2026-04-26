@@ -929,3 +929,53 @@ TEST_CASE("Search: always emits a scored info line before returning", "[search][
     const std::string output = captured.str();
     CHECK(output.find(" score ") != std::string::npos);
 }
+
+TEST_CASE("Search: root move ordering survives a PV change across iterations",
+          "[search][root-ordering]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // The classic start position run: the PV flips from e2e4 to d2d4 somewhere
+    // in the mid-depth range. Before score-based root ordering, that flip
+    // froze the rest of the root list in movegen order and demoted e2e4 to
+    // near the bottom. This test exercises the RootMove score roll-forward
+    // and stable sort path by running across enough iterations to straddle
+    // at least one such flip, then asserts that the search still emits a
+    // legal best move and a well-formed PV.
+    board.setStartPos();
+
+    SearchLimits limits;
+    limits.depth = 12;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    REQUIRE(state.bestMove.from != state.bestMove.to);
+
+    std::vector<Move> rootLegal = generateLegalMoves(board);
+    bool bestIsLegal = false;
+    for (const Move &m : rootLegal) {
+        if (m.from == state.bestMove.from && m.to == state.bestMove.to &&
+            m.promotion == state.bestMove.promotion) {
+            bestIsLegal = true;
+            break;
+        }
+    }
+    CHECK(bestIsLegal);
+
+    REQUIRE(state.pvLength[0] >= 1);
+    Board pos = board;
+    for (int i = 0; i < state.pvLength[0]; i++) {
+        Move pvMove = state.pv[0][i];
+        std::vector<Move> legal = generateLegalMoves(pos);
+        bool found = false;
+        for (const Move &m : legal) {
+            if (m.from == pvMove.from && m.to == pvMove.to && m.promotion == pvMove.promotion) {
+                found = true;
+                break;
+            }
+        }
+        CHECK(found);
+        if (!found) break;
+        pos.makeMove(pvMove);
+    }
+}
