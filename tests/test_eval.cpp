@@ -21,7 +21,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3335);
+    CHECK(evaluate(board) == 3332);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -69,7 +69,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3335);
+    CHECK(evaluate(board) == 3332);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -1321,7 +1321,7 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     // a KQvK evaluation matches the pure material plus PST plus king
     // safety baseline and is not damped by the initiative constant.
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3335);
+    CHECK(evaluate(board) == 3332);
 }
 
 TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
@@ -1361,6 +1361,166 @@ TEST_CASE("Eval: wrong colored bishop with a single rook pawn scales to a draw",
     // scale of 64/64 remains in place.
     board.setFen("k7/8/8/8/8/8/P7/1B2K3 w - - 0 1");
     CHECK(scaleLine(board).find("eg * 64/64") != std::string::npos);
+}
+
+// --- Piece on king ring ---
+
+TEST_CASE("Eval: knight attacking the enemy king ring scores a bonus", "[eval][king-ring]") {
+    Board board;
+
+    // Control: white knight on c5, same distance from white king as the
+    // test variant, but whose attack set does not intersect the black
+    // king zone around g8.
+    board.setFen("6k1/8/8/2N5/8/8/8/4K3 w - - 0 1");
+    int offRing = parseMg(bucketLine(board, "Pieces"));
+
+    // Knight on f5: same mobility count and same Chebyshev distance to
+    // our king so the king-protector penalty is identical, but the
+    // attack set now reaches g7 and h6 in the black king zone and the
+    // MinorOnKingRing bonus fires.
+    board.setFen("6k1/8/8/5N2/8/8/8/4K3 w - - 0 1");
+    int onRing = parseMg(bucketLine(board, "Pieces"));
+
+    CHECK(onRing > offRing);
+}
+
+TEST_CASE("Eval: rook attacking the enemy king ring scores a bonus", "[eval][king-ring]") {
+    Board board;
+
+    // Rook on a3: same mobility count and the same RookOpenFileBonus as
+    // the test variant, but rank 3 does not reach the black king zone.
+    board.setFen("6k1/8/8/8/8/R7/8/4K3 w - - 0 1");
+    int offRing = parseMg(bucketLine(board, "Pieces"));
+
+    // Rook on a6: identical file and mobility, but the rook's rank
+    // sweeps through f6, g6, h6 -- three squares in the black king
+    // zone -- so RookOnKingRing fires.
+    board.setFen("6k1/8/R7/8/8/8/8/4K3 w - - 0 1");
+    int onRing = parseMg(bucketLine(board, "Pieces"));
+
+    CHECK(onRing > offRing);
+}
+
+// --- King protector ---
+
+TEST_CASE("Eval: knight near our king scores higher than a remote knight",
+          "[eval][king-protector]") {
+    Board board;
+
+    // Nf3 sits two Chebyshev steps from our king on g1, so KingProtector
+    // only costs a small amount relative to the mobility bonus.
+    board.setFen("6k1/8/8/8/8/5N2/8/6K1 w - - 0 1");
+    int nearKing = parseMg(bucketLine(board, "Pieces"));
+
+    // Nb6 sits five Chebyshev steps from the same king. The larger
+    // distance multiplies the per-step penalty and the Pieces bucket
+    // drops even though mobility differs by only one count.
+    board.setFen("6k1/8/1N6/8/8/8/8/6K1 w - - 0 1");
+    int farKing = parseMg(bucketLine(board, "Pieces"));
+
+    CHECK(nearKing > farKing);
+}
+
+// --- Slider on queen x-ray ---
+
+TEST_CASE("Eval: bishop xraying the enemy queen through a blocker scores a bonus",
+          "[eval][slider-on-queen]") {
+    Board board;
+
+    // Bh1 shares the a8-h1 diagonal with the black queen on a8. The
+    // black pawn on e4 is the single blocker, so the x-ray fires and
+    // SliderOnQueenBishop contributes to the Threats bucket.
+    board.setFen("q3k3/8/8/8/4p3/8/8/4K2B w - - 0 1");
+    int xrayMg = parseMg(bucketLine(board, "Threats"));
+
+    // Same material but the queen sits on b8, off every diagonal from
+    // h1. No x-ray and the Threats bucket falls.
+    board.setFen("1q2k3/8/8/8/4p3/8/8/4K2B w - - 0 1");
+    int idleMg = parseMg(bucketLine(board, "Threats"));
+
+    CHECK(xrayMg > idleMg);
+}
+
+TEST_CASE("Eval: slider on queen does not double count a direct attacker",
+          "[eval][slider-on-queen]") {
+    Board board;
+
+    // Baseline with bishops on b7 and h1 but no enemy queen. Nothing in
+    // the Threats bucket can fire against a non-existent queen.
+    board.setFen("7k/1B6/8/8/8/8/8/4K2B w - - 0 1");
+    int noQueen = parseMg(bucketLine(board, "Threats"));
+
+    // Add a black queen on a8. Bb7 directly attacks it so
+    // ThreatByMinor[Queen] fires and Bh1 x-rays the queen through b7 so
+    // SliderOnQueenBishop fires exactly once. Without the direct-attacker
+    // filter the x-ray term would also fire for Bb7, inflating the
+    // Threats bucket by an extra SliderOnQueenBishop contribution.
+    board.setFen("q6k/1B6/8/8/8/8/8/4K2B w - - 0 1");
+    int withQueen = parseMg(bucketLine(board, "Threats"));
+
+    int delta = withQueen - noQueen;
+    // With the fix, delta is roughly ThreatByMinor[Queen] + one
+    // SliderOnQueenBishop. Without the fix it would be ThreatByMinor
+    // plus two SliderOnQueenBishop contributions. The bound is loose
+    // enough to tolerate small re-tunes on either weight.
+    CHECK(delta < 155);
+}
+
+TEST_CASE("Eval: rook xraying the enemy queen through a blocker scores a bonus",
+          "[eval][slider-on-queen]") {
+    Board board;
+
+    // Rh1 shares the h-file with the black queen on h5. The black pawn
+    // on h3 is the single blocker, so the x-ray fires.
+    board.setFen("4k3/8/8/7q/8/7p/8/4K2R w - - 0 1");
+    int xrayMg = parseMg(bucketLine(board, "Threats"));
+
+    // Same queen and blocker but the rook has shifted to g1: no shared
+    // file, so the x-ray does not fire.
+    board.setFen("4k3/8/8/7q/8/7p/8/4K1R1 w - - 0 1");
+    int idleMg = parseMg(bucketLine(board, "Threats"));
+
+    CHECK(xrayMg > idleMg);
+}
+
+// --- Restricted piece ---
+
+TEST_CASE("Eval: restricted piece credits shared attack squares", "[eval][restricted]") {
+    Board board;
+
+    // Baseline: no black non-pawn piece on the board, so neither side's
+    // RestrictedPiece count can fire. Threats collapses to zero.
+    board.setFen("4k3/8/8/8/8/8/8/4K2R w - - 0 1");
+    int baseline = parseMg(bucketLine(board, "Threats"));
+
+    // Adding a black queen on d5 creates shared attack squares: our
+    // rook's h5 overlaps the queen's rank attack, and our king's d1 and
+    // d2 overlap the queen's file attack. RestrictedPiece fires on
+    // white's side of the ledger and the bucket shifts positive.
+    board.setFen("4k3/8/8/3q4/8/8/8/4K2R w - - 0 1");
+    int contested = parseMg(bucketLine(board, "Threats"));
+
+    CHECK(contested > baseline);
+}
+
+// --- Blocked vs unblocked pawn storm ---
+
+TEST_CASE("Eval: blocked pawn storm is less harsh than unblocked", "[eval][storm]") {
+    Board board;
+
+    // Blocked storm: the black f-pawn on f3 is frontally stopped by
+    // our f2 shield pawn, so BlockedPawnStorm applies with a small
+    // penalty.
+    board.setFen("r1bqk2r/ppppp1pp/2n2n2/8/8/2n2p2/PPPPPPPP/R1BQ1RK1 w kq - 0 1");
+    int blocked = evaluate(board);
+
+    // Same ram but with the f2 shield removed: the storm is now
+    // unblocked, so UnblockedPawnStorm applies with a larger penalty
+    // and the lost shield widens the gap further.
+    board.setFen("r1bqk2r/ppppp1pp/2n2n2/8/8/2n2p2/PPPPP1PP/R1BQ1RK1 w kq - 0 1");
+    int unblocked = evaluate(board);
+
+    CHECK(blocked > unblocked);
 }
 
 // --- Verbose grid layout ---

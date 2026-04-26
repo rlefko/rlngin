@@ -131,10 +131,14 @@ static const EvalParams kDefaultEvalParams = {
     S( 10,  20), // RookBehindOurPasserBonus
     S(  5,  15), // RookBehindTheirPasserBonus
     S( 10,   5), // MinorBehindPawnBonus
+    S(  3,   1), // MinorOnKingRing
+    S(  5,   0), // RookOnKingRing
+    S( -3,  -1), // KingProtector
     S(  8,  74), // BishopPair
 
     {S(68, -12), S(52, -13)},                        // PawnShieldBonus
-    {S(0, 0), S(12, 0), S(19, 0), S(5, 0), S(0, 0)}, // PawnStormPenalty
+    {S(0, 0), S( 3, 0), S( 5, 0), S(1, 0), S(0, 0)}, // BlockedPawnStorm
+    {S(0, 0), S(12, 0), S(19, 0), S(5, 0), S(0, 0)}, // UnblockedPawnStorm
 
     S(-20, 0), // SemiOpenFileNearKing
     S(-95, 0), // OpenFileNearKing
@@ -190,6 +194,11 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 12),  // InitiativeInfiltrate
     S(0, 18),  // InitiativePureBase
     S(0, -30), // InitiativeConstant
+
+    S(15,  8), // SliderOnQueenBishop
+    S(20, 10), // SliderOnQueenRook
+
+    S( 2,  1), // RestrictedPiece
 };
 // clang-format on
 

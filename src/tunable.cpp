@@ -226,6 +226,50 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("MinorBehindPawnBonusEg", &evalParams.MinorBehindPawnBonus,
                                     false, 0, 60, 5.0, 2.0));
 
+    // --- Piece on king ring: per-piece linear bonus whose trigger is
+    // shared with the multi-attacker king-danger accumulator, so the
+    // SPSA ranges stay small to keep the two buckets independently
+    // observable without a joint retune. ---
+    out.push_back(
+        makeScoreHalfSpec("MinorOnKingRingMg", &evalParams.MinorOnKingRing, true, 0, 40, 3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("MinorOnKingRingEg", &evalParams.MinorOnKingRing, false, 0, 20,
+                                    2.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("RookOnKingRingMg", &evalParams.RookOnKingRing, true, 0, 60, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("RookOnKingRingEg", &evalParams.RookOnKingRing, false, 0, 30, 2.0, 1.0));
+
+    // --- King protector: per-Chebyshev-step penalty that keeps knights
+    // and bishops anchored near our own king. Penalty-signed so SPSA
+    // cannot flip it into a bonus; the band stays narrow because the
+    // per-step cost already multiplies by up to seven. ---
+    out.push_back(
+        makeScoreHalfSpec("KingProtectorMg", &evalParams.KingProtector, true, -20, 0, 2.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("KingProtectorEg", &evalParams.KingProtector, false, -20, 0, 2.0, 1.0));
+
+    // --- Slider on queen x-ray: bonus-signed per indirect diagonal or
+    // orthogonal pressure line ending at the enemy queen. Bishop and
+    // rook variants carry separate bands because rook x-rays tend to
+    // ride open files and score a touch higher at parity with heavy
+    // pieces on the board. ---
+    out.push_back(makeScoreHalfSpec("SliderOnQueenBishopMg", &evalParams.SliderOnQueenBishop, true,
+                                    0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("SliderOnQueenBishopEg", &evalParams.SliderOnQueenBishop, false,
+                                    0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("SliderOnQueenRookMg", &evalParams.SliderOnQueenRook, true, 0,
+                                    80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("SliderOnQueenRookEg", &evalParams.SliderOnQueenRook, false, 0,
+                                    80, 5.0, 2.0));
+
+    // --- Restricted piece: bonus per square of shared attack pressure.
+    // Counts in the 10 to 40 range are common, so the per-square weight
+    // is intentionally tiny. ---
+    out.push_back(
+        makeScoreHalfSpec("RestrictedPieceMg", &evalParams.RestrictedPiece, true, 0, 20, 1.5, 0.5));
+    out.push_back(makeScoreHalfSpec("RestrictedPieceEg", &evalParams.RestrictedPiece, false, 0, 20,
+                                    1.5, 0.5));
+
     // --- Pawn islands penalty: penalty-signed so SPSA cannot flip it
     // into a bonus. The first penalty-valued scalar exposed via SPSA, so
     // the bounds follow the "bonuses stay bonuses" invariant inverted:

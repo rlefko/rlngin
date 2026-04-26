@@ -430,6 +430,13 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
         Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[c ^ 1];
 
+        Bitboard ourKingBB = board.byPiece[King] & board.byColor[c];
+        int ourKingSq = ourKingBB ? lsb(ourKingBB) : -1;
+
+        Bitboard theirKingOnly = board.byPiece[King] & board.byColor[c ^ 1];
+        Bitboard theirKingRing =
+            theirKingOnly ? kingZoneBB(lsb(theirKingOnly), static_cast<Color>(c ^ 1)) : 0;
+
         // Minor behind pawn: a friendly knight or bishop sitting directly
         // one rank behind a friendly pawn is shielded against frontal
         // attacks and cannot be easily chased by an enemy pawn on the
@@ -446,12 +453,21 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard knights = board.byPiece[Knight] & board.byColor[c];
         while (knights) {
             int sq = popLsb(knights);
-            int count = popcount(KnightAttacks[sq] & ctx.mobilityArea[c]);
+            Bitboard atk = KnightAttacks[sq];
+            int count = popcount(atk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Knight][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
                 !(PawnSpanMask[c][sq] & theirPawns)) {
                 scores[c] += evalParams.KnightOutpostBonus;
+            }
+
+            if (theirKingRing && (atk & theirKingRing)) {
+                scores[c] += evalParams.MinorOnKingRing;
+            }
+
+            if (ourKingSq >= 0) {
+                scores[c] += evalParams.KingProtector * chebyshev(sq, ourKingSq);
             }
         }
 
@@ -489,18 +505,25 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                     scores[c] += evalParams.BishopLongDiagonalBonus;
                 }
             }
+
+            if (theirKingRing && (atk & theirKingRing)) {
+                scores[c] += evalParams.MinorOnKingRing;
+            }
+
+            if (ourKingSq >= 0) {
+                scores[c] += evalParams.KingProtector * chebyshev(sq, ourKingSq);
+            }
         }
 
-        Bitboard kingBB = board.byPiece[King] & board.byColor[c];
-        int kingSq = kingBB ? lsb(kingBB) : -1;
-        int kingFile = (kingSq >= 0) ? squareFile(kingSq) : -1;
+        int kingFile = (ourKingSq >= 0) ? squareFile(ourKingSq) : -1;
         bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
         bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
 
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
         while (rooks) {
             int sq = popLsb(rooks);
-            int count = popcount(rookAttacks(sq, occ) & ctx.mobilityArea[c]);
+            Bitboard rAtk = rookAttacks(sq, occ);
+            int count = popcount(rAtk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Rook][count];
 
             Bitboard fileMask = FileBB[squareFile(sq)];
@@ -529,7 +552,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             // mobility rather than piece-square heuristics avoids the old
             // loophole where stepping the king off the back rank silenced
             // the penalty without actually freeing the rook.
-            if (count <= 3 && kingSq >= 0) {
+            if (count <= 3 && ourKingSq >= 0) {
                 int rookFile = squareFile(sq);
                 bool sameSide = (kingFile < 4) == (rookFile < kingFile);
                 if (sameSide) {
@@ -537,6 +560,10 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                     if (lostShortCastle && lostLongCastle) penalty *= 2;
                     scores[c] += penalty;
                 }
+            }
+
+            if (theirKingRing && (rAtk & theirKingRing)) {
+                scores[c] += evalParams.RookOnKingRing;
             }
         }
 
@@ -669,12 +696,21 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             Bitboard ourPawnsOnFile = ourPawns & fileMask;
             Bitboard theirPawnsOnFile = theirPawns & fileMask;
 
-            // Pawn storm: find the most-advanced enemy pawn on this file
+            // Pawn storm: find the most-advanced enemy pawn on this file.
+            // Classify it as blocked when one of our pawns sits directly
+            // in front of it from the attacker's pushing direction: a
+            // frontally blocked ram cannot open the file without a trade,
+            // so it deserves a much smaller penalty than an unblocked
+            // ram driving toward the shield.
             if (theirPawnsOnFile) {
                 int stormSq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
                 int distance = std::abs(squareRank(stormSq) - kingRank);
                 int idx = std::max(0, 4 - std::min(4, distance));
-                scores[us] -= evalParams.PawnStormPenalty[idx];
+                int stopSq = (us == White) ? stormSq - 8 : stormSq + 8;
+                bool blocked = (stopSq >= 0 && stopSq < 64) && (ourPawns & squareBB(stopSq));
+                Score penalty =
+                    blocked ? evalParams.BlockedPawnStorm[idx] : evalParams.UnblockedPawnStorm[idx];
+                scores[us] -= penalty;
             }
 
             // Open and semi-open file penalties
@@ -1182,6 +1218,49 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // Weak queen: enemy queen attacked by two or more of our pieces.
         Bitboard weakQueen = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
         if (weakQueen) scores[us] += evalParams.WeakQueen;
+
+        // Slider on queen: every friendly bishop or rook whose ray to an
+        // enemy queen passes through exactly one intermediate piece. Done
+        // from the queen's square by first finding the first blockers on
+        // each ray, then re-casting with those blockers removed so the
+        // second-line attackers show up. Direct attackers are filtered
+        // out with "& ~firstDiag" / "& ~firstOrtho" so they are not
+        // double counted against the threat-by-minor and threat-by-rook
+        // bonuses that already credit the direct attack.
+        Bitboard enemyQueens = theirPieces & board.byPiece[Queen];
+        Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
+        Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
+        if (enemyQueens && (ourBishops | ourRooks)) {
+            Bitboard occ = board.occupied;
+            int diagXrays = 0;
+            int orthoXrays = 0;
+            Bitboard queensIter = enemyQueens;
+            while (queensIter) {
+                int qSq = popLsb(queensIter);
+                if (ourBishops) {
+                    Bitboard firstDiag = bishopAttacks(qSq, occ) & occ;
+                    Bitboard xraySquaresDiag = bishopAttacks(qSq, occ ^ firstDiag);
+                    diagXrays += popcount(xraySquaresDiag & ourBishops & ~firstDiag);
+                }
+                if (ourRooks) {
+                    Bitboard firstOrtho = rookAttacks(qSq, occ) & occ;
+                    Bitboard xraySquaresOrtho = rookAttacks(qSq, occ ^ firstOrtho);
+                    orthoXrays += popcount(xraySquaresOrtho & ourRooks & ~firstOrtho);
+                }
+            }
+            scores[us] += evalParams.SliderOnQueenBishop * diagXrays;
+            scores[us] += evalParams.SliderOnQueenRook * orthoXrays;
+        }
+
+        // Restricted piece: every square we attack that an enemy knight,
+        // bishop, rook, or queen also attacks, minus squares their pawns
+        // defend. Each such square limits one of their pieces from
+        // retreating or rotating through, which is the positional
+        // coordination signal the term models.
+        Bitboard theirPieceAttacks = ctx.attackedBy[them][Knight] | ctx.attackedBy[them][Bishop] |
+                                     ctx.attackedBy[them][Rook] | ctx.attackedBy[them][Queen];
+        Bitboard restricted = theirPieceAttacks & ctx.allAttacks[us] & ~ctx.pawnAttacks[them];
+        scores[us] += evalParams.RestrictedPiece * popcount(restricted);
 
         // Safe pawn push threat: single- or double-push targets that are
         // empty, not attacked by enemy pawns, and either not attacked by

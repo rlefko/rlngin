@@ -75,13 +75,34 @@ struct EvalParams {
     // of N f3 + P g4 + B g2 (or similar) gets credited cleanly.
     Score MinorBehindPawnBonus;
 
+    // Piece pressure on the enemy king ring, scored per piece whose
+    // pseudo-attack set intersects the enemy king zone. Lives outside
+    // the multi-attacker king-danger accumulator so single-attacker
+    // pressure (a lone outposted knight on f5, say) still gets credit.
+    Score MinorOnKingRing;
+    Score RookOnKingRing;
+
+    // Penalty per square of Chebyshev distance from our own king to each
+    // of our knights and bishops. Linear in distance because distances to
+    // the king are bounded at 7 and nearly all meaningful credit lands in
+    // the 2 to 4 range where a table adds no resolution over a slope.
+    // Signed negative so a minor drifting away from the defense costs a
+    // small amount of eval per step.
+    Score KingProtector;
+
     // Piece pair synergy.
     Score BishopPair;
 
     // King-safety scalar tables (structural divisors for the king-danger
     // quadratic remain static const inside eval.cpp).
     Score PawnShieldBonus[2];
-    Score PawnStormPenalty[5];
+    // Pawn storm penalty indexed by distance bucket (0..4 where bucket 4
+    // is closest). Split into blocked and unblocked variants because a
+    // storm pawn frontally blocked by a friendly shield pawn cannot open
+    // lines without a trade, so its effective penalty is much smaller
+    // than an unblocked ram on the same file.
+    Score BlockedPawnStorm[5];
+    Score UnblockedPawnStorm[5];
     Score SemiOpenFileNearKing;
     Score OpenFileNearKing;
     Score UndefendedKingZoneSq;
@@ -192,6 +213,25 @@ struct EvalParams {
     Score InitiativeInfiltrate;
     Score InitiativePureBase;
     Score InitiativeConstant;
+
+    // Bonus per friendly slider that "x-rays" the enemy queen through
+    // exactly one intermediate blocker: our bishop or rook shares a ray
+    // with the queen and there is one piece (of either color) between
+    // them. Direct attackers are already credited by the threat-by-minor
+    // and threat-by-rook terms plus the weak-queen flag, so this term
+    // fires only on the indirect-pressure case. Both bishop and rook
+    // variants are scored per counted slider.
+    Score SliderOnQueenBishop;
+    Score SliderOnQueenRook;
+
+    // Bonus per square that both sides' non-pawn pieces attack, minus
+    // squares the opponent's pawns defend. A square we attack that the
+    // opponent's knight, bishop, rook, or queen also attacks is a square
+    // the opponent cannot comfortably use for retreat or rotation: every
+    // such square restricts an opposing piece's freedom of movement.
+    // Pawn-defended squares are excluded because our attacker is already
+    // outvalued there and the recapture is immediate.
+    Score RestrictedPiece;
 };
 
 extern EvalParams evalParams;
