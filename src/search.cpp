@@ -30,15 +30,10 @@ enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 // Root move record used only inside startSearch. Carrying a score per move
 // lets iterative deepening reorder the root by the latest search verdict
 // instead of leaving the movegen order frozen behind a single swap-to-front.
-// score is the Stockfish-style "real" score (only stamped when meaningful);
-// probeScore is the latest negamax result regardless of meaningfulness, used
-// purely as a sort tiebreaker so the -INF_SCORE cluster orders by something
-// signal-bearing instead of stable-preserving the original movegen order.
 struct RootMove {
     Move move;
     int score = -INF_SCORE;
     int previousScore = -INF_SCORE;
-    int probeScore = -INF_SCORE;
 };
 
 // Saturating gravity update used by every history table. The gravity term
@@ -1092,12 +1087,10 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
         // Roll each root move's score into previousScore and reset the live
         // score so an iteration cut short by state.stopped cannot leak stale
-        // scores into the next iteration's sort. probeScore is reset too so
-        // a stopped iteration cannot leak partial probe results either.
+        // scores into the next iteration's sort.
         for (auto &rm : rootMoves) {
             rm.previousScore = rm.score;
             rm.score = -INF_SCORE;
-            rm.probeScore = -INF_SCORE;
         }
 
         const int numSlots = std::min<int>(multiPVRequested, static_cast<int>(rootMoves.size()));
@@ -1236,20 +1229,14 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                     // that beat alpha was re-searched with a full window. A
                     // move that just failed the null window returns an upper
                     // bound from an essentially unconstrained search below
-                    // alpha; stamping that bound into rm.score would let it
-                    // outrank the former PV's real full-window score simply
-                    // because the bound happened to land higher numerically.
-                    // Leaving rm.score at -INF_SCORE for those moves clusters
-                    // them at the bottom of the sort and keeps the current
-                    // and former PVs naturally adjacent at the top.
+                    // alpha; stamping that bound would let it outrank the
+                    // former PV's real full-window score simply because the
+                    // bound happened to land higher numerically. Leaving
+                    // rm.score at its top-of-iteration -INF_SCORE sentinel
+                    // clusters those moves together at the bottom of the
+                    // sort in a stable order, keeping the current and former
+                    // PVs naturally adjacent at the top.
                     if (isFirstMove || score > alphaAtMoveStart) rm.score = score;
-
-                    // probeScore captures the latest negamax result whether
-                    // or not it was meaningful. It only feeds the secondary
-                    // sort key, so the -INF_SCORE cluster orders by recent
-                    // probe results instead of stable-preserving movegen
-                    // order all the way back to iteration 1.
-                    rm.probeScore = score;
 
                     if (score > currentBestScore) {
                         currentBestScore = score;
@@ -1313,17 +1300,15 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             // this iteration so the next slot (and the next iteration's
             // slot 0) sees the strongest candidates first. Moves with a
             // real score (the PV, any fail-high, and the first searched
-            // move) float to the top by score; the -INF_SCORE cluster of
-            // null-window fail-lows orders by probeScore so the tail still
-            // moves in response to recent search signal instead of freezing
-            // in movegen order. The slice [slot, end) is the right range
-            // because earlier slots already locked in their MultiPV picks
-            // and must not be reordered.
-            std::stable_sort(rootMoves.begin() + slot, rootMoves.end(),
-                             [](const RootMove &a, const RootMove &b) {
-                                 if (a.score != b.score) return a.score > b.score;
-                                 return a.probeScore > b.probeScore;
-                             });
+            // move) float to the top; moves that only failed the null
+            // window keep the -INF_SCORE sentinel from the top-of-iteration
+            // reset and stable-sort into a deterministic tail preserving
+            // their prior relative order. The slice [slot, end) is the
+            // right range because earlier slots already locked in their
+            // MultiPV picks and must not be reordered.
+            std::stable_sort(
+                rootMoves.begin() + slot, rootMoves.end(),
+                [](const RootMove &a, const RootMove &b) { return a.score > b.score; });
 
             if (sawFailLowAfterFailHigh) iterFailLowAfterFailHigh = true;
 
