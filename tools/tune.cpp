@@ -175,12 +175,16 @@ static std::vector<ParamRef> collectParams() {
                                return b;
                            }});
         }
-        // PassedSupportedBonus: non-decreasing chain, both halves.
+        // PassedSupportedBonus: non-decreasing chain, both halves, plus
+        // a non-negative floor. A passer supported by friendly pieces
+        // is universally a positive feature; the chain alone permits
+        // a low-rank entry to drift negative as long as the next rank
+        // dominates it, which contradicts the prior.
         for (bool isMg : {true, false}) {
             std::string name =
                 "PassedSupportedBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
             out.push_back({name, &evalParams.PassedSupportedBonus[r], isMg, [r, isMg] {
-                               Bounds b;
+                               Bounds b{0, 1000000};
                                auto half = [&](int idx) {
                                    return isMg ? mg_value(evalParams.PassedSupportedBonus[idx])
                                                : eg_value(evalParams.PassedSupportedBonus[idx]);
@@ -269,11 +273,16 @@ static std::vector<ParamRef> collectParams() {
     // never less valuable than a less advanced one. The mg defaults at
     // ranks 1..2 may be slightly negative (early-promotion exposure
     // costs), so the lo bound is the previous neighbor, not zero.
+    // PassedPawnBonus: chain non-decreasing in rank. Mg ranks 4..6 are
+    // floored at 0 (a passer past midfield should never be a middlegame
+    // penalty). Eg ranks 1..6 stay floor-free since the eg defaults are
+    // already strongly positive and the chain is enough.
     for (int r = 1; r <= 6; r++) {
         for (bool isMg : {true, false}) {
             std::string name = "PassedPawnBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
             out.push_back({name, &evalParams.PassedPawnBonus[r], isMg, [r, isMg] {
                                Bounds b;
+                               if (isMg && r >= 4) b.lo = 0;
                                auto half = [&](int idx) {
                                    return isMg ? mg_value(evalParams.PassedPawnBonus[idx])
                                                : eg_value(evalParams.PassedPawnBonus[idx]);
@@ -284,12 +293,17 @@ static std::vector<ParamRef> collectParams() {
                            }});
         }
     }
+    // ConnectedPawnBonus: chain non-decreasing in rank. Eg ranks 2..6
+    // are floored at 0 (defended/phalanx pawn from rank 2 onward is a
+    // positive feature in eg). Rank 1 eg is left unconstrained because
+    // the default sits negative and the corpus signal there is genuine.
     for (int r = 1; r <= 6; r++) {
         for (bool isMg : {true, false}) {
             std::string name =
                 "ConnectedPawnBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
             out.push_back({name, &evalParams.ConnectedPawnBonus[r], isMg, [r, isMg] {
                                Bounds b;
+                               if (!isMg && r >= 2) b.lo = 0;
                                auto half = [&](int idx) {
                                    return isMg ? mg_value(evalParams.ConnectedPawnBonus[idx])
                                                : eg_value(evalParams.ConnectedPawnBonus[idx]);
@@ -722,6 +736,59 @@ static void projectToConstraints(std::vector<ParamRef> &params) {
     std::cerr << "projected " << snapped << " scalars into the constraint region\n";
 }
 
+// Canonicalize the PST/material gauge. The eval is invariant under
+// shifts that subtract a constant `mean` from every PST entry of a
+// piece type while adding the same `mean` (times piece count) back via
+// PieceScore. Coordinate descent has been freely exploring this null
+// direction, leaving material values that drift far from defaults
+// while the actual eval stays the same. Recentering each PST around
+// zero by mean and pushing the mean into PieceScore keeps the eval
+// bit-identical and pulls material values back to interpretable
+// magnitudes. The pawn PST excludes ranks 1 and 8 (forced zero
+// squares); the king PST is centered without touching PieceScore[King]
+// because there is exactly one king per side, so any constant shift
+// in the king PST cancels in the white-minus-black eval. Run after
+// every accepted pass so the gauge never wanders far between
+// snapshots.
+static void centerPSTGauge() {
+    auto centerWithMaterial = [](Score *pst, int firstSq, int lastSq, Score &pieceScore) {
+        int n = lastSq - firstSq;
+        int sumMg = 0, sumEg = 0;
+        for (int sq = firstSq; sq < lastSq; sq++) {
+            sumMg += mg_value(pst[sq]);
+            sumEg += eg_value(pst[sq]);
+        }
+        int meanMg = sumMg / n;
+        int meanEg = sumEg / n;
+        if (meanMg == 0 && meanEg == 0) return;
+        for (int sq = firstSq; sq < lastSq; sq++) {
+            pst[sq] = S(mg_value(pst[sq]) - meanMg, eg_value(pst[sq]) - meanEg);
+        }
+        pieceScore = S(mg_value(pieceScore) + meanMg, eg_value(pieceScore) + meanEg);
+    };
+    auto centerNoMaterial = [](Score *pst, int firstSq, int lastSq) {
+        int n = lastSq - firstSq;
+        int sumMg = 0, sumEg = 0;
+        for (int sq = firstSq; sq < lastSq; sq++) {
+            sumMg += mg_value(pst[sq]);
+            sumEg += eg_value(pst[sq]);
+        }
+        int meanMg = sumMg / n;
+        int meanEg = sumEg / n;
+        if (meanMg == 0 && meanEg == 0) return;
+        for (int sq = firstSq; sq < lastSq; sq++) {
+            pst[sq] = S(mg_value(pst[sq]) - meanMg, eg_value(pst[sq]) - meanEg);
+        }
+    };
+
+    centerWithMaterial(evalParams.PawnPST, 8, 56, evalParams.PieceScore[Pawn]);
+    centerWithMaterial(evalParams.KnightPST, 0, 64, evalParams.PieceScore[Knight]);
+    centerWithMaterial(evalParams.BishopPST, 0, 64, evalParams.PieceScore[Bishop]);
+    centerWithMaterial(evalParams.RookPST, 0, 64, evalParams.PieceScore[Rook]);
+    centerWithMaterial(evalParams.QueenPST, 0, 64, evalParams.PieceScore[Queen]);
+    centerNoMaterial(evalParams.KingPST, 0, 64);
+}
+
 // Hard validation step. Walks every ParamRef, prints any value outside
 // its live bounds, and exits with non-zero status if any violator
 // survives. Called from every entry path that loads or applies a
@@ -840,6 +907,9 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
     // constraints registered since may render some halves invalid.
     projectToConstraints(params);
     validateConstraints(params);
+    // Canonicalize the PST / material gauge so the written checkpoint
+    // is in the same canonical form `tune()` produces between passes.
+    centerPSTGauge();
 
     writeCheckpoint(outPath, params);
     std::cerr << "checkpoint written to " << outPath << "\n";
@@ -926,6 +996,10 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     int globalPass = 0;
     for (int pass = 0; pass < maxPasses; pass++, globalPass++) {
         bool improved = runPass(globalPass, numThreads, relThresholdThreaded);
+        // Canonicalize PST/material gauge so the per-term values stay
+        // interpretable. Bit-identical eval, and the next pass picks
+        // up from the centered point.
+        centerPSTGauge();
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
         writeCheckpoint("tuning/checkpoint.txt", params);
@@ -973,6 +1047,10 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     std::cerr << "deterministic baseline loss: " << bestLoss << "\n";
     for (int finalPass = 0; finalPass < maxPasses; finalPass++, globalPass++) {
         bool improved = runPass(globalPass, /*passNumThreads=*/1, relThresholdDeterministic);
+        // Canonicalize PST/material gauge so the per-term values stay
+        // interpretable. Bit-identical eval, and the next pass picks
+        // up from the centered point.
+        centerPSTGauge();
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
         writeCheckpoint("tuning/checkpoint.txt", params);
@@ -1193,11 +1271,16 @@ int main(int argc, char **argv) {
         initBitboards();
         auto params = collectParams();
         loadCheckpoint(argv[2], params);
-        // Warn-only validation: emit the snapshot even if it has stale
-        // bound violations so the caller can splice into eval_params.cpp
-        // before bounds are tightened. The next `--from` load will project
-        // and validate fatally.
+        // Canonicalize before printing: project violators onto the
+        // current bounds, validate (warn-only so the dump still emits
+        // a copy-paste-ready snapshot even on a slightly stale ckpt),
+        // then center the PST/material gauge so the printed values are
+        // in the same canonical form `tune()` produces between passes.
+        // The eval is bit-identical to the input checkpoint after both
+        // operations.
+        projectToConstraints(params);
         validateConstraints(params, /*fatal=*/false);
+        centerPSTGauge();
         printCurrentValues();
         return 0;
     }
