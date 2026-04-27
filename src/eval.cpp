@@ -270,24 +270,6 @@ static void computePawns(const Board &board, Score perSide[2], Bitboard passers[
         Bitboard theirPawns = (c == White) ? blackPawns : whitePawns;
         Score &score = sideScores[c];
 
-        // Pawn islands: project our pawns down to an 8-bit file mask
-        // (one bit per file that contains at least one friendly pawn),
-        // then count runs of set bits. Each run is an island; the
-        // penalty fires once per extra island beyond the first since
-        // one contiguous chain is the ideal structure. Cheap to fold
-        // into the pawn hash because the computation depends only on
-        // which files have pawns, which is a strict subset of the
-        // information already keyed by pawnKey.
-        Bitboard folded = ourPawns;
-        folded |= folded >> 32;
-        folded |= folded >> 16;
-        folded |= folded >> 8;
-        uint8_t fileBits = static_cast<uint8_t>(folded & 0xFFu);
-        int islandCount = popcount(static_cast<Bitboard>(fileBits & ~(fileBits >> 1)));
-        if (islandCount > 1) {
-            score += evalParams.PawnIslandPenalty * (islandCount - 1);
-        }
-
         Bitboard pawns = ourPawns;
         while (pawns) {
             int sq = popLsb(pawns);
@@ -332,13 +314,6 @@ static void computePawns(const Board &board, Score perSide[2], Bitboard passers[
                 // reward and mis-scores winning king-and-pawn endings.
                 if (!opposed && !isPassed) {
                     score += evalParams.WeakUnopposedPenalty;
-                }
-                // Doubled and isolated together is the worst structural
-                // configuration a pawn can sit in -- no rank neighbour,
-                // no file neighbour that can defend it, and the rear
-                // pawn inherits every weakness when the leader falls.
-                if (isDoubled) {
-                    score += evalParams.DoubledIsolatedPenalty;
                 }
             }
 

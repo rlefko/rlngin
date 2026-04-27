@@ -170,9 +170,7 @@ static const EvalParams kDefaultEvalParams = {
     S(  0, -83), // DoubledPawnPenalty
     S(-13, -36), // BackwardPawnPenalty
     S( -5, -10), // WeakUnopposedPenalty
-    S( -8, -15), // DoubledIsolatedPenalty
     {S(-5, -2), S(-2, -1)}, // BlockedPawnPenalty (rel rank 5, 6)
-    S( -5,  -8),            // PawnIslandPenalty (per island beyond the first)
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
 
     // CentralPawnBonus: primary (d/e) then extended (c/f). MG-only because

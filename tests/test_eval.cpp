@@ -461,24 +461,6 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     }
 }
 
-TEST_CASE("Eval: doubled isolated pawns are worse than plain doubled pawns", "[eval][pawn]") {
-    Board board;
-
-    // White a2 and a3 are doubled on the a file and have no friend on the
-    // b file, so they are both doubled and isolated.
-    board.setFen("4k3/8/8/8/8/P7/P7/4K3 w - - 0 1");
-    int doubledIsolated = evaluate(board);
-
-    // Same doubled pair, but now there is a friend on the b file, so the
-    // a pawns are doubled but no longer isolated. The extra DoubledIsolated
-    // penalty should disappear even though the plain Doubled penalty and
-    // the extra b2 pawn's own material both shift the score.
-    board.setFen("4k3/8/8/8/8/P7/PP6/4K3 w - - 0 1");
-    int doubledSupported = evaluate(board);
-
-    CHECK(doubledSupported > doubledIsolated);
-}
-
 TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eval][pawn]") {
     Board board;
 
@@ -545,60 +527,6 @@ TEST_CASE("Eval: pawn chain gives connected bonus", "[eval][pawn]") {
     // PR with sign/monotonicity constraints will restore `chain > noChain`.
     (void)chain;
     (void)noChain;
-}
-
-TEST_CASE("Eval: extra pawn island fires the fragmentation penalty", "[eval][pawn]") {
-    Board board;
-
-    auto pawnBucket = [](const Board &b) {
-        std::ostringstream os;
-        evaluateVerbose(b, os);
-        const std::string text = os.str();
-        size_t pos = text.find("Pawns");
-        REQUIRE(pos != std::string::npos);
-        size_t eol = text.find('\n', pos);
-        return text.substr(pos, eol - pos);
-    };
-    auto parseHalf = [](const std::string &line, const char *key) {
-        size_t k = line.find(key);
-        REQUIRE(k != std::string::npos);
-        return std::atoi(line.c_str() + k + 3);
-    };
-
-    // Two white-only pawn configurations with identical isolation,
-    // doubled, and passer counts (all four pawns connected, all four
-    // passed because black has no pawns), differing only in island
-    // count: a,b,c,d -> one island, a,b,d,e -> two islands.
-    board.setFen("4k3/8/8/8/8/8/PPPP4/4K3 w - - 0 1");
-    std::string oneIslandLine = pawnBucket(board);
-    board.setFen("4k3/8/8/8/8/8/PP1PP3/4K3 w - - 0 1");
-    std::string twoIslandLine = pawnBucket(board);
-
-    // The "Pawns" bucket difference should be exactly the islands
-    // penalty applied once (two islands minus one island). Defaults
-    // are S(-5, -8) so the one-island configuration scores five mg /
-    // eight eg units higher in the pawn bucket.
-    CHECK(parseHalf(oneIslandLine, "mg=") - parseHalf(twoIslandLine, "mg=") == 5);
-    CHECK(parseHalf(oneIslandLine, "eg=") - parseHalf(twoIslandLine, "eg=") == 8);
-}
-
-TEST_CASE("Eval: symmetric pawn islands cancel between sides", "[eval][pawn]") {
-    Board board;
-
-    // Both sides carry exactly two islands (a+c vs a+c). The islands
-    // contribution must cancel in the verbose breakdown because the
-    // term is symmetric and each side contributes equal magnitude with
-    // opposite sign.
-    board.setFen("4k3/p1p5/8/8/8/8/P1P5/4K3 w - - 0 1");
-    std::ostringstream os;
-    evaluateVerbose(board, os);
-    const std::string text = os.str();
-    size_t pos = text.find("Pawns");
-    REQUIRE(pos != std::string::npos);
-    size_t eol = text.find('\n', pos);
-    std::string pawnLine = text.substr(pos, eol - pos);
-    CHECK(pawnLine.find("mg=     0") != std::string::npos);
-    CHECK(pawnLine.find("eg=     0") != std::string::npos);
 }
 
 TEST_CASE("Eval: symmetric pawn structure leaves only the tempo bonus", "[eval][pawn]") {
