@@ -870,32 +870,6 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
                 }
             }
         }
-
-        // Connected passers: pair up passers on adjacent files and within
-        // one rank of each other. Iterate over every passer (even below
-        // the bonus-eligible rank) so pairs where one side is just under
-        // the threshold are still credited against the higher-ranked
-        // member. Looking only at file+1 keeps each pair counted once.
-        Bitboard pairIter = ourPassers;
-        while (pairIter) {
-            int sq = popLsb(pairIter);
-            int f = squareFile(sq);
-            int r = squareRank(sq);
-            if (f >= 7) continue;
-
-            Bitboard neighborMask = FileBB[f + 1];
-            Bitboard partners = ourPassers & neighborMask;
-            for (int rr = std::max(0, r - 1); rr <= std::min(7, r + 1); rr++) {
-                if (Bitboard hit = partners & RankBB[rr]) {
-                    int partnerSq = lsb(hit);
-                    int higherRelRank = std::max(relativeRank(us, sq), relativeRank(us, partnerSq));
-                    if (higherRelRank >= 3) {
-                        scores[us] += evalParams.ConnectedPassersBonus[higherRelRank];
-                    }
-                    break;
-                }
-            }
-        }
     }
 }
 
@@ -931,7 +905,7 @@ static void evaluateBlockedPawns(const Board &board, const Bitboard passers[2], 
 // positional advantage. A clamp prevents the contribution from flipping
 // the sign of an already small eg score. The mg half is applied at half
 // strength so the term does not distort quiet middlegame positions.
-static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
+static Score evaluateInitiative(const Board &board, const EvalContext & /*ctx*/,
                                 const Bitboard passers[2], Score totalBeforeInitiative) {
     // Initiative is a positional-complexity signal. It only makes sense
     // when both sides still have pawns to work with: pawnless endings
@@ -949,12 +923,6 @@ static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
     int outflank = kingsidePawns * queensidePawns;
     if (outflank > 16) outflank = 16;
 
-    // Tension is counted from both sides so a symmetric break is
-    // credited twice. The weight (4 eg) already accounts for that
-    // double counting at a scale matched to other initiative weights.
-    int tension = popcount(ctx.pawnAttacks[White] & blackPawnsBB) +
-                  popcount(ctx.pawnAttacks[Black] & whitePawnsBB);
-
     int infiltrated = 0;
     Bitboard whiteKingBB = board.byPiece[King] & board.byColor[White];
     Bitboard blackKingBB = board.byPiece[King] & board.byColor[Black];
@@ -971,14 +939,12 @@ static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
     int mgMag = mg_value(evalParams.InitiativePasser) * passerCount +
                 mg_value(evalParams.InitiativePawnCount) * pawnCount +
                 mg_value(evalParams.InitiativeOutflank) * outflank +
-                mg_value(evalParams.InitiativeTension) * tension +
                 mg_value(evalParams.InitiativeInfiltrate) * infiltrated +
                 mg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
                 mg_value(evalParams.InitiativeConstant);
     int egMag = eg_value(evalParams.InitiativePasser) * passerCount +
                 eg_value(evalParams.InitiativePawnCount) * pawnCount +
                 eg_value(evalParams.InitiativeOutflank) * outflank +
-                eg_value(evalParams.InitiativeTension) * tension +
                 eg_value(evalParams.InitiativeInfiltrate) * infiltrated +
                 eg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
                 eg_value(evalParams.InitiativeConstant);

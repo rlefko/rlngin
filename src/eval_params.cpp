@@ -28,7 +28,6 @@ static const EvalParams kDefaultEvalParams = {
     {S(0, 0), S(0, 0), S(0, 0), S(0, 32), S(0, 62), S(0, 93), S(0, 123), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(-33, -40), S(-4, -57), S(-40, -77), S(-114, -160), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(24, 46), S(20, 77), S(73, 141), S(127, 210), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(-8, -4), S(28, 0), S(78, 87), S(84, 88), S(0, 0)},
     S(-7, -16), // BadBishopPenalty
     S(24, 0),   // Tempo         (Texel-tuned; SPSA's proposal was reverted)
 
@@ -183,7 +182,6 @@ static const EvalParams kDefaultEvalParams = {
     S(0,  9),  // InitiativePasser
     S(0,  3),  // InitiativePawnCount
     S(0,  8),  // InitiativeOutflank
-    S(0,  4),  // InitiativeTension
     S(0, 12),  // InitiativeInfiltrate
     S(0, 18),  // InitiativePureBase
     S(0, -30), // InitiativeConstant

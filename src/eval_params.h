@@ -22,7 +22,6 @@ struct EvalParams {
     Score PassedEnemyKingProxPenalty[8];
     Score PassedBlockedPenalty[8];
     Score PassedSupportedBonus[8];
-    Score ConnectedPassersBonus[8];
     Score BadBishopPenalty;
     Score Tempo;
 
@@ -174,7 +173,6 @@ struct EvalParams {
     //   Passer      -- per passed pawn on either side
     //   PawnCount   -- per pawn on the board (tiny weight, grows with pawns)
     //   Outflank    -- popcount(kingside pawns) * popcount(queenside pawns)
-    //   Tension     -- enemy pawns under our pawn attacks plus mirror
     //   Infiltrate  -- per king that has crossed into enemy territory
     //   PureBase    -- flat when no non-pawn non-king material remains
     //   Constant    -- baseline shift (typically negative)
@@ -185,7 +183,6 @@ struct EvalParams {
     Score InitiativePasser;
     Score InitiativePawnCount;
     Score InitiativeOutflank;
-    Score InitiativeTension;
     Score InitiativeInfiltrate;
     Score InitiativePureBase;
     Score InitiativeConstant;

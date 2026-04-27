@@ -101,8 +101,6 @@ static std::vector<ParamRef> collectParams() {
                       &evalParams.PassedBlockedPenalty[r], nonPositive());
         addMgEg("PassedSupportedBonus[" + std::to_string(r) + "]",
                 &evalParams.PassedSupportedBonus[r]);
-        addMgEg("ConnectedPassersBonus[" + std::to_string(r) + "]",
-                &evalParams.ConnectedPassersBonus[r]);
     }
 
     addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, nonPositive());
@@ -475,7 +473,6 @@ static void printCurrentValues() {
     printArr8("    ", evalParams.PassedEnemyKingProxPenalty);
     printArr8("    ", evalParams.PassedBlockedPenalty);
     printArr8("    ", evalParams.PassedSupportedBonus);
-    printArr8("    ", evalParams.ConnectedPassersBonus);
 
     std::cout << "    " << fmtScore(evalParams.BadBishopPenalty) << ", // BadBishopPenalty\n";
     std::cout << "    " << fmtScore(evalParams.Tempo) << ", // Tempo\n";
