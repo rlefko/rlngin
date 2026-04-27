@@ -189,14 +189,22 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("KingAttackByQueenEg", &evalParams.KingAttackByQueen, false, 0,
                                     60, 5.0, 2.0));
 
-    out.push_back(makeScoreHalfSpec("KingSafeCheckKnightMg", &evalParams.KingSafeCheck[Knight],
+    out.push_back(makeScoreHalfSpec("KingSafeCheckKnightMg", &evalParams.KingSafeCheck[Knight][0],
                                     true, 0, 200, 10.0, 4.0));
-    out.push_back(makeScoreHalfSpec("KingSafeCheckBishopMg", &evalParams.KingSafeCheck[Bishop],
+    out.push_back(makeScoreHalfSpec("KingSafeCheckKnightMultiMg",
+                                    &evalParams.KingSafeCheck[Knight][1], true, 0, 400, 15.0, 5.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckBishopMg", &evalParams.KingSafeCheck[Bishop][0],
                                     true, 0, 200, 10.0, 4.0));
-    out.push_back(makeScoreHalfSpec("KingSafeCheckRookMg", &evalParams.KingSafeCheck[Rook], true, 0,
-                                    200, 10.0, 4.0));
-    out.push_back(makeScoreHalfSpec("KingSafeCheckQueenMg", &evalParams.KingSafeCheck[Queen], true,
-                                    0, 240, 12.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckBishopMultiMg",
+                                    &evalParams.KingSafeCheck[Bishop][1], true, 0, 400, 15.0, 5.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckRookMg", &evalParams.KingSafeCheck[Rook][0], true,
+                                    0, 200, 10.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckRookMultiMg", &evalParams.KingSafeCheck[Rook][1],
+                                    true, 0, 400, 15.0, 5.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckQueenMg", &evalParams.KingSafeCheck[Queen][0],
+                                    true, 0, 240, 12.0, 4.0));
+    out.push_back(makeScoreHalfSpec("KingSafeCheckQueenMultiMg",
+                                    &evalParams.KingSafeCheck[Queen][1], true, 0, 480, 16.0, 5.0));
 
     out.push_back(makeScoreHalfSpec("KingRingWeakWeightMg", &evalParams.KingRingWeakWeight, true, 0,
                                     60, 5.0, 2.0));

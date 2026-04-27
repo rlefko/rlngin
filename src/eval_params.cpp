@@ -157,11 +157,30 @@ static const EvalParams kDefaultEvalParams = {
     S(22, 3),  // KingAttackByRook
     S(32, 4),  // KingAttackByQueen
 
-    // KingSafeCheck[pt]: 0 for None/Pawn/King slots so the inner loop can
-    // index by piece type directly.
-    {S(0, 0), S(0, 0), S(36, 3), S(24, 2), S(28, 3), S(44, 5), S(0, 0)},
+    // KingSafeCheck[pt][0=single, 1=multi]. Multi entries roughly double
+    // the single weight since "two safe checks" is qualitatively closer
+    // to forced material loss than two times one safe check.
+    {
+        {S(0, 0), S(0, 0)},   // None
+        {S(0, 0), S(0, 0)},   // Pawn
+        {S(36, 3), S(72, 6)}, // Knight
+        {S(24, 2), S(48, 4)}, // Bishop
+        {S(28, 3), S(56, 6)}, // Rook
+        {S(44, 5), S(88, 10)}, // Queen
+        {S(0, 0), S(0, 0)},   // King
+    },
 
     S(6, 0),  // KingRingWeakWeight
+
+    S(8, 0),  // KingUnsafeCheckWeight
+    S(3, 0),  // KingAttacksWeight
+    S(4, 0),  // KingBlockerWeight
+    S(40, 0), // KingKnightDefenderDiscount
+    S(-17, -95), // PawnlessFlank
+    S(4, 0),  // KingFlankAttack
+    S(6, 0),  // KingFlankAttack2
+    S(-2, 0), // KingFlankDefense
+    S(15, 0), // KingDangerConstant
     S(36, 0), // KingNoQueenDiscount
 
     S(-15, -24), // IsolatedPawnPenalty

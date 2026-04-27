@@ -115,14 +115,60 @@ struct EvalParams {
     Score KingAttackByQueen;
 
     // King-danger weight per safe check an enemy piece of the given type
-    // can deliver from a square we do not defend. Indexed by victim piece
-    // type so the Pawn/King/None slots stay zero and the inner loop can
-    // read the table directly without a remap.
-    Score KingSafeCheck[7];
+    // can deliver from a square we do not defend. The trailing dimension
+    // selects between the "single safe check" magnitude (index 0) and the
+    // "two or more safe checks" magnitude (index 1): a piece able to give
+    // check from multiple squares is qualitatively more dangerous than a
+    // piece able to give check from one square, and the multi entry
+    // captures that. Pawn/King/None slots stay zero on both halves.
+    Score KingSafeCheck[7][2];
 
     // Per-weak-ring-square weight folded into the king-danger accumulator.
     // Orthogonal to the existing UndefendedKingZoneSq linear term.
     Score KingRingWeakWeight;
+
+    // Per square the enemy reaches that would give check but is not
+    // "safe" by the strict KingSafeCheck definition. Captures the milder
+    // pressure of a check that would lose material on the recapture.
+    Score KingUnsafeCheckWeight;
+
+    // Per square directly adjacent to the king the enemy attacks (with
+    // multiplicity: a square hit by two enemy pieces counts twice). The
+    // existing UndefendedKingZoneSq term measures area, this measures
+    // attack pressure.
+    Score KingAttacksWeight;
+
+    // Per friendly piece pinned to the king (the "blockers for king"
+    // count). A pinned piece cannot escape the line, which makes the
+    // king attack stronger.
+    Score KingBlockerWeight;
+
+    // Discount subtracted from the king-danger accumulator when our
+    // knight defends a square our own king also attacks. A close-in
+    // knight is the strongest defender against rook and queen sacrifices.
+    Score KingKnightDefenderDiscount;
+
+    // Negative penalty added to the position score when our king has no
+    // friendly pawn on the same flank. A king without flank pawns is
+    // structurally exposed regardless of attack-count.
+    Score PawnlessFlank;
+
+    // King flank attack: per-square weight folded into the king-danger
+    // accumulator for every square on the 3-file band centred on our
+    // king and on our half of the board (relative ranks 0-3) that the
+    // enemy attacks. KingFlankAttack credits squares attacked at least
+    // once; KingFlankAttack2 adds an extra weight for squares the enemy
+    // attacks twice or more. KingFlankDefense subtracts a small weight
+    // per flank square our own pieces also defend.
+    Score KingFlankAttack;
+    Score KingFlankAttack2;
+    Score KingFlankDefense;
+
+    // Constant term added to the king-danger accumulator. Combined with
+    // the multi-attacker gate this gives the quadratic a non-zero
+    // baseline so the curve is anchored above zero from the first
+    // attacker.
+    Score KingDangerConstant;
 
     // Flat discount subtracted from the king-danger accumulator when the
     // attacking side has no queen on the board.

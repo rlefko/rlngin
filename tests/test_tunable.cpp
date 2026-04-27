@@ -13,7 +13,7 @@ TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     // Sixty three is the committed SPSA surface after dropping the two
     // pawn-islands penalty halves. If this count ever changes, the SPSA
     // driver's iteration budget and the PR description should move too.
-    REQUIRE(specs.size() == 62);
+    REQUIRE(specs.size() == 66);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {
