@@ -110,34 +110,101 @@ static std::vector<ParamRef> collectParams() {
         if (eg) out.push_back({name + ".eg", s, false, bounds});
     };
 
-    // --- Threats ---
-    addMgEg("ThreatByPawn", &evalParams.ThreatByPawn);
+    // --- Threats: every term here is a true bonus on attacker side, so
+    // none of them should ever go negative regardless of corpus drift.
+    addMgEgConstr("ThreatByPawn", &evalParams.ThreatByPawn, boundsNonNegative());
     for (int v = Rook; v <= Queen; v++)
-        addMgEg("ThreatByMinor[" + std::to_string(v) + "]", &evalParams.ThreatByMinor[v]);
-    addMgEg("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen]);
-    addMgEg("ThreatByKing", &evalParams.ThreatByKing);
-    addMgEg("Hanging", &evalParams.Hanging);
-    addMgEg("WeakQueen", &evalParams.WeakQueen);
-    addMgEg("SafePawnPush", &evalParams.SafePawnPush);
+        addMgEgConstr("ThreatByMinor[" + std::to_string(v) + "]",
+                      &evalParams.ThreatByMinor[v], boundsNonNegative());
+    addMgEgConstr("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen], boundsNonNegative());
+    addMgEgConstr("ThreatByKing", &evalParams.ThreatByKing, boundsNonNegative());
+    addMgEgConstr("Hanging", &evalParams.Hanging, boundsNonNegative());
+    addMgEgConstr("WeakQueen", &evalParams.WeakQueen, boundsNonNegative());
+    addMgEgConstr("SafePawnPush", &evalParams.SafePawnPush, boundsNonNegative());
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
-    // PassedEnemyKingProxPenalty is stored as a positive magnitude that
-    // the eval subtracts, so the chess prior "enemy king close to our
-    // passer is bad for the passer" maps to keeping the stored value
-    // non-negative. Without the constraint a tuner with a noisy corpus
-    // could flip it to negative and silently invert the term.
+    // Rank chains: more advanced passers carry at least as much weight
+    // as less advanced ones, so support / connected / supported bonuses
+    // are non-decreasing in rank, and PassedBlockedPenalty (stored
+    // negative) is non-increasing in rank (more advanced block hurts
+    // more). PassedEnemyKingProxPenalty is stored as a positive
+    // magnitude the eval subtracts; the prior is monotone non-decreasing
+    // so the storage stays consistent with "closer enemy king = bigger
+    // penalty".
     for (int r = 3; r <= 6; r++) {
-        addMgEg("PassedKingProxBonus[" + std::to_string(r) + "]",
-                &evalParams.PassedKingProxBonus[r], false, true); // eg only
-        out.push_back({"PassedEnemyKingProxPenalty[" + std::to_string(r) + "].eg",
-                       &evalParams.PassedEnemyKingProxPenalty[r], false, boundsNonNegative()});
-        addMgEgConstr("PassedBlockedPenalty[" + std::to_string(r) + "]",
-                      &evalParams.PassedBlockedPenalty[r], boundsNonPositive());
-        addMgEg("PassedSupportedBonus[" + std::to_string(r) + "]",
-                &evalParams.PassedSupportedBonus[r]);
-        addMgEg("ConnectedPassersBonus[" + std::to_string(r) + "]",
-                &evalParams.ConnectedPassersBonus[r]);
+        // PassedKingProxBonus.eg: non-decreasing in rank, plus >= 0.
+        out.push_back({"PassedKingProxBonus[" + std::to_string(r) + "].eg",
+                       &evalParams.PassedKingProxBonus[r], false,
+                       [r] {
+                           Bounds b{0, 1000000};
+                           if (r > 3)
+                               b.lo = std::max(b.lo,
+                                               eg_value(evalParams.PassedKingProxBonus[r - 1]));
+                           if (r < 6)
+                               b.hi = std::min(b.hi,
+                                               eg_value(evalParams.PassedKingProxBonus[r + 1]));
+                           return b;
+                       }});
+        // PassedEnemyKingProxPenalty.eg: stored positive, non-decreasing.
+        out.push_back(
+            {"PassedEnemyKingProxPenalty[" + std::to_string(r) + "].eg",
+             &evalParams.PassedEnemyKingProxPenalty[r], false,
+             [r] {
+                 Bounds b{0, 1000000};
+                 if (r > 3)
+                     b.lo = std::max(b.lo,
+                                     eg_value(evalParams.PassedEnemyKingProxPenalty[r - 1]));
+                 if (r < 6)
+                     b.hi = std::min(b.hi,
+                                     eg_value(evalParams.PassedEnemyKingProxPenalty[r + 1]));
+                 return b;
+             }});
+        // PassedBlockedPenalty: <= 0 and non-increasing in rank.
+        for (bool isMg : {true, false}) {
+            std::string name =
+                "PassedBlockedPenalty[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
+            out.push_back({name, &evalParams.PassedBlockedPenalty[r], isMg, [r, isMg] {
+                               Bounds b{-1000000, 0};
+                               auto half = [&](int idx) {
+                                   return isMg ? mg_value(evalParams.PassedBlockedPenalty[idx])
+                                               : eg_value(evalParams.PassedBlockedPenalty[idx]);
+                               };
+                               if (r > 3) b.hi = std::min(b.hi, half(r - 1));
+                               if (r < 6) b.lo = std::max(b.lo, half(r + 1));
+                               return b;
+                           }});
+        }
+        // PassedSupportedBonus: non-decreasing chain, both halves.
+        for (bool isMg : {true, false}) {
+            std::string name =
+                "PassedSupportedBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
+            out.push_back({name, &evalParams.PassedSupportedBonus[r], isMg, [r, isMg] {
+                               Bounds b;
+                               auto half = [&](int idx) {
+                                   return isMg ? mg_value(evalParams.PassedSupportedBonus[idx])
+                                               : eg_value(evalParams.PassedSupportedBonus[idx]);
+                               };
+                               if (r > 3) b.lo = std::max(b.lo, half(r - 1));
+                               if (r < 6) b.hi = std::min(b.hi, half(r + 1));
+                               return b;
+                           }});
+        }
+        // ConnectedPassersBonus: non-decreasing chain, both halves.
+        for (bool isMg : {true, false}) {
+            std::string name =
+                "ConnectedPassersBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
+            out.push_back({name, &evalParams.ConnectedPassersBonus[r], isMg, [r, isMg] {
+                               Bounds b;
+                               auto half = [&](int idx) {
+                                   return isMg ? mg_value(evalParams.ConnectedPassersBonus[idx])
+                                               : eg_value(evalParams.ConnectedPassersBonus[idx]);
+                               };
+                               if (r > 3) b.lo = std::max(b.lo, half(r - 1));
+                               if (r < 6) b.hi = std::min(b.hi, half(r + 1));
+                               return b;
+                           }});
+        }
     }
 
     addMgEg("RookOn7thBonus", &evalParams.RookOn7thBonus);
@@ -197,22 +264,74 @@ static std::vector<ParamRef> collectParams() {
     }
 
     // --- Passed pawn base bonus and connected pawn bonus (ranks 1..6
-    // carry non-zero defaults; rank 0/7 stay at zero). ---
-    for (int r = 1; r <= 6; r++)
-        addMgEg("PassedPawnBonus[" + std::to_string(r) + "]", &evalParams.PassedPawnBonus[r]);
-    for (int r = 1; r <= 6; r++)
-        addMgEg("ConnectedPawnBonus[" + std::to_string(r) + "]", &evalParams.ConnectedPawnBonus[r]);
+    // carry non-zero defaults; rank 0/7 stay at zero). Both arrays
+    // enforce non-decreasing chains in rank: an advanced passer is
+    // never less valuable than a less advanced one. The mg defaults at
+    // ranks 1..2 may be slightly negative (early-promotion exposure
+    // costs), so the lo bound is the previous neighbor, not zero.
+    for (int r = 1; r <= 6; r++) {
+        for (bool isMg : {true, false}) {
+            std::string name = "PassedPawnBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
+            out.push_back({name, &evalParams.PassedPawnBonus[r], isMg, [r, isMg] {
+                               Bounds b;
+                               auto half = [&](int idx) {
+                                   return isMg ? mg_value(evalParams.PassedPawnBonus[idx])
+                                               : eg_value(evalParams.PassedPawnBonus[idx]);
+                               };
+                               if (r > 1) b.lo = std::max(b.lo, half(r - 1));
+                               if (r < 6) b.hi = std::min(b.hi, half(r + 1));
+                               return b;
+                           }});
+        }
+    }
+    for (int r = 1; r <= 6; r++) {
+        for (bool isMg : {true, false}) {
+            std::string name =
+                "ConnectedPawnBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
+            out.push_back({name, &evalParams.ConnectedPawnBonus[r], isMg, [r, isMg] {
+                               Bounds b;
+                               auto half = [&](int idx) {
+                                   return isMg ? mg_value(evalParams.ConnectedPawnBonus[idx])
+                                               : eg_value(evalParams.ConnectedPawnBonus[idx]);
+                               };
+                               if (r > 1) b.lo = std::max(b.lo, half(r - 1));
+                               if (r < 6) b.hi = std::min(b.hi, half(r + 1));
+                               return b;
+                           }});
+        }
+    }
 
-    // --- Rook files, outposts, trapped rook ---
-    addMgEg("RookOpenFileBonus", &evalParams.RookOpenFileBonus);
-    addMgEg("RookSemiOpenFileBonus", &evalParams.RookSemiOpenFileBonus);
-    addMgEg("KnightOutpostBonus", &evalParams.KnightOutpostBonus);
-    addMgEg("BishopOutpostBonus", &evalParams.BishopOutpostBonus);
+    // --- Rook files: open file is at least as good as semi-open, both
+    // non-negative. Cross-field chain implemented as bounds that read
+    // the sibling Score's matching half.
+    for (bool isMg : {true, false}) {
+        out.push_back({isMg ? "RookOpenFileBonus.mg" : "RookOpenFileBonus.eg",
+                       &evalParams.RookOpenFileBonus, isMg, [isMg] {
+                           Bounds b;
+                           int semi = isMg ? mg_value(evalParams.RookSemiOpenFileBonus)
+                                           : eg_value(evalParams.RookSemiOpenFileBonus);
+                           b.lo = std::max(b.lo, semi);
+                           return b;
+                       }});
+        out.push_back({isMg ? "RookSemiOpenFileBonus.mg" : "RookSemiOpenFileBonus.eg",
+                       &evalParams.RookSemiOpenFileBonus, isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int open = isMg ? mg_value(evalParams.RookOpenFileBonus)
+                                           : eg_value(evalParams.RookOpenFileBonus);
+                           b.hi = std::min(b.hi, open);
+                           return b;
+                       }});
+    }
+    addMgEgConstr("KnightOutpostBonus", &evalParams.KnightOutpostBonus, boundsNonNegative());
+    addMgEgConstr("BishopOutpostBonus", &evalParams.BishopOutpostBonus, boundsNonNegative());
     out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
                    boundsNonPositive()}); // mg only, must stay a penalty
-    addMgEg("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus);
-    addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus);
-    addMgEg("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus);
+    // Tarrasch's-rule rook-behind-passer: pure bonus on either side.
+    addMgEgConstr("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus,
+                  boundsNonNegative());
+    addMgEgConstr("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus,
+                  boundsNonNegative());
+    addMgEgConstr("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus, boundsNonNegative());
     // King-ring pressure: a piece whose attack set intersects the enemy
     // king zone is a positive influence on our score by definition.
     // Locked non-negative so the tuner cannot use these terms as a
@@ -226,9 +345,29 @@ static std::vector<ParamRef> collectParams() {
     // role that contradicts the prior.
     addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
 
-    // --- Pawn shield and storm, king-zone scalars ---
-    for (int i = 0; i < 2; i++)
-        addMgEg("PawnShieldBonus[" + std::to_string(i) + "]", &evalParams.PawnShieldBonus[i]);
+    // --- Pawn shield: both halves stay non-negative, plus a chain
+    // [0] >= [1] (back-rank shield is at least as valuable as rank-3
+    // shield). Both halves remain tunable so endgame data still gets
+    // a say; the chain stops the tuner from treating a more advanced
+    // shield as more valuable than the back-rank one.
+    for (bool isMg : {true, false}) {
+        out.push_back({isMg ? "PawnShieldBonus[0].mg" : "PawnShieldBonus[0].eg",
+                       &evalParams.PawnShieldBonus[0], isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int next = isMg ? mg_value(evalParams.PawnShieldBonus[1])
+                                           : eg_value(evalParams.PawnShieldBonus[1]);
+                           b.lo = std::max(b.lo, next);
+                           return b;
+                       }});
+        out.push_back({isMg ? "PawnShieldBonus[1].mg" : "PawnShieldBonus[1].eg",
+                       &evalParams.PawnShieldBonus[1], isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int prev = isMg ? mg_value(evalParams.PawnShieldBonus[0])
+                                           : eg_value(evalParams.PawnShieldBonus[0]);
+                           b.hi = std::min(b.hi, prev);
+                           return b;
+                       }});
+    }
     for (int i = 0; i < 5; i++) {
         // Consumed with `scores -= <Blocked|Unblocked>PawnStorm[idx]`, so
         // magnitudes must stay non-negative to preserve the "enemy advance
@@ -238,9 +377,19 @@ static std::vector<ParamRef> collectParams() {
         out.push_back({"UnblockedPawnStorm[" + std::to_string(i) + "].mg",
                        &evalParams.UnblockedPawnStorm[i], true, boundsNonNegative()});
     }
-    out.push_back({"SemiOpenFileNearKing.mg", &evalParams.SemiOpenFileNearKing, true,
-                   boundsNonPositive()});
-    out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, boundsNonPositive()});
+    // King-zone files: open file is at least as bad as semi-open; both
+    // are penalties (<= 0). Chain enforced so the tuner cannot end up
+    // with semi-open scoring worse than open.
+    out.push_back({"SemiOpenFileNearKing.mg", &evalParams.SemiOpenFileNearKing, true, [] {
+                       Bounds b{-1000000, 0};
+                       b.lo = std::max(b.lo, mg_value(evalParams.OpenFileNearKing));
+                       return b;
+                   }});
+    out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, [] {
+                       Bounds b{-1000000, 0};
+                       b.hi = std::min(b.hi, mg_value(evalParams.SemiOpenFileNearKing));
+                       return b;
+                   }});
     addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, boundsNonPositive());
     // KingSafeSqPenalty: each slot must stay a penalty (<= 0), and the
     // chain is monotonically non-decreasing -- more safe king-move
@@ -269,17 +418,96 @@ static std::vector<ParamRef> collectParams() {
                        &evalParams.KingSafeSqPenalty[i], false, egChain});
     }
 
-    // --- King-danger accumulator weights. Each per-attacker weight feeds
-    // the quadratic king-danger term; non-negative so an extra attacker
-    // never reduces danger. KingNoQueenDiscount is subtracted from the
-    // accumulator, so its magnitude must also stay non-negative.
-    addMgEgConstr("KingAttackByKnight", &evalParams.KingAttackByKnight, boundsNonNegative());
-    addMgEgConstr("KingAttackByBishop", &evalParams.KingAttackByBishop, boundsNonNegative());
-    addMgEgConstr("KingAttackByRook", &evalParams.KingAttackByRook, boundsNonNegative());
-    addMgEgConstr("KingAttackByQueen", &evalParams.KingAttackByQueen, boundsNonNegative());
-    for (int pt = Knight; pt <= Queen; pt++) {
-        addMgEgConstr("KingSafeCheck[" + std::to_string(pt) + "]",
-                      &evalParams.KingSafeCheck[pt], boundsNonNegative());
+    // --- King-danger accumulator weights. Each per-attacker weight
+    // feeds the quadratic king-danger term, so all are non-negative.
+    // Cross-field piece ordering: queen attack is at least as dangerous
+    // as rook, and rook is at least as dangerous as either minor. Same
+    // ordering for safe-checks. Without these chains the tuner has been
+    // pushing queen weight below rook on this corpus, which the chess
+    // prior does not allow.
+    auto kingAttackBounds = [](Score *self, Score *atLeast, Score *atMost, bool isMg) {
+        return [self, atLeast, atMost, isMg] {
+            Bounds b{0, 1000000};
+            (void)self;
+            if (atLeast)
+                b.lo = std::max(b.lo, isMg ? mg_value(*atLeast) : eg_value(*atLeast));
+            if (atMost)
+                b.hi = std::min(b.hi, isMg ? mg_value(*atMost) : eg_value(*atMost));
+            return b;
+        };
+    };
+    for (bool isMg : {true, false}) {
+        // Knight and Bishop: bounded above by Rook (sibling minor floor
+        // stays unconstrained so the two minors can rebalance freely).
+        out.push_back({isMg ? "KingAttackByKnight.mg" : "KingAttackByKnight.eg",
+                       &evalParams.KingAttackByKnight, isMg,
+                       kingAttackBounds(&evalParams.KingAttackByKnight, nullptr,
+                                        &evalParams.KingAttackByRook, isMg)});
+        out.push_back({isMg ? "KingAttackByBishop.mg" : "KingAttackByBishop.eg",
+                       &evalParams.KingAttackByBishop, isMg,
+                       kingAttackBounds(&evalParams.KingAttackByBishop, nullptr,
+                                        &evalParams.KingAttackByRook, isMg)});
+        // Rook: at least max(Knight, Bishop), at most Queen.
+        out.push_back({isMg ? "KingAttackByRook.mg" : "KingAttackByRook.eg",
+                       &evalParams.KingAttackByRook, isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int knight = isMg ? mg_value(evalParams.KingAttackByKnight)
+                                             : eg_value(evalParams.KingAttackByKnight);
+                           int bishop = isMg ? mg_value(evalParams.KingAttackByBishop)
+                                             : eg_value(evalParams.KingAttackByBishop);
+                           int queen = isMg ? mg_value(evalParams.KingAttackByQueen)
+                                            : eg_value(evalParams.KingAttackByQueen);
+                           b.lo = std::max({b.lo, knight, bishop});
+                           b.hi = std::min(b.hi, queen);
+                           return b;
+                       }});
+        // Queen: at least Rook (heaviest attacker bound).
+        out.push_back({isMg ? "KingAttackByQueen.mg" : "KingAttackByQueen.eg",
+                       &evalParams.KingAttackByQueen, isMg,
+                       kingAttackBounds(&evalParams.KingAttackByQueen,
+                                        &evalParams.KingAttackByRook, nullptr, isMg)});
+    }
+    // KingSafeCheck: same ordering by piece weight. Knight and Bishop
+    // capped above by Rook; Rook between max(minors) and Queen; Queen
+    // bounded below by Rook.
+    for (bool isMg : {true, false}) {
+        out.push_back({"KingSafeCheck[2]." + std::string(isMg ? "mg" : "eg"),
+                       &evalParams.KingSafeCheck[2], isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int rook = isMg ? mg_value(evalParams.KingSafeCheck[4])
+                                           : eg_value(evalParams.KingSafeCheck[4]);
+                           b.hi = std::min(b.hi, rook);
+                           return b;
+                       }});
+        out.push_back({"KingSafeCheck[3]." + std::string(isMg ? "mg" : "eg"),
+                       &evalParams.KingSafeCheck[3], isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int rook = isMg ? mg_value(evalParams.KingSafeCheck[4])
+                                           : eg_value(evalParams.KingSafeCheck[4]);
+                           b.hi = std::min(b.hi, rook);
+                           return b;
+                       }});
+        out.push_back({"KingSafeCheck[4]." + std::string(isMg ? "mg" : "eg"),
+                       &evalParams.KingSafeCheck[4], isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int knight = isMg ? mg_value(evalParams.KingSafeCheck[2])
+                                             : eg_value(evalParams.KingSafeCheck[2]);
+                           int bishop = isMg ? mg_value(evalParams.KingSafeCheck[3])
+                                             : eg_value(evalParams.KingSafeCheck[3]);
+                           int queen = isMg ? mg_value(evalParams.KingSafeCheck[5])
+                                            : eg_value(evalParams.KingSafeCheck[5]);
+                           b.lo = std::max({b.lo, knight, bishop});
+                           b.hi = std::min(b.hi, queen);
+                           return b;
+                       }});
+        out.push_back({"KingSafeCheck[5]." + std::string(isMg ? "mg" : "eg"),
+                       &evalParams.KingSafeCheck[5], isMg, [isMg] {
+                           Bounds b{0, 1000000};
+                           int rook = isMg ? mg_value(evalParams.KingSafeCheck[4])
+                                           : eg_value(evalParams.KingSafeCheck[4]);
+                           b.lo = std::max(b.lo, rook);
+                           return b;
+                       }});
     }
     addMgEgConstr("KingRingWeakWeight", &evalParams.KingRingWeakWeight, boundsNonNegative());
     addMgEgConstr("KingNoQueenDiscount", &evalParams.KingNoQueenDiscount, boundsNonNegative());
@@ -298,11 +526,20 @@ static std::vector<ParamRef> collectParams() {
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
     // --- Central pawn occupancy. Eg structurally zero per
-    // eval_params.h:184; only the mg half is exposed.
-    out.push_back({"CentralPawnBonus[0].mg", &evalParams.CentralPawnBonus[0], true,
-                   boundsNonNegative()});
-    out.push_back({"CentralPawnBonus[1].mg", &evalParams.CentralPawnBonus[1], true,
-                   boundsNonNegative()});
+    // eval_params.h:184; only the mg half is exposed. Chain prior:
+    // primary center (d4/e4 for white) is at least as valuable as
+    // extended center (c4/f4) since the primary squares more directly
+    // contest the centerlock. Both halves stay non-negative.
+    out.push_back({"CentralPawnBonus[0].mg", &evalParams.CentralPawnBonus[0], true, [] {
+                       Bounds b{0, 1000000};
+                       b.lo = std::max(b.lo, mg_value(evalParams.CentralPawnBonus[1]));
+                       return b;
+                   }});
+    out.push_back({"CentralPawnBonus[1].mg", &evalParams.CentralPawnBonus[1], true, [] {
+                       Bounds b{0, 1000000};
+                       b.hi = std::min(b.hi, mg_value(evalParams.CentralPawnBonus[0]));
+                       return b;
+                   }});
 
     // --- Bishop long diagonal sweep ---
     addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus, boundsNonNegative());
@@ -319,17 +556,24 @@ static std::vector<ParamRef> collectParams() {
     out.push_back({"InitiativeTension.eg", &evalParams.InitiativeTension, false, boundsNonNegative()});
     out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
                    boundsNonNegative()});
+    // InitiativePureBase fires only in pure-pawn endgames; it is a
+    // binary feature that can absorb a lot of correlation if left
+    // unbounded. Cap at 48 (~2.5x the original default of 18) to keep
+    // it from acting as a residual sink for the rest of the eg eval.
     out.push_back({"InitiativePureBase.eg", &evalParams.InitiativePureBase, false,
-                   boundsNonNegative()});
+                   boundsRange(0, 48)});
+    // InitiativeConstant is the negative baseline shift; force it to
+    // stay strictly negative so the Initiative system does not
+    // collapse the baseline into the other six features.
     out.push_back({"InitiativeConstant.eg", &evalParams.InitiativeConstant, false,
-                   boundsNonPositive()});
+                   boundsRange(-1000000, -1)});
 
-    // --- Slider on queen x-ray ---
-    addMgEg("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop);
-    addMgEg("SliderOnQueenRook", &evalParams.SliderOnQueenRook);
+    // --- Slider on queen x-ray: pure bonus, both halves >= 0.
+    addMgEgConstr("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop, boundsNonNegative());
+    addMgEgConstr("SliderOnQueenRook", &evalParams.SliderOnQueenRook, boundsNonNegative());
 
-    // --- Restricted piece ---
-    addMgEg("RestrictedPiece", &evalParams.RestrictedPiece);
+    // --- Restricted piece: rewards mutual attack on enemy non-pawns.
+    addMgEgConstr("RestrictedPiece", &evalParams.RestrictedPiece, boundsNonNegative());
 
     return out;
 }
