@@ -270,6 +270,13 @@ struct EvalParams {
     // Pawn-defended squares are excluded because our attacker is already
     // outvalued there and the recapture is immediate.
     Score RestrictedPiece;
+
+    // Bonus per safe pawn push whose attack footprint covers a square
+    // in the enemy king ring. SafePawnPush already credits pushes that
+    // hit a concrete enemy non-pawn / non-king piece victim; this term
+    // catches the orthogonal case where the push threatens empty king
+    // ring squares (a forthcoming break) that no piece victim covers.
+    Score PushAttackKingRing;
 };
 
 extern EvalParams evalParams;

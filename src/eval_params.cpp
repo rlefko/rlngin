@@ -209,6 +209,8 @@ static const EvalParams kDefaultEvalParams = {
     S(20, 10), // SliderOnQueenRook
 
     S( 2,  1), // RestrictedPiece
+
+    S(12, 6), // PushAttackKingRing
 };
 // clang-format on
 

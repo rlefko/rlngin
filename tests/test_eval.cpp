@@ -1309,6 +1309,28 @@ TEST_CASE("Eval: rook on the enemy king file scores above a rook on a neutral fi
     CHECK(kingFileMg - neutralFileMg >= 25);
 }
 
+TEST_CASE("Eval: safe pawn push that lights up the enemy king ring earns credit",
+          "[eval][threats]") {
+    Board board;
+
+    // White pawn on g4 with the black king parked on h8: pushing to g5
+    // plants a pawn whose attack footprint (f6/h6) covers an enemy
+    // king-ring square even though no piece victim sits there. The
+    // push lane g5 is empty and unattacked by black, so the push is
+    // safe.
+    board.setFen("7k/8/8/8/6P1/8/8/4K3 w - - 0 1");
+    int withPush = evaluate(board);
+
+    Score saved = evalParams.PushAttackKingRing;
+    evalParams.PushAttackKingRing = 0;
+    int withoutPush = evaluate(board);
+    evalParams.PushAttackKingRing = saved;
+
+    // The new term is bonus-signed for the side whose push threatens
+    // the enemy ring, so toggling it on must improve White's eval.
+    CHECK(withPush > withoutPush);
+}
+
 TEST_CASE("Eval: king flank attack feeds the king-danger accumulator", "[eval][king-safety]") {
     Board board;
 

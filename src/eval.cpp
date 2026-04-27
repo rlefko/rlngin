@@ -1361,6 +1361,19 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard pushVictims =
             pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
         scores[us] += evalParams.SafePawnPush * popcount(pushVictims);
+
+        // Push attack on enemy king ring: a safe push whose post-push
+        // pawn attack footprint covers a square in the enemy king ring
+        // signals an imminent line-opening break against the king. This
+        // is orthogonal to SafePawnPush, which only credits pushes that
+        // attack a concrete piece victim; an empty king-ring square
+        // never produced a victim and thus never scored before.
+        Bitboard theirKingBBPush = board.byPiece[King] & board.byColor[them];
+        if (theirKingBBPush) {
+            Bitboard kZoneThem = kingZoneBB(lsb(theirKingBBPush), them);
+            Bitboard ringFootprint = pawnAttacksBB(safePushes, us) & kZoneThem;
+            scores[us] += evalParams.PushAttackKingRing * popcount(ringFootprint);
+        }
     }
 }
 
