@@ -1309,6 +1309,65 @@ TEST_CASE("Eval: rook on the enemy king file scores above a rook on a neutral fi
     CHECK(kingFileMg - neutralFileMg >= 25);
 }
 
+TEST_CASE("Eval: rook attacking an enemy minor scores a threat bonus", "[eval][threats]") {
+    Board board;
+
+    // White rook on d1 attacks the black knight on d5; the rook is the
+    // less-valuable in this confrontation only by the threat-table
+    // convention but the pin shape itself is a tactical win because the
+    // black knight is undefended.
+    board.setFen("4k3/8/8/3n4/8/8/8/3RK3 w - - 0 1");
+    int withRookOnMinor = evaluate(board);
+
+    // Same position with the threat slot zeroed: any score delta
+    // isolates the new ThreatByRook[Knight] contribution.
+    Score saved = evalParams.ThreatByRook[Knight];
+    evalParams.ThreatByRook[Knight] = 0;
+    int withoutRookOnMinor = evaluate(board);
+    evalParams.ThreatByRook[Knight] = saved;
+
+    CHECK(withRookOnMinor > withoutRookOnMinor);
+}
+
+TEST_CASE("Eval: minor attacking a weakly defended enemy minor scores a threat bonus",
+          "[eval][threats]") {
+    Board board;
+
+    // White knight on c3 attacks the black bishop on d5; the bishop is
+    // not pawn-defended, so the minor-on-minor threat slot fires.
+    board.setFen("4k3/8/8/3b4/8/2N5/8/4K3 w - - 0 1");
+    int withMinorOnMinor = evaluate(board);
+
+    Score saved = evalParams.ThreatByMinor[Bishop];
+    evalParams.ThreatByMinor[Bishop] = 0;
+    int withoutMinorOnMinor = evaluate(board);
+    evalParams.ThreatByMinor[Bishop] = saved;
+
+    CHECK(withMinorOnMinor > withoutMinorOnMinor);
+}
+
+TEST_CASE("Eval: minor on minor threat does not fire when the victim is pawn-defended",
+          "[eval][threats]") {
+    Board board;
+
+    // Same minor-on-minor shape but with a black pawn on e6 defending
+    // the bishop on d5. The pawn-defended filter must zero the
+    // ThreatByMinor[Bishop] slot to avoid crediting a trade-losing
+    // tactic.
+    board.setFen("4k3/8/4p3/3b4/8/2N5/8/4K3 w - - 0 1");
+    int normal = evaluate(board);
+
+    Score saved = evalParams.ThreatByMinor[Bishop];
+    evalParams.ThreatByMinor[Bishop] = 0;
+    int withZeroed = evaluate(board);
+    evalParams.ThreatByMinor[Bishop] = saved;
+
+    // Toggling the slot must leave the eval unchanged because the
+    // pawn-defended filter has already excluded the bishop from the
+    // victim set.
+    CHECK(normal == withZeroed);
+}
+
 TEST_CASE("Eval: safe pawn push that lights up the enemy king ring earns credit",
           "[eval][threats]") {
     Board board;

@@ -18,8 +18,8 @@
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
     S(177, 126), // ThreatByPawn  (Texel-tuned; SPSA's proposal was reverted)
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(131, 57), S(131, 88), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(168, 138), S(0, 0)},
+    {S(0, 0), S(0, 0), S(15, 25), S(15, 25), S(131, 57), S(131, 88), S(0, 0)},
+    {S(0, 0), S(0, 0), S(40, 35), S(40, 35), S(0, 0), S(168, 138), S(0, 0)},
     S(124, 62), // ThreatByKing
     S(29, -5),  // Hanging       (Texel-tuned; SPSA's proposal was reverted)
     S(53, 29),  // WeakQueen

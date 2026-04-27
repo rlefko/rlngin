@@ -1264,16 +1264,31 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
 
         // Threat by minor: our knights or bishops attacking an enemy rook
         // or queen. Index by the victim so the table naturally zeroes out
-        // same-value targets and we never credit minor-on-minor threats.
+        // same-value targets. Minor on minor only counts when the victim
+        // is not pawn-defended; otherwise the tactical "threat" loses
+        // material to the recapture and false positives swamp the term.
         Bitboard minorAttacks = ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop];
         Bitboard victims = minorAttacks & theirPieces;
+        Bitboard minorVsKnight = victims & board.byPiece[Knight] & ~ctx.pawnAttacks[them];
+        Bitboard minorVsBishop = victims & board.byPiece[Bishop] & ~ctx.pawnAttacks[them];
         Bitboard minorVsRook = victims & board.byPiece[Rook];
         Bitboard minorVsQueen = victims & board.byPiece[Queen];
+        scores[us] += evalParams.ThreatByMinor[Knight] * popcount(minorVsKnight);
+        scores[us] += evalParams.ThreatByMinor[Bishop] * popcount(minorVsBishop);
         scores[us] += evalParams.ThreatByMinor[Rook] * popcount(minorVsRook);
         scores[us] += evalParams.ThreatByMinor[Queen] * popcount(minorVsQueen);
 
-        // Threat by rook: our rooks attacking an enemy queen.
-        Bitboard rookVsQueen = ctx.attackedBy[us][Rook] & theirPieces & board.byPiece[Queen];
+        // Threat by rook: our rooks attacking an enemy minor or queen.
+        // The minor variant covers a clean tactical win since minors are
+        // strictly less valuable than rooks; no pawn-defended filter is
+        // needed because the eval-grid material imbalance survives even
+        // when the recapture happens.
+        Bitboard rookVictims = ctx.attackedBy[us][Rook] & theirPieces;
+        Bitboard rookVsKnight = rookVictims & board.byPiece[Knight];
+        Bitboard rookVsBishop = rookVictims & board.byPiece[Bishop];
+        Bitboard rookVsQueen = rookVictims & board.byPiece[Queen];
+        scores[us] += evalParams.ThreatByRook[Knight] * popcount(rookVsKnight);
+        scores[us] += evalParams.ThreatByRook[Bishop] * popcount(rookVsBishop);
         scores[us] += evalParams.ThreatByRook[Queen] * popcount(rookVsQueen);
 
         // Threat by king: enemy pieces sitting on a square our king attacks
