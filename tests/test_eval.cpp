@@ -396,12 +396,15 @@ TEST_CASE("Eval: rear doubled pawn does not get passed bonus", "[eval][pawn]") {
 TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][pawn]") {
     Board board;
 
-    // Two white pawns side by side (phalanx) on d4, e4
-    board.setFen("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
+    // White phalanx on b3 and c3: each pawn defended by its file
+    // neighbour, ConnectedPawnBonus fires.
+    board.setFen("4k3/8/8/8/8/1PP5/8/4K3 w - - 0 1");
     int connected = evaluate(board);
 
-    // Two white pawns far apart (a4, h4), both isolated
-    board.setFen("4k3/8/8/8/P6P/8/8/4K3 w - - 0 1");
+    // Same number of pawns (a3, c3) with the b3 file empty so neither
+    // pawn has a friendly neighbour. Both pawns become isolated; the
+    // ConnectedPawnBonus does not fire and IsolatedPawnPenalty does.
+    board.setFen("4k3/8/8/8/8/P1P5/8/4K3 w - - 0 1");
     int disconnected = evaluate(board);
 
     CHECK(connected > disconnected);
@@ -479,12 +482,11 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
 
     // Textbook K + P vs K with an outside passed pawn: white is winning
     // and the score should not be dragged down by treating the "no
-    // opposing pawn" feature as a weakness. The PawnlessFlank penalty
-    // fires asymmetrically here because Black has no pawns at all,
-    // which boosts White's relative eval beyond the pre-pawnless-flank
-    // baseline; the term is correct so the value moves with it.
+    // opposing pawn" feature as a weakness. PawnlessFlank now tests
+    // pawns of either color on the flank, and the d4 pawn covers the
+    // center flank for both kings, so the term does not fire here.
     board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
-    CHECK(evaluate(board) == 384);
+    CHECK(evaluate(board) == 288);
 }
 
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {

@@ -893,15 +893,16 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         kingDangerEg += flankDefense * eg_value(evalParams.KingFlankDefense);
 
         // Pawnless flank: penalty applied directly to the position score
-        // when our king has no friendly pawn on its flank (kingside,
-        // queenside, or center band depending on king file). Independent
-        // of attacker-count gating because the structural exposure
-        // exists regardless of whether the enemy currently attacks.
+        // when the king's flank has no pawns at all of either color.
+        // The structural void of pawn cover is what makes the king
+        // vulnerable; enemy pawns on the flank, while not friendly
+        // shelter, still occupy the flank and remove the void shape
+        // (they are also potential attack pieces themselves).
         Bitboard ourPawnsAll = board.byPiece[Pawn] & board.byColor[us];
         Bitboard flankFiles = (kingFile <= 2)   ? (FileABB | FileBBB | FileCBB)
                               : (kingFile <= 4) ? (FileCBB | FileDBB | FileEBB | FileFBB)
                                                 : (FileFBB | FileGBB | FileHBB);
-        if (!(ourPawnsAll & flankFiles)) {
+        if (!(board.byPiece[Pawn] & flankFiles)) {
             scores[us] += evalParams.PawnlessFlank;
         }
 
