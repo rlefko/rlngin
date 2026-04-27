@@ -609,8 +609,12 @@ static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]
             // to us) on a square outside the enemy pawn span. The queen
             // is exposed to gain-of-tempo harassment by minor pieces, so
             // the term is signed to penalize the queen for sitting there.
+            // PawnSpanMask[c][sq] is "adjacent files ahead of us" -- the
+            // squares from which an enemy pawn could ever attack the
+            // queen by advancing. The previous index [c ^ 1] returned
+            // squares behind the queen and silently no-oped the term.
             int relRank = relativeRank(static_cast<Color>(c), sq);
-            if (relRank >= 4 && !(PawnSpanMask[c ^ 1][sq] & theirPawns)) {
+            if (relRank >= 4 && !(PawnSpanMask[c][sq] & theirPawns)) {
                 scores[c] += evalParams.QueenInfiltration;
             }
         }
