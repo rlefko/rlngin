@@ -756,7 +756,25 @@ int main(int argc, char **argv) {
     auto usage = [] {
         std::cerr << "usage: tune [--from <ckpt>] <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
+        std::cerr << "       tune --dump <ckpt>\n";
     };
+
+    // Dump subcommand: load a checkpoint and emit the printCurrentValues
+    // initializer to stdout. Useful for snapshotting an in-flight tune
+    // without disturbing it - the running tuner writes a checkpoint after
+    // every pass, so this gives a clean handoff point.
+    if (argc >= 2 && std::string(argv[1]) == "--dump") {
+        if (argc < 3) {
+            usage();
+            return 1;
+        }
+        zobrist::init();
+        initBitboards();
+        auto params = collectParams();
+        loadCheckpoint(argv[2], params);
+        printCurrentValues();
+        return 0;
+    }
 
     // Replay subcommand: parse a previous tune.log and write a checkpoint
     // that captures every accepted clamp / coordinate-descent step.
