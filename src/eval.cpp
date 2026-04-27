@@ -866,6 +866,27 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         kingDangerMg += popcount(safeQueenChecks) * mg_value(evalParams.KingSafeCheck[Queen]);
         kingDangerEg += popcount(safeQueenChecks) * eg_value(evalParams.KingSafeCheck[Queen]);
 
+        // King flank attack: count squares on the 3-file band centred
+        // on our king and on our half of the board (relative ranks 0-3)
+        // that the enemy attacks. A second weight kicks in for squares
+        // attacked at least twice. This is a coarser, larger-area
+        // signal than the king-ring terms above and fires earlier in
+        // an incoming attack; reuses ctx.allAttacks and ctx.attackedBy2
+        // so no extra attack generation runs.
+        Bitboard fileBand = 0;
+        for (int f = std::max(0, kingFile - 1); f <= std::min(7, kingFile + 1); f++) {
+            fileBand |= FileBB[f];
+        }
+        Bitboard ourHalf = (us == White) ? (Rank1BB | Rank2BB | Rank3BB | Rank4BB)
+                                         : (Rank5BB | Rank6BB | Rank7BB | Rank8BB);
+        Bitboard flank = fileBand & ourHalf;
+        int flankAttacks = popcount(flank & ctx.allAttacks[them]);
+        int flankAttacks2 = popcount(flank & ctx.attackedBy2[them]);
+        kingDangerMg += flankAttacks * mg_value(evalParams.KingFlankAttack);
+        kingDangerEg += flankAttacks * eg_value(evalParams.KingFlankAttack);
+        kingDangerMg += flankAttacks2 * mg_value(evalParams.KingFlankAttack2);
+        kingDangerEg += flankAttacks2 * eg_value(evalParams.KingFlankAttack2);
+
         // No-queen discount: the attack loses most of its bite when the
         // attacking side has no queen left on the board.
         if (!(board.byPiece[Queen] & board.byColor[them])) {

@@ -147,6 +147,18 @@ struct EvalParams {
     // attacking side has no queen on the board.
     Score KingNoQueenDiscount;
 
+    // King flank attack: per-square weight folded into the king-danger
+    // accumulator for every square on the 3-file band centred on our
+    // king and on our half of the board (relative ranks 0-3) that the
+    // enemy attacks. KingFlankAttack credits squares attacked at least
+    // once; KingFlankAttack2 adds an extra weight for squares the
+    // enemy attacks twice or more. Distinct from UndefendedKingZoneSq
+    // and KingRingWeakWeight which look at the small king ring only;
+    // the flank covers the full file band on our side and is an
+    // earlier warning signal for an incoming attack.
+    Score KingFlankAttack;
+    Score KingFlankAttack2;
+
     // Pawn-structure penalties.
     Score IsolatedPawnPenalty;
     Score DoubledPawnPenalty;

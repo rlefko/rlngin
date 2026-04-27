@@ -168,6 +168,9 @@ static const EvalParams kDefaultEvalParams = {
     S(6, 0),  // KingRingWeakWeight
     S(36, 0), // KingNoQueenDiscount
 
+    S(4, 0), // KingFlankAttack
+    S(6, 0), // KingFlankAttack2
+
     S(-15, -24), // IsolatedPawnPenalty
     S(  0, -83), // DoubledPawnPenalty
     S(-13, -36), // BackwardPawnPenalty

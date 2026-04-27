@@ -1309,6 +1309,32 @@ TEST_CASE("Eval: rook on the enemy king file scores above a rook on a neutral fi
     CHECK(kingFileMg - neutralFileMg >= 25);
 }
 
+TEST_CASE("Eval: king flank attack feeds the king-danger accumulator", "[eval][king-safety]") {
+    Board board;
+
+    // White king on g1, two black knights and a black queen lighting up
+    // the kingside flank. attackerCount >= 2 satisfies the king-danger
+    // gate so the flank attack contribution actually scales the
+    // quadratic mg penalty.
+    board.setFen("4k3/8/8/8/3q4/2n2n2/6PP/5RK1 w - - 0 1");
+    int withFlank = evaluate(board);
+
+    // Same position with both flank weights zeroed: the rest of the
+    // king-danger machinery is unchanged so any score delta isolates
+    // the new flank-attack credit.
+    Score savedFlank = evalParams.KingFlankAttack;
+    Score savedFlank2 = evalParams.KingFlankAttack2;
+    evalParams.KingFlankAttack = 0;
+    evalParams.KingFlankAttack2 = 0;
+    int withoutFlank = evaluate(board);
+    evalParams.KingFlankAttack = savedFlank;
+    evalParams.KingFlankAttack2 = savedFlank2;
+
+    // Flank attack feeds the king-danger accumulator on White's side,
+    // so adding the credit makes White's evaluation worse.
+    CHECK(withFlank < withoutFlank);
+}
+
 TEST_CASE("Eval: doubled rooks on the same file earn the doubled-rook bonus", "[eval][rook]") {
     Board board;
     board.setFen("4k3/8/8/8/8/8/R7/R6K w - - 0 1");
