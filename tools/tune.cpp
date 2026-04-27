@@ -38,15 +38,25 @@ struct LabeledPosition {
     double result; // 1.0 / 0.5 / 0.0 from White POV
 };
 
-// Accessor for a single mg/eg half of a Score field. `allow` returns
-// whether a proposed new value respects the chess-prior constraints
-// attached to this scalar (sign, monotonicity). Unconstrained params
-// carry a predicate that always returns true.
+// Inclusive integer bounds for a parameter half. The wide defaults are
+// effectively unconstrained while still letting callers safely clamp
+// without overflow when scalars run unbounded.
+struct Bounds {
+    int lo = -1000000;
+    int hi = 1000000;
+};
+
+// Accessor for a single mg/eg half of a Score field. `bounds()` returns
+// the live feasible range, which can read sibling values out of
+// `evalParams` for chain constraints (e.g. mobility neighbors, passer
+// rank chains). `allow()` and `clamp()` derive from `bounds()` so the
+// strict CD predicate, the constraint validator, and the projection
+// clamp all see the same definition of "feasible".
 struct ParamRef {
     std::string name;
     Score *target;
     bool isMg; // true = modify mg half, false = eg half
-    std::function<bool(int)> allow = [](int) { return true; };
+    std::function<Bounds()> bounds = [] { return Bounds{}; };
 
     int read() const {
         return isMg ? mg_value(*target) : eg_value(*target);
@@ -60,14 +70,29 @@ struct ParamRef {
             eg = v;
         *target = S(mg, eg);
     }
+    bool allow(int v) const {
+        Bounds b = bounds();
+        return b.lo <= v && v <= b.hi;
+    }
+    int clampToBounds(int v) const {
+        Bounds b = bounds();
+        return std::max(b.lo, std::min(b.hi, v));
+    }
 };
 
-// Convenience predicates for the constraint catalog.
-static auto nonPositive() {
-    return [](int v) { return v <= 0; };
+// Convenience bounds factories for the constraint catalog. Wider
+// `Bounds{}` defaults stand in for "unconstrained".
+static std::function<Bounds()> boundsAny() {
+    return [] { return Bounds{}; };
 }
-static auto nonNegative() {
-    return [](int v) { return v >= 0; };
+static std::function<Bounds()> boundsNonPositive() {
+    return [] { return Bounds{-1000000, 0}; };
+}
+static std::function<Bounds()> boundsNonNegative() {
+    return [] { return Bounds{0, 1000000}; };
+}
+static std::function<Bounds()> boundsRange(int lo, int hi) {
+    return [lo, hi] { return Bounds{lo, hi}; };
 }
 
 static std::vector<ParamRef> collectParams() {
@@ -76,11 +101,13 @@ static std::vector<ParamRef> collectParams() {
         if (mg) out.push_back({name + ".mg", s, true});
         if (eg) out.push_back({name + ".eg", s, false});
     };
-    // Overload that stamps the same predicate on both halves.
-    auto addMgEgConstr = [&](const std::string &name, Score *s, std::function<bool(int)> allow,
-                             bool mg = true, bool eg = true) {
-        if (mg) out.push_back({name + ".mg", s, true, allow});
-        if (eg) out.push_back({name + ".eg", s, false, allow});
+    // Overload that stamps the same bounds factory on both halves. The
+    // factory is invoked at every constraint check so chain bounds can
+    // read live sibling values without going stale across pass updates.
+    auto addMgEgConstr = [&](const std::string &name, Score *s,
+                             std::function<Bounds()> bounds, bool mg = true, bool eg = true) {
+        if (mg) out.push_back({name + ".mg", s, true, bounds});
+        if (eg) out.push_back({name + ".eg", s, false, bounds});
     };
 
     // --- Threats ---
@@ -104,9 +131,9 @@ static std::vector<ParamRef> collectParams() {
         addMgEg("PassedKingProxBonus[" + std::to_string(r) + "]",
                 &evalParams.PassedKingProxBonus[r], false, true); // eg only
         out.push_back({"PassedEnemyKingProxPenalty[" + std::to_string(r) + "].eg",
-                       &evalParams.PassedEnemyKingProxPenalty[r], false, nonNegative()});
+                       &evalParams.PassedEnemyKingProxPenalty[r], false, boundsNonNegative()});
         addMgEgConstr("PassedBlockedPenalty[" + std::to_string(r) + "]",
-                      &evalParams.PassedBlockedPenalty[r], nonPositive());
+                      &evalParams.PassedBlockedPenalty[r], boundsNonPositive());
         addMgEg("PassedSupportedBonus[" + std::to_string(r) + "]",
                 &evalParams.PassedSupportedBonus[r]);
         addMgEg("ConnectedPassersBonus[" + std::to_string(r) + "]",
@@ -114,7 +141,7 @@ static std::vector<ParamRef> collectParams() {
     }
 
     addMgEg("RookOn7thBonus", &evalParams.RookOn7thBonus);
-    addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, nonPositive());
+    addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, boundsNonPositive());
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
     // --- Material (skip None and King; both are structurally zero) ---
@@ -146,17 +173,24 @@ static std::vector<ParamRef> collectParams() {
     for (int pt = Knight; pt <= Queen; pt++) {
         const int n = mobilityCounts[pt];
         for (int i = 0; i < n; i++) {
-            auto mgChain = [pt, i, n](int v) {
-                if (i > 0 && v < mg_value(evalParams.MobilityBonus[pt][i - 1])) return false;
-                if (i < n - 1 && v > mg_value(evalParams.MobilityBonus[pt][i + 1])) return false;
-                return true;
+            auto mgChain = [pt, i, n] {
+                Bounds b;
+                if (i > 0)
+                    b.lo = std::max(b.lo, mg_value(evalParams.MobilityBonus[pt][i - 1]));
+                if (i < n - 1)
+                    b.hi = std::min(b.hi, mg_value(evalParams.MobilityBonus[pt][i + 1]));
+                return b;
             };
-            auto egChain = [pt, i, n](int v) {
-                if (i > 0 && v < eg_value(evalParams.MobilityBonus[pt][i - 1])) return false;
-                if (i < n - 1 && v > eg_value(evalParams.MobilityBonus[pt][i + 1])) return false;
-                return true;
+            auto egChain = [pt, i, n] {
+                Bounds b;
+                if (i > 0)
+                    b.lo = std::max(b.lo, eg_value(evalParams.MobilityBonus[pt][i - 1]));
+                if (i < n - 1)
+                    b.hi = std::min(b.hi, eg_value(evalParams.MobilityBonus[pt][i + 1]));
+                return b;
             };
-            std::string base = "MobilityBonus[" + std::to_string(pt) + "][" + std::to_string(i) + "]";
+            std::string base =
+                "MobilityBonus[" + std::to_string(pt) + "][" + std::to_string(i) + "]";
             out.push_back({base + ".mg", &evalParams.MobilityBonus[pt][i], true, mgChain});
             out.push_back({base + ".eg", &evalParams.MobilityBonus[pt][i], false, egChain});
         }
@@ -175,7 +209,7 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("KnightOutpostBonus", &evalParams.KnightOutpostBonus);
     addMgEg("BishopOutpostBonus", &evalParams.BishopOutpostBonus);
     out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
-                   nonPositive()}); // mg only, must stay a penalty
+                   boundsNonPositive()}); // mg only, must stay a penalty
     addMgEg("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus);
     addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus);
     addMgEg("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus);
@@ -183,14 +217,14 @@ static std::vector<ParamRef> collectParams() {
     // king zone is a positive influence on our score by definition.
     // Locked non-negative so the tuner cannot use these terms as a
     // residual sink for unrelated correlations.
-    addMgEgConstr("MinorOnKingRing", &evalParams.MinorOnKingRing, nonNegative());
-    addMgEgConstr("RookOnKingRing", &evalParams.RookOnKingRing, nonNegative());
-    addMgEgConstr("KingProtector", &evalParams.KingProtector, nonPositive());
+    addMgEgConstr("MinorOnKingRing", &evalParams.MinorOnKingRing, boundsNonNegative());
+    addMgEgConstr("RookOnKingRing", &evalParams.RookOnKingRing, boundsNonNegative());
+    addMgEgConstr("KingProtector", &evalParams.KingProtector, boundsNonPositive());
 
     // --- Bishop pair: universally accepted positive imbalance, locked
     // non-negative so the tuner cannot push the term into a residual
     // role that contradicts the prior.
-    addMgEgConstr("BishopPair", &evalParams.BishopPair, nonNegative());
+    addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
 
     // --- Pawn shield and storm, king-zone scalars ---
     for (int i = 0; i < 2; i++)
@@ -200,30 +234,34 @@ static std::vector<ParamRef> collectParams() {
         // magnitudes must stay non-negative to preserve the "enemy advance
         // hurts us" prior.
         out.push_back({"BlockedPawnStorm[" + std::to_string(i) + "].mg",
-                       &evalParams.BlockedPawnStorm[i], true, nonNegative()});
+                       &evalParams.BlockedPawnStorm[i], true, boundsNonNegative()});
         out.push_back({"UnblockedPawnStorm[" + std::to_string(i) + "].mg",
-                       &evalParams.UnblockedPawnStorm[i], true, nonNegative()});
+                       &evalParams.UnblockedPawnStorm[i], true, boundsNonNegative()});
     }
     out.push_back({"SemiOpenFileNearKing.mg", &evalParams.SemiOpenFileNearKing, true,
-                   nonPositive()});
-    out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, nonPositive()});
-    addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, nonPositive());
+                   boundsNonPositive()});
+    out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, boundsNonPositive()});
+    addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, boundsNonPositive());
     // KingSafeSqPenalty: each slot must stay a penalty (<= 0), and the
     // chain is monotonically non-decreasing -- more safe king-move
     // squares can never score lower than fewer. Predicate closes over
     // the index so it can consult the live neighboring Score values.
     for (int i = 0; i < 9; i++) {
-        auto mgChain = [i](int v) {
-            if (v > 0) return false;
-            if (i > 0 && v < mg_value(evalParams.KingSafeSqPenalty[i - 1])) return false;
-            if (i < 8 && v > mg_value(evalParams.KingSafeSqPenalty[i + 1])) return false;
-            return true;
+        auto mgChain = [i] {
+            Bounds b{-1000000, 0}; // every slot is a penalty (<= 0)
+            if (i > 0)
+                b.lo = std::max(b.lo, mg_value(evalParams.KingSafeSqPenalty[i - 1]));
+            if (i < 8)
+                b.hi = std::min(b.hi, mg_value(evalParams.KingSafeSqPenalty[i + 1]));
+            return b;
         };
-        auto egChain = [i](int v) {
-            if (v > 0) return false;
-            if (i > 0 && v < eg_value(evalParams.KingSafeSqPenalty[i - 1])) return false;
-            if (i < 8 && v > eg_value(evalParams.KingSafeSqPenalty[i + 1])) return false;
-            return true;
+        auto egChain = [i] {
+            Bounds b{-1000000, 0};
+            if (i > 0)
+                b.lo = std::max(b.lo, eg_value(evalParams.KingSafeSqPenalty[i - 1]));
+            if (i < 8)
+                b.hi = std::min(b.hi, eg_value(evalParams.KingSafeSqPenalty[i + 1]));
+            return b;
         };
         out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].mg",
                        &evalParams.KingSafeSqPenalty[i], true, mgChain});
@@ -235,56 +273,56 @@ static std::vector<ParamRef> collectParams() {
     // the quadratic king-danger term; non-negative so an extra attacker
     // never reduces danger. KingNoQueenDiscount is subtracted from the
     // accumulator, so its magnitude must also stay non-negative.
-    addMgEgConstr("KingAttackByKnight", &evalParams.KingAttackByKnight, nonNegative());
-    addMgEgConstr("KingAttackByBishop", &evalParams.KingAttackByBishop, nonNegative());
-    addMgEgConstr("KingAttackByRook", &evalParams.KingAttackByRook, nonNegative());
-    addMgEgConstr("KingAttackByQueen", &evalParams.KingAttackByQueen, nonNegative());
+    addMgEgConstr("KingAttackByKnight", &evalParams.KingAttackByKnight, boundsNonNegative());
+    addMgEgConstr("KingAttackByBishop", &evalParams.KingAttackByBishop, boundsNonNegative());
+    addMgEgConstr("KingAttackByRook", &evalParams.KingAttackByRook, boundsNonNegative());
+    addMgEgConstr("KingAttackByQueen", &evalParams.KingAttackByQueen, boundsNonNegative());
     for (int pt = Knight; pt <= Queen; pt++) {
         addMgEgConstr("KingSafeCheck[" + std::to_string(pt) + "]",
-                      &evalParams.KingSafeCheck[pt], nonNegative());
+                      &evalParams.KingSafeCheck[pt], boundsNonNegative());
     }
-    addMgEgConstr("KingRingWeakWeight", &evalParams.KingRingWeakWeight, nonNegative());
-    addMgEgConstr("KingNoQueenDiscount", &evalParams.KingNoQueenDiscount, nonNegative());
+    addMgEgConstr("KingRingWeakWeight", &evalParams.KingRingWeakWeight, boundsNonNegative());
+    addMgEgConstr("KingNoQueenDiscount", &evalParams.KingNoQueenDiscount, boundsNonNegative());
 
     // --- Pawn-structure penalties ---
-    addMgEgConstr("IsolatedPawnPenalty", &evalParams.IsolatedPawnPenalty, nonPositive());
-    addMgEgConstr("DoubledPawnPenalty", &evalParams.DoubledPawnPenalty, nonPositive());
-    addMgEgConstr("BackwardPawnPenalty", &evalParams.BackwardPawnPenalty, nonPositive());
-    addMgEgConstr("WeakUnopposedPenalty", &evalParams.WeakUnopposedPenalty, nonPositive());
-    addMgEgConstr("DoubledIsolatedPenalty", &evalParams.DoubledIsolatedPenalty, nonPositive());
+    addMgEgConstr("IsolatedPawnPenalty", &evalParams.IsolatedPawnPenalty, boundsNonPositive());
+    addMgEgConstr("DoubledPawnPenalty", &evalParams.DoubledPawnPenalty, boundsNonPositive());
+    addMgEgConstr("BackwardPawnPenalty", &evalParams.BackwardPawnPenalty, boundsNonPositive());
+    addMgEgConstr("WeakUnopposedPenalty", &evalParams.WeakUnopposedPenalty, boundsNonPositive());
+    addMgEgConstr("DoubledIsolatedPenalty", &evalParams.DoubledIsolatedPenalty, boundsNonPositive());
     for (int i = 0; i < 2; i++)
         addMgEgConstr("BlockedPawnPenalty[" + std::to_string(i) + "]",
-                      &evalParams.BlockedPawnPenalty[i], nonPositive());
-    addMgEgConstr("PawnIslandPenalty", &evalParams.PawnIslandPenalty, nonPositive());
+                      &evalParams.BlockedPawnPenalty[i], boundsNonPositive());
+    addMgEgConstr("PawnIslandPenalty", &evalParams.PawnIslandPenalty, boundsNonPositive());
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
     // --- Central pawn occupancy. Eg structurally zero per
     // eval_params.h:184; only the mg half is exposed.
     out.push_back({"CentralPawnBonus[0].mg", &evalParams.CentralPawnBonus[0], true,
-                   nonNegative()});
+                   boundsNonNegative()});
     out.push_back({"CentralPawnBonus[1].mg", &evalParams.CentralPawnBonus[1], true,
-                   nonNegative()});
+                   boundsNonNegative()});
 
     // --- Bishop long diagonal sweep ---
-    addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus, nonNegative());
+    addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus, boundsNonNegative());
 
     // --- Initiative system. All seven scalars carry mg=0 by construction
     // (see eval_params.h:206-208) and live entirely in the eg half. The
     // first six are positive features; InitiativeConstant is the
     // negative baseline shift.
-    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, nonNegative()});
+    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, boundsNonNegative()});
     out.push_back({"InitiativePawnCount.eg", &evalParams.InitiativePawnCount, false,
-                   nonNegative()});
+                   boundsNonNegative()});
     out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false,
-                   nonNegative()});
-    out.push_back({"InitiativeTension.eg", &evalParams.InitiativeTension, false, nonNegative()});
+                   boundsNonNegative()});
+    out.push_back({"InitiativeTension.eg", &evalParams.InitiativeTension, false, boundsNonNegative()});
     out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
-                   nonNegative()});
+                   boundsNonNegative()});
     out.push_back({"InitiativePureBase.eg", &evalParams.InitiativePureBase, false,
-                   nonNegative()});
+                   boundsNonNegative()});
     out.push_back({"InitiativeConstant.eg", &evalParams.InitiativeConstant, false,
-                   nonPositive()});
+                   boundsNonPositive()});
 
     // --- Slider on queen x-ray ---
     addMgEg("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop);
@@ -403,38 +441,60 @@ static double findBestK(const std::vector<LabeledPosition> &positions, int numTh
     return (lo + hi) / 2.0;
 }
 
-// Snap every constrained scalar into its feasible region so coordinate
-// descent starts inside the constraint set. Monotone-chain constraints
-// on KingSafeSqPenalty are resolved pass-by-pass: sweep the chain until
-// it stabilizes, re-reading each entry's predicate after upstream
-// neighbors move. The previous-tune violations we need to fix are
-// KingSafeSqPenalty sign-flips and the UndefendedKingZoneSq / PawnStorm
-// sign drifts, all of which collapse to at most a few chain sweeps.
-static void clampToConstraints(std::vector<ParamRef> &params) {
+// Project every scalar onto its current feasible region. Each ParamRef
+// has a live bounds() factory that may read sibling values (chain
+// constraints). We sweep all params, calling clampToBounds() to move
+// every out-of-bounds scalar to the nearest feasible value, and repeat
+// until a sweep produces no change. Because each clamp moves a scalar
+// toward (and reaches) its allowed range -- never out of it -- the
+// iteration converges in at most a handful of sweeps for the chains we
+// register; the cap is purely a guardrail.
+//
+// This is the replacement for the prior `clampToConstraints` whose
+// repair direction was sign-derived and could not climb a chain to
+// satisfy a non-decreasing prior. Iterative clamp from live bounds
+// handles both directions naturally.
+static void projectToConstraints(std::vector<ParamRef> &params) {
     int snapped = 0;
-    for (int sweep = 0; sweep < 20; sweep++) {
+    for (int sweep = 0; sweep < 50; sweep++) {
         bool changed = false;
         for (auto &p : params) {
             int v = p.read();
-            if (p.allow(v)) continue;
-            // Sign-only predicates: walk the value toward zero until
-            // legal. Monotone-chain predicates: walk toward the nearest
-            // legal neighbor bound.
-            int dir = v > 0 ? -1 : 1;
-            int probe = v;
-            while (!p.allow(probe) && std::abs(probe - v) < 10000) {
-                probe += dir;
-            }
-            if (p.allow(probe)) {
-                std::cerr << "  clamp " << p.name << ": " << v << " -> " << probe << "\n";
-                p.write(probe);
+            int target = p.clampToBounds(v);
+            if (target != v) {
+                std::cerr << "  project " << p.name << ": " << v << " -> " << target << "\n";
+                p.write(target);
                 snapped++;
                 changed = true;
             }
         }
         if (!changed) break;
     }
-    std::cerr << "clamped " << snapped << " scalars into the constraint region\n";
+    std::cerr << "projected " << snapped << " scalars into the constraint region\n";
+}
+
+// Hard validation step. Walks every ParamRef, prints any value outside
+// its live bounds, and exits with non-zero status if any violator
+// survives. Called from every entry path that loads or applies a
+// checkpoint so an invalid snapshot never gets used or written.
+static bool validateConstraints(const std::vector<ParamRef> &params, bool fatal = true) {
+    int violations = 0;
+    for (const auto &p : params) {
+        int v = p.read();
+        if (!p.allow(v)) {
+            Bounds b = p.bounds();
+            std::cerr << "constraint violation: " << p.name << " = " << v << " (bounds [" << b.lo
+                      << ", " << b.hi << "])\n";
+            violations++;
+        }
+    }
+    if (violations == 0) {
+        std::cerr << "validateConstraints: all " << params.size() << " params in bounds\n";
+        return true;
+    }
+    std::cerr << "validateConstraints: " << violations << " violators\n";
+    if (fatal) std::exit(1);
+    return false;
 }
 
 // Dump every collected scalar to `path` as `<name> <value>\n`. Acts as a
@@ -525,6 +585,13 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
               << " coordinate-descent steps applied, " << mismatches
               << " from-value mismatches, " << unknown << " unknown names\n";
 
+    // Project the replayed state onto current constraint bounds and
+    // validate before writing. The replayed snapshot is captured under
+    // whatever bounds were in force during the original run; new
+    // constraints registered since may render some halves invalid.
+    projectToConstraints(params);
+    validateConstraints(params);
+
     writeCheckpoint(outPath, params);
     std::cerr << "checkpoint written to " << outPath << "\n";
 }
@@ -535,7 +602,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
 
-    clampToConstraints(params);
+    projectToConstraints(params);
+    validateConstraints(params);
 
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
@@ -809,6 +877,11 @@ int main(int argc, char **argv) {
         initBitboards();
         auto params = collectParams();
         loadCheckpoint(argv[2], params);
+        // Warn-only validation: emit the snapshot even if it has stale
+        // bound violations so the caller can splice into eval_params.cpp
+        // before bounds are tightened. The next `--from` load will project
+        // and validate fatally.
+        validateConstraints(params, /*fatal=*/false);
         printCurrentValues();
         return 0;
     }
@@ -853,6 +926,11 @@ int main(int argc, char **argv) {
     if (!fromCheckpoint.empty()) {
         auto params = collectParams();
         loadCheckpoint(fromCheckpoint, params);
+        // Project + validate before any tuning starts. tune() also runs
+        // these but doing them up front means a malformed checkpoint
+        // never reaches the corpus load / leaf precompute stages.
+        projectToConstraints(params);
+        validateConstraints(params);
     }
 
     std::cerr << "loading " << dataset << "...\n";
