@@ -184,6 +184,11 @@ static const EvalParams kDefaultEvalParams = {
     // it; a small endgame trickle keeps fianchetto bishops relevant.
     S(30, 5),
 
+    // TrappedBishopPenalty: about half a knight on MG so the engine
+    // never volunteers into the a7/h7 trap, smaller in the endgame
+    // where a stuck bishop is less catastrophic.
+    S(-90, -45),
+
     // Initiative weights: EG-only, small single-digit magnitudes. The
     // constant is negative so a perfectly symmetric quiet position
     // produces a near-zero magnitude before sign selection.

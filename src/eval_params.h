@@ -188,6 +188,15 @@ struct EvalParams {
     // most once per bishop.
     Score BishopLongDiagonalBonus;
 
+    // Penalty for a bishop trapped on the rim after capturing a pawn:
+    // our bishop sits on a7/h7 (White) or a2/h2 (Black) and the enemy
+    // closes the long diagonal back to the home corner with a pawn on
+    // b6/g6 or b3/g3. Mobility alone underweights this because the
+    // bishop still has one or two attack squares; in practice the
+    // piece is effectively dead. The penalty doubles when our own pawn
+    // also occupies the c7/f7 or c2/f2 escape square.
+    Score TrappedBishopPenalty;
+
     // Position-wide "initiative" scalar. Features are accumulated into a
     // non-negative magnitude, then signed by the side with the current
     // positional advantage, and folded into the total so the score bends

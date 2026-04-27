@@ -1290,6 +1290,44 @@ TEST_CASE("Eval: long diagonal bonus applies to both diagonals", "[eval][bishop]
     CHECK(openMg - blockedMg >= 30);
 }
 
+TEST_CASE("Eval: bishop trapped on a7 by an enemy b6 pawn loses material", "[eval][bishop]") {
+    Board board;
+
+    // White bishop on a7 with black pawn on b6 closes the long diagonal
+    // back to b8/c7. The piece is dead in practice and the trap penalty
+    // should fire on top of any small mobility credit.
+    board.setFen("4k3/B7/1p6/8/8/8/8/4K3 w - - 0 1");
+    int trappedMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Same bishop with the closing pawn pulled back to b5; the rim
+    // bishop now has the diagonal back to b8 and the trap does not fire.
+    board.setFen("4k3/B7/8/1p6/8/8/8/4K3 w - - 0 1");
+    int freeMg = parseMg(bucketLine(board, "Pieces"));
+
+    CHECK(freeMg - trappedMg >= 80);
+}
+
+TEST_CASE("Eval: bishop trapped on h2 mirror penalizes black", "[eval][bishop]") {
+    Board board;
+
+    // Mirror case: black bishop on h2 with white pawn on g3 closes the
+    // anti-diagonal back to h1/g2 from black's perspective. The trap
+    // penalty should reduce the Pieces bucket on Black's side.
+    board.setFen("4k3/8/8/8/8/6P1/7b/4K3 w - - 0 1");
+    int trappedMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Same bishop with the closing pawn relaxed to g4; trap does not
+    // fire.
+    board.setFen("4k3/8/8/8/6P1/8/7b/4K3 w - - 0 1");
+    int freeMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Black scores Pieces from Black's perspective inside the bucket;
+    // when the trap fires Black's piece-bucket contribution falls, which
+    // shows up as a less-negative (or more positive) White-minus-Black
+    // mg in the Pieces line.
+    CHECK(trappedMg > freeMg);
+}
+
 // --- Initiative ---
 
 TEST_CASE("Eval: initiative is zero on a fully symmetric pawn position", "[eval][initiative]") {

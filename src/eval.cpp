@@ -513,6 +513,31 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             if (ourKingSq >= 0) {
                 scores[c] += evalParams.KingProtector * chebyshev(sq, ourKingSq);
             }
+
+            // Trapped bishop on the rim: our bishop on a7/h7 (White) or
+            // a2/h2 (Black) with the enemy pawn that locks the long
+            // diagonal back to the home corner present on b6/g6 (or the
+            // mirror b3/g3 for Black). The mobility table cannot model
+            // this because a stuck rim bishop still attacks one or two
+            // squares; the surcharge here brings the penalty in line
+            // with how dead the piece actually is. The penalty doubles
+            // when our own c7/f7 (c2/f2) pawn also blocks the only
+            // retreat square, leaving the bishop with no out at all.
+            int sqRelRank = relativeRank(static_cast<Color>(c), sq);
+            int sqFile = squareFile(sq);
+            if (sqRelRank == 6 && (sqFile == 0 || sqFile == 7)) {
+                int closingFile = (sqFile == 0) ? 1 : 6;
+                int closingRank = squareRank(sq) + ((c == White) ? -1 : 1);
+                int closingSq = makeSquare(closingRank, closingFile);
+                if (theirPawns & squareBB(closingSq)) {
+                    scores[c] += evalParams.TrappedBishopPenalty;
+                    int escapeFile = (sqFile == 0) ? 2 : 5;
+                    int escapeSq = makeSquare(squareRank(sq), escapeFile);
+                    if (ourPawns & squareBB(escapeSq)) {
+                        scores[c] += evalParams.TrappedBishopPenalty;
+                    }
+                }
+            }
         }
 
         int kingFile = (ourKingSq >= 0) ? squareFile(ourKingSq) : -1;
