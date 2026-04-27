@@ -842,7 +842,7 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
 }
 
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
-                 int maxPasses) {
+                 int maxPasses, int refitKEvery, int refreshLeavesEvery) {
     auto params = collectParams();
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
@@ -926,6 +926,36 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                   << (improved ? " (improved)" : " (no change)") << "\n";
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
+
+        // Periodic K refit: as parameters move, the sigmoid scale that
+        // best fits the current eval distribution drifts. Refitting K
+        // every few passes keeps the loss surface honest. Cheap (one
+        // golden-section search, ~40 loss evals) compared to a CD
+        // pass.
+        if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
+            std::cerr << "refit K after pass " << globalPass << "\n";
+            double oldK = K;
+            K = findBestK(positions, numThreads);
+            bestLoss = computeLoss(positions, K, numThreads);
+            std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+        }
+
+        // Periodic leaf refresh: qsearch's path through stand-pat and
+        // move ordering depends on the current eval params, so leaves
+        // computed against the cold-start params drift as the tune
+        // moves. Recomputing leaves restores consistency between the
+        // labels and the evaluator that fits them. Expensive (full
+        // precompute over the whole corpus), so default off.
+        if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
+            std::cerr << "refresh leaves after pass " << globalPass << "\n";
+            precomputeLeaves(positions);
+            // Re-fit K against the new leaves and rebase loss.
+            double oldK = K;
+            K = findBestK(positions, numThreads);
+            bestLoss = computeLoss(positions, K, numThreads);
+            std::cerr << "post-refresh K " << oldK << " -> " << K << ", rebased loss=" << bestLoss
+                      << "\n";
+        }
     }
 
     // Deterministic single-thread finalizer at the tighter threshold.
@@ -1139,7 +1169,9 @@ static void printCurrentValues() {
 
 int main(int argc, char **argv) {
     auto usage = [] {
-        std::cerr << "usage: tune [--from <ckpt>] <dataset> [threads=6] [maxPasses=30]\n";
+        std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
+                     "[--refresh-leaves-every N]\n";
+        std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
     };
@@ -1179,13 +1211,26 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    // Optional --from <ckpt> prefix loads a checkpoint over the
-    // compile-time defaults before any tuning starts.
+    // Optional flag prefixes before the positional <dataset> arg. Each
+    // is independently optional and order-insensitive among themselves.
     std::string fromCheckpoint;
+    int refitKEvery = 5;        // refit K every N completed passes; 0 disables
+    int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
     int argIdx = 1;
-    if (argc >= 3 && std::string(argv[1]) == "--from") {
-        fromCheckpoint = argv[2];
-        argIdx = 3;
+    while (argIdx < argc) {
+        std::string a = argv[argIdx];
+        if (a == "--from" && argIdx + 1 < argc) {
+            fromCheckpoint = argv[argIdx + 1];
+            argIdx += 2;
+        } else if (a == "--refit-k-every" && argIdx + 1 < argc) {
+            refitKEvery = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--refresh-leaves-every" && argIdx + 1 < argc) {
+            refreshLeavesEvery = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else {
+            break;
+        }
     }
 
     if (argc <= argIdx) {
@@ -1223,7 +1268,7 @@ int main(int argc, char **argv) {
     double K = findBestK(positions, numThreads);
     std::cerr << "K=" << K << "\n";
 
-    tune(positions, K, numThreads, maxPasses);
+    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery);
     printCurrentValues();
     return 0;
 }
