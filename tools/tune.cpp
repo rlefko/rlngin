@@ -94,11 +94,16 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
+    // PassedEnemyKingProxPenalty is stored as a positive magnitude that
+    // the eval subtracts, so the chess prior "enemy king close to our
+    // passer is bad for the passer" maps to keeping the stored value
+    // non-negative. Without the constraint a tuner with a noisy corpus
+    // could flip it to negative and silently invert the term.
     for (int r = 3; r <= 6; r++) {
         addMgEg("PassedKingProxBonus[" + std::to_string(r) + "]",
                 &evalParams.PassedKingProxBonus[r], false, true); // eg only
-        addMgEg("PassedEnemyKingProxPenalty[" + std::to_string(r) + "]",
-                &evalParams.PassedEnemyKingProxPenalty[r], false, true);
+        out.push_back({"PassedEnemyKingProxPenalty[" + std::to_string(r) + "].eg",
+                       &evalParams.PassedEnemyKingProxPenalty[r], false, nonNegative()});
         addMgEgConstr("PassedBlockedPenalty[" + std::to_string(r) + "]",
                       &evalParams.PassedBlockedPenalty[r], nonPositive());
         addMgEg("PassedSupportedBonus[" + std::to_string(r) + "]",
@@ -130,12 +135,29 @@ static std::vector<ParamRef> collectParams() {
     addPST("QueenPST", evalParams.QueenPST, 0, 64);
     addPST("KingPST", evalParams.KingPST, 0, 64);
 
-    // --- Mobility bonuses (only Knight..Queen rows carry values) ---
+    // --- Mobility bonuses (only Knight..Queen rows carry values).
+    // Soft chess prior: more attacked mobility-area squares is at least
+    // as good as fewer of them. Enforced as a non-decreasing chain on
+    // both halves, indexed by attack count. Per-entry sign is left
+    // unconstrained because the lowest counts (a knight with 0..2 moves)
+    // legitimately carry a negative contribution.
     static const int mobilityCounts[7] = {0, 0, 9, 14, 15, 28, 0};
     for (int pt = Knight; pt <= Queen; pt++) {
-        for (int i = 0; i < mobilityCounts[pt]; i++) {
-            addMgEg("MobilityBonus[" + std::to_string(pt) + "][" + std::to_string(i) + "]",
-                    &evalParams.MobilityBonus[pt][i]);
+        const int n = mobilityCounts[pt];
+        for (int i = 0; i < n; i++) {
+            auto mgChain = [pt, i, n](int v) {
+                if (i > 0 && v < mg_value(evalParams.MobilityBonus[pt][i - 1])) return false;
+                if (i < n - 1 && v > mg_value(evalParams.MobilityBonus[pt][i + 1])) return false;
+                return true;
+            };
+            auto egChain = [pt, i, n](int v) {
+                if (i > 0 && v < eg_value(evalParams.MobilityBonus[pt][i - 1])) return false;
+                if (i < n - 1 && v > eg_value(evalParams.MobilityBonus[pt][i + 1])) return false;
+                return true;
+            };
+            std::string base = "MobilityBonus[" + std::to_string(pt) + "][" + std::to_string(i) + "]";
+            out.push_back({base + ".mg", &evalParams.MobilityBonus[pt][i], true, mgChain});
+            out.push_back({base + ".eg", &evalParams.MobilityBonus[pt][i], false, egChain});
         }
     }
 
@@ -156,12 +178,18 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus);
     addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus);
     addMgEg("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus);
-    addMgEg("MinorOnKingRing", &evalParams.MinorOnKingRing);
-    addMgEg("RookOnKingRing", &evalParams.RookOnKingRing);
+    // King-ring pressure: a piece whose attack set intersects the enemy
+    // king zone is a positive influence on our score by definition.
+    // Locked non-negative so the tuner cannot use these terms as a
+    // residual sink for unrelated correlations.
+    addMgEgConstr("MinorOnKingRing", &evalParams.MinorOnKingRing, nonNegative());
+    addMgEgConstr("RookOnKingRing", &evalParams.RookOnKingRing, nonNegative());
     addMgEgConstr("KingProtector", &evalParams.KingProtector, nonPositive());
 
-    // --- Bishop pair ---
-    addMgEg("BishopPair", &evalParams.BishopPair);
+    // --- Bishop pair: universally accepted positive imbalance, locked
+    // non-negative so the tuner cannot push the term into a residual
+    // role that contradicts the prior.
+    addMgEgConstr("BishopPair", &evalParams.BishopPair, nonNegative());
 
     // --- Pawn shield and storm, king-zone scalars ---
     for (int i = 0; i < 2; i++)
