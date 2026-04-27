@@ -159,6 +159,16 @@ struct EvalParams {
     Score KingFlankAttack;
     Score KingFlankAttack2;
 
+    // Per safe queen check delivered from a square adjacent to our king
+    // (a "contact check"). Goes on top of the per-piece KingSafeCheck
+    // weight inside the king-danger accumulator: a queen check from a
+    // square the king itself attacks usually mates because the queen
+    // is supported by being next to the king. Eg-half stays zero
+    // because contact checks only matter while the queens are on the
+    // board, which is the middlegame regime that drives the mg-half
+    // king-danger quadratic.
+    Score KingQueenContactCheck;
+
     // Pawn-structure penalties.
     Score IsolatedPawnPenalty;
     Score DoubledPawnPenalty;

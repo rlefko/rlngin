@@ -866,6 +866,17 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         kingDangerMg += popcount(safeQueenChecks) * mg_value(evalParams.KingSafeCheck[Queen]);
         kingDangerEg += popcount(safeQueenChecks) * eg_value(evalParams.KingSafeCheck[Queen]);
 
+        // Queen contact check: a safe queen check delivered from a
+        // square adjacent to our king. The base KingSafeCheck[Queen]
+        // weight already credits each safe queen check linearly; this
+        // adds an extra surcharge for the contact-distance subset
+        // because such checks are dramatically more dangerous (the
+        // queen is supported by sitting next to the king and the
+        // recapture often loses material).
+        Bitboard contactQueenChecks = safeQueenChecks & KingAttacks[kingSq];
+        kingDangerMg += popcount(contactQueenChecks) * mg_value(evalParams.KingQueenContactCheck);
+        kingDangerEg += popcount(contactQueenChecks) * eg_value(evalParams.KingQueenContactCheck);
+
         // King flank attack: count squares on the 3-file band centred
         // on our king and on our half of the board (relative ranks 0-3)
         // that the enemy attacks. A second weight kicks in for squares

@@ -187,8 +187,10 @@ TEST_CASE("Eval: king zone attacks reduce eval for defending side", "[eval][king
     CHECK(attacking < passive);
     // The king-danger quadratic keeps the delta bounded to around the
     // capped per-side penalty so the term cannot swing the eval past a
-    // reasonable attack-magnitude contribution.
-    CHECK(passive - attacking < 600);
+    // reasonable attack-magnitude contribution. The bound includes
+    // headroom for the flank-attack and queen-contact-check feeds that
+    // also light up on the attacking side.
+    CHECK(passive - attacking < 800);
 }
 
 TEST_CASE("Eval: pawn storm penalizes defending side", "[eval][kingsafety]") {
@@ -1307,6 +1309,27 @@ TEST_CASE("Eval: rook on the enemy king file scores above a rook on a neutral fi
     int neutralFileMg = parseMg(bucketLine(board, "Pieces"));
 
     CHECK(kingFileMg - neutralFileMg >= 25);
+}
+
+TEST_CASE("Eval: queen contact check feeds an extra king-danger surcharge", "[eval][king-safety]") {
+    Board board;
+
+    // White king on g1, black queen on g3 ready to deliver a contact
+    // check on g2, plus a single distant black knight on e5 to hit the
+    // king zone (f3) and satisfy attackerCount >= 2 without saturating
+    // the king-danger cap. The contact surcharge fires for the g2
+    // queen check.
+    board.setFen("4k3/8/8/4n3/8/6q1/6P1/5RK1 w - - 0 1");
+    int withContact = evaluate(board);
+
+    Score saved = evalParams.KingQueenContactCheck;
+    evalParams.KingQueenContactCheck = 0;
+    int withoutContact = evaluate(board);
+    evalParams.KingQueenContactCheck = saved;
+
+    // Contact check raises White's king danger so toggling it on must
+    // worsen White's eval.
+    CHECK(withContact < withoutContact);
 }
 
 TEST_CASE("Eval: rook attacking an enemy minor scores a threat bonus", "[eval][threats]") {
