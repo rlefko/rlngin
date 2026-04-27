@@ -82,8 +82,10 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Threats ---
     addMgEg("ThreatByPawn", &evalParams.ThreatByPawn);
-    for (int v = Rook; v <= Queen; v++)
+    for (int v = Knight; v <= Queen; v++)
         addMgEg("ThreatByMinor[" + std::to_string(v) + "]", &evalParams.ThreatByMinor[v]);
+    addMgEg("ThreatByRook[Knight]", &evalParams.ThreatByRook[Knight]);
+    addMgEg("ThreatByRook[Bishop]", &evalParams.ThreatByRook[Bishop]);
     addMgEg("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen]);
     addMgEg("ThreatByKing", &evalParams.ThreatByKing);
     addMgEg("Hanging", &evalParams.Hanging);
@@ -214,6 +216,35 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Restricted piece ---
     addMgEg("RestrictedPiece", &evalParams.RestrictedPiece);
+
+    // --- New classical-aligned terms ---
+    addMgEg("ReachableOutpost", &evalParams.ReachableOutpost);
+    addMgEg("BadOutpost", &evalParams.BadOutpost);
+    addMgEg("BishopXRayPawns", &evalParams.BishopXRayPawns);
+    out.push_back({"BishopOnKingRingXRay.mg", &evalParams.BishopOnKingRingXRay, true});
+    addMgEg("RookOnQueenFile", &evalParams.RookOnQueenFile);
+    addMgEg("QueenInfiltration", &evalParams.QueenInfiltration);
+    addMgEgConstr("WeakLever", &evalParams.WeakLever, nonPositive());
+    out.push_back({"WeakQueenProtection.mg", &evalParams.WeakQueenProtection, true});
+    addMgEg("KnightOnQueen", &evalParams.KnightOnQueen);
+    out.push_back({"KingUnsafeCheckWeight.mg", &evalParams.KingUnsafeCheckWeight, true});
+    out.push_back({"KingAttacksWeight.mg", &evalParams.KingAttacksWeight, true});
+    out.push_back({"KingBlockerWeight.mg", &evalParams.KingBlockerWeight, true});
+    out.push_back({"KingKnightDefenderDiscount.mg", &evalParams.KingKnightDefenderDiscount, true});
+    out.push_back({"KingDangerConstant.mg", &evalParams.KingDangerConstant, true});
+    addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, nonPositive());
+    out.push_back({"KingFlankAttack.mg", &evalParams.KingFlankAttack, true});
+    out.push_back({"KingFlankAttack2.mg", &evalParams.KingFlankAttack2, true});
+    out.push_back({"KingFlankDefense.mg", &evalParams.KingFlankDefense, true, nonPositive()});
+    for (int pt = Knight; pt <= Queen; pt++) {
+        out.push_back({"KingSafeCheck[" + std::to_string(pt) + "][1].mg",
+                       &evalParams.KingSafeCheck[pt][1], true});
+    }
+    out.push_back({"InitiativeBothFlanks.eg", &evalParams.InitiativeBothFlanks, false});
+    out.push_back({"InitiativeAlmostUnwinnable.eg", &evalParams.InitiativeAlmostUnwinnable, false,
+                   nonPositive()});
+    out.push_back({"KingPawnDistance.eg", &evalParams.KingPawnDistance, false, nonPositive()});
+    addMgEgConstr("PassedFile", &evalParams.PassedFile, nonPositive());
 
     return out;
 }

@@ -276,6 +276,95 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("RestrictedPieceEg", &evalParams.RestrictedPiece, false, 0, 20,
                                     1.5, 0.5));
 
+    // --- New king-safety scalars matching the classical reference. ---
+    out.push_back(makeScoreHalfSpec("KingUnsafeCheckWeightMg", &evalParams.KingUnsafeCheckWeight,
+                                    true, 0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("KingAttacksWeightMg", &evalParams.KingAttacksWeight, true, 0,
+                                    30, 2.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KingBlockerWeightMg", &evalParams.KingBlockerWeight, true, 0,
+                                    40, 3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KingKnightDefenderDiscountMg",
+                                    &evalParams.KingKnightDefenderDiscount, true, 0, 200, 10.0,
+                                    4.0));
+    out.push_back(makeScoreHalfSpec("KingDangerConstantMg", &evalParams.KingDangerConstant, true, 0,
+                                    80, 5.0, 2.0));
+    out.push_back(
+        makeScoreHalfSpec("PawnlessFlankMg", &evalParams.PawnlessFlank, true, -60, 0, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("PawnlessFlankEg", &evalParams.PawnlessFlank, false, -200, 0, 10.0, 4.0));
+    out.push_back(
+        makeScoreHalfSpec("KingFlankAttackMg", &evalParams.KingFlankAttack, true, 0, 30, 2.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KingFlankAttack2Mg", &evalParams.KingFlankAttack2, true, 0, 40,
+                                    3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KingFlankDefenseMg", &evalParams.KingFlankDefense, true, -20,
+                                    0, 2.0, 1.0));
+
+    // --- Outposts and pieces ---
+    out.push_back(makeScoreHalfSpec("ReachableOutpostMg", &evalParams.ReachableOutpost, true, 0, 80,
+                                    5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ReachableOutpostEg", &evalParams.ReachableOutpost, false, 0,
+                                    60, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("BadOutpostMg", &evalParams.BadOutpost, true, -60, 60, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("BadOutpostEg", &evalParams.BadOutpost, false, -60, 80, 5.0, 2.0));
+    out.push_back(
+        makeScoreHalfSpec("BishopXRayPawnsMg", &evalParams.BishopXRayPawns, true, 0, 20, 1.5, 0.5));
+    out.push_back(makeScoreHalfSpec("BishopXRayPawnsEg", &evalParams.BishopXRayPawns, false, 0, 20,
+                                    1.5, 0.5));
+    out.push_back(makeScoreHalfSpec("BishopOnKingRingXRayMg", &evalParams.BishopOnKingRingXRay,
+                                    true, 0, 60, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("RookOnQueenFileMg", &evalParams.RookOnQueenFile, true, 0, 30, 2.0, 1.0));
+    out.push_back(makeScoreHalfSpec("RookOnQueenFileEg", &evalParams.RookOnQueenFile, false, 0, 30,
+                                    2.0, 1.0));
+    out.push_back(makeScoreHalfSpec("QueenInfiltrationMg", &evalParams.QueenInfiltration, true, -20,
+                                    20, 2.0, 1.0));
+    out.push_back(makeScoreHalfSpec("QueenInfiltrationEg", &evalParams.QueenInfiltration, false,
+                                    -20, 40, 2.0, 1.0));
+
+    // --- Threats: weak lever, weak queen protection, knight on queen ---
+    out.push_back(makeScoreHalfSpec("WeakLeverMg", &evalParams.WeakLever, true, -20, 0, 2.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("WeakLeverEg", &evalParams.WeakLever, false, -120, 0, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("WeakQueenProtectionMg", &evalParams.WeakQueenProtection, true,
+                                    0, 40, 3.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("KnightOnQueenMg", &evalParams.KnightOnQueen, true, 0, 60, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("KnightOnQueenEg", &evalParams.KnightOnQueen, false, 0, 60, 4.0, 1.5));
+
+    // --- Threat-table fills (rook/minor on minor) carried over ---
+    out.push_back(makeScoreHalfSpec("ThreatByRookKnightMg", &evalParams.ThreatByRook[Knight], true,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByRookKnightEg", &evalParams.ThreatByRook[Knight], false,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByRookBishopMg", &evalParams.ThreatByRook[Bishop], true,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByRookBishopEg", &evalParams.ThreatByRook[Bishop], false,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorKnightMg", &evalParams.ThreatByMinor[Knight],
+                                    true, 0, 80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorKnightEg", &evalParams.ThreatByMinor[Knight],
+                                    false, 0, 80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorBishopMg", &evalParams.ThreatByMinor[Bishop],
+                                    true, 0, 80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorBishopEg", &evalParams.ThreatByMinor[Bishop],
+                                    false, 0, 80, 5.0, 2.0));
+
+    // --- Initiative and passed pawn additions ---
+    out.push_back(makeScoreHalfSpec("InitiativeBothFlanksEg", &evalParams.InitiativeBothFlanks,
+                                    false, 0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("InitiativeAlmostUnwinnableEg",
+                                    &evalParams.InitiativeAlmostUnwinnable, false, -120, 0, 6.0,
+                                    2.0));
+    out.push_back(makeScoreHalfSpec("KingPawnDistanceEg", &evalParams.KingPawnDistance, false, -40,
+                                    0, 3.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("PassedFileMg", &evalParams.PassedFile, true, -40, 0, 3.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("PassedFileEg", &evalParams.PassedFile, false, -40, 0, 3.0, 1.0));
+
     return out;
 }
 
