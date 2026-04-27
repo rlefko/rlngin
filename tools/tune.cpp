@@ -211,7 +211,14 @@ static std::vector<ParamRef> collectParams() {
         }
     }
 
-    addMgEg("RookOn7thBonus", &evalParams.RookOn7thBonus);
+    // Rook on the 7th: universal Tarrasch / Capablanca prior on both
+    // halves. Two Texel runs settle the mg slightly negative because
+    // the rook PST already credits 7th-rank squares heavily and the
+    // bonus becomes a residual correction. Pinning >= 0 reallocates
+    // that signal cleanly into the PST without changing the total
+    // eval contribution, and stops a "Bonus"-named term from
+    // representing a penalty.
+    addMgEgConstr("RookOn7thBonus", &evalParams.RookOn7thBonus, boundsNonNegative());
     addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, boundsNonPositive());
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
@@ -369,29 +376,24 @@ static std::vector<ParamRef> collectParams() {
     // role that contradicts the prior.
     addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
 
-    // --- Pawn shield: both halves stay non-negative, plus a chain
-    // [0] >= [1] (back-rank shield is at least as valuable as rank-3
-    // shield). Both halves remain tunable so endgame data still gets
-    // a say; the chain stops the tuner from treating a more advanced
-    // shield as more valuable than the back-rank one.
-    for (bool isMg : {true, false}) {
-        out.push_back({isMg ? "PawnShieldBonus[0].mg" : "PawnShieldBonus[0].eg",
-                       &evalParams.PawnShieldBonus[0], isMg, [isMg] {
-                           Bounds b{0, 1000000};
-                           int next = isMg ? mg_value(evalParams.PawnShieldBonus[1])
-                                           : eg_value(evalParams.PawnShieldBonus[1]);
-                           b.lo = std::max(b.lo, next);
-                           return b;
-                       }});
-        out.push_back({isMg ? "PawnShieldBonus[1].mg" : "PawnShieldBonus[1].eg",
-                       &evalParams.PawnShieldBonus[1], isMg, [isMg] {
-                           Bounds b{0, 1000000};
-                           int prev = isMg ? mg_value(evalParams.PawnShieldBonus[0])
-                                           : eg_value(evalParams.PawnShieldBonus[0]);
-                           b.hi = std::min(b.hi, prev);
-                           return b;
-                       }});
-    }
+    // --- Pawn shield (mg only). Like the storm terms, pawn shield is
+    // structurally a middlegame concept: it protects a castled king
+    // from middlegame attacks. In the endgame the king is active and
+    // often centralized, so the shield does not apply. The eg halves
+    // stay at their compile-time defaults (0) and are not tuned, the
+    // same pattern Tempo / CentralPawnBonus / storm terms already
+    // follow. Mg keeps the chain `[0] >= [1] >= 0` so the back-rank
+    // shield is always at least as valuable as the rank-3 shield.
+    out.push_back({"PawnShieldBonus[0].mg", &evalParams.PawnShieldBonus[0], true, [] {
+                       Bounds b{0, 1000000};
+                       b.lo = std::max(b.lo, mg_value(evalParams.PawnShieldBonus[1]));
+                       return b;
+                   }});
+    out.push_back({"PawnShieldBonus[1].mg", &evalParams.PawnShieldBonus[1], true, [] {
+                       Bounds b{0, 1000000};
+                       b.hi = std::min(b.hi, mg_value(evalParams.PawnShieldBonus[0]));
+                       return b;
+                   }});
     for (int i = 0; i < 5; i++) {
         // Consumed with `scores -= <Blocked|Unblocked>PawnStorm[idx]`, so
         // magnitudes must stay non-negative to preserve the "enemy advance
