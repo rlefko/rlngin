@@ -454,14 +454,18 @@ static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]
                              (PawnAttacks[c ^ 1][sq] & ourPawns) &&
                              !(PawnSpanMask[c][sq] & theirPawns);
             if (onOutpost) {
+                // Knight outpost bonus always applies. Bad outpost is a
+                // penalty that layers on top when the outpost square
+                // sits on a flank file (a, b, g, h), where the wing has
+                // limited tactical leverage even though the square
+                // itself is structurally protected. With this layering
+                // a flank outpost still earns SOMETHING (the regular
+                // bonus minus the bad-outpost penalty), but the center
+                // outpost remains preferred.
+                scores[c] += evalParams.KnightOutpostBonus;
                 int outpostFile = squareFile(sq);
                 if (outpostFile <= 1 || outpostFile >= 6) {
-                    // Bad outpost: a flank-file outpost has limited
-                    // tactical leverage; the layer replaces the regular
-                    // outpost reward with the BadOutpost score.
                     scores[c] += evalParams.BadOutpost;
-                } else {
-                    scores[c] += evalParams.KnightOutpostBonus;
                 }
             } else {
                 // Reachable outpost: at least one outpost square in the

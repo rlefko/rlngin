@@ -126,7 +126,7 @@ static const EvalParams kDefaultEvalParams = {
     S( 81,  30), // KnightOutpostBonus
     S( 78,  45), // BishopOutpostBonus
     S( 31,  22), // ReachableOutpost
-    S( -7,  36), // BadOutpost
+    S(-15, -10), // BadOutpost (penalty layered on flank outposts)
     S( -7,   0), // TrappedRookByKingPenalty
     S( 10,  20), // RookBehindOurPasserBonus
     S(  5,  15), // RookBehindTheirPasserBonus
