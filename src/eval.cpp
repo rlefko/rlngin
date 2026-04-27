@@ -917,6 +917,9 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         // the incoming king attack stronger. Computed by snipers from
         // both diagonals and orthogonals: an enemy slider whose ray to
         // our king has exactly one occupant of our color is pinning it.
+        // bishopCheckRays and rookCheckRays are reused from the safe
+        // check section above to avoid recomputing king-ray magic
+        // lookups inside the per-sniper loop.
         Bitboard ourOcc = board.byColor[us];
         Bitboard theirSlidersDiag =
             (board.byPiece[Bishop] | board.byPiece[Queen]) & board.byColor[them];
@@ -928,19 +931,13 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         Bitboard sniperIter = snipers;
         while (sniperIter) {
             int snSq = popLsb(sniperIter);
-            Bitboard between = 0;
-            // Squares strictly between sniper and king on the shared
-            // ray. Reconstruct via piece-type-specific attack from snSq
-            // intersected with the corresponding attack from kingSq.
+            bool isDiag = (squareBB(snSq) & theirSlidersDiag) != 0;
+            bool isOrtho = (squareBB(snSq) & theirSlidersOrtho) != 0;
             Bitboard rayFromSniper =
-                ((squareBB(snSq) & theirSlidersDiag) ? bishopAttacks(snSq, occ) : 0) |
-                ((squareBB(snSq) & theirSlidersOrtho) ? rookAttacks(snSq, occ) : 0);
-            Bitboard rayFromKing =
-                ((squareBB(snSq) & theirSlidersDiag) ? bishopAttacks(kingSq, occ) : 0) |
-                ((squareBB(snSq) & theirSlidersOrtho) ? rookAttacks(kingSq, occ) : 0);
-            between = rayFromSniper & rayFromKing;
-            Bitboard blockers = between & ourOcc;
-            if (popcount(blockers) == 1) blockerCount++;
+                (isDiag ? bishopAttacks(snSq, occ) : 0) | (isOrtho ? rookAttacks(snSq, occ) : 0);
+            Bitboard rayFromKing = (isDiag ? bishopCheckRays : 0) | (isOrtho ? rookCheckRays : 0);
+            Bitboard between = rayFromSniper & rayFromKing;
+            if (popcount(between & ourOcc) == 1) blockerCount++;
         }
         kingDangerMg += blockerCount * mg_value(evalParams.KingBlockerWeight);
         kingDangerEg += blockerCount * eg_value(evalParams.KingBlockerWeight);
