@@ -167,8 +167,6 @@ std::vector<TunableSpec> buildRegistry() {
         makeScoreHalfSpec("SafePawnPushMg", &evalParams.SafePawnPush, true, 0, 250, 10.0, 4.0));
     out.push_back(
         makeScoreHalfSpec("SafePawnPushEg", &evalParams.SafePawnPush, false, 0, 250, 10.0, 4.0));
-    out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
-                                    10.0, 4.0));
 
     // --- King safety scalars feeding the king-danger accumulator. The mg
     // halves carry the dominant signal because the quadratic mapping

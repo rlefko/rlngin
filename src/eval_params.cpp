@@ -29,7 +29,6 @@ static const EvalParams kDefaultEvalParams = {
     {S(0, 0), S(0, 0), S(0, 0), S(-33, -40), S(-4, -57), S(-40, -77), S(-114, -160), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(24, 46), S(20, 77), S(73, 141), S(127, 210), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(-8, -4), S(28, 0), S(78, 87), S(84, 88), S(0, 0)},
-    S(-31, 46), // RookOn7thBonus (Texel-tuned; SPSA's proposal was reverted)
     S(-7, -16), // BadBishopPenalty
     S(24, 0),   // Tempo         (Texel-tuned; SPSA's proposal was reverted)
 
@@ -172,10 +171,6 @@ static const EvalParams kDefaultEvalParams = {
     S( -5, -10), // WeakUnopposedPenalty
     {S(-5, -2), S(-2, -1)}, // BlockedPawnPenalty (rel rank 5, 6)
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
-
-    // CentralPawnBonus: primary (d/e) then extended (c/f). MG-only because
-    // the endgame does not distinguish central from flank pawns.
-    {S(12, 0), S(4, 0)},
 
     // BishopLongDiagonalBonus: MG-heavy because the long diagonal matters
     // most when heavy pieces are still on the board and can be traded onto

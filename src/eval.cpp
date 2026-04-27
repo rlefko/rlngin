@@ -510,18 +510,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += evalParams.RookSemiOpenFileBonus;
             }
 
-            // Rook on the seventh: either targets enemy pawns on the 7th
-            // or pins the enemy king on the 8th. Both conditions generate
-            // most of the classical "pig on the seventh" pressure.
-            if (relativeRank(c, sq) == 6) {
-                Bitboard seventhRankMask = (c == White) ? Rank7BB : Rank2BB;
-                Bitboard eighthRankMask = (c == White) ? Rank8BB : Rank1BB;
-                Bitboard theirKingBB = board.byPiece[King] & board.byColor[c ^ 1];
-                if ((theirKingBB & eighthRankMask) || (theirPawns & seventhRankMask)) {
-                    scores[c] += evalParams.RookOn7thBonus;
-                }
-            }
-
             // Trapped rook: little room to move and our king is on the same
             // side of the board, so the rook cannot swing across. Gating on
             // mobility rather than piece-square heuristics avoids the old
@@ -548,22 +536,6 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             int count = popcount(queenAttacks(sq, occ) & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Queen][count];
         }
-    }
-}
-
-// Credit own pawns parked on the classical center squares. Primary
-// (d/e file) and extended (c/f file) variants carry separate weights so
-// a full c3-d4-e4 formation scores distinctly from a plain d4-e4 duo.
-// Uses middlegame-only weights by design: in a deep endgame the file on
-// which a pawn sits matters less than its passed/blocked status, which
-// other terms already cover.
-static void evaluateCentralPawns(const Board &board, Score scores[2]) {
-    for (int c = 0; c < 2; c++) {
-        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
-        int primary = popcount(ourPawns & CentralDEFilesBB[c]);
-        int extended = popcount(ourPawns & CentralCFFilesBB[c]);
-        if (primary) scores[c] += evalParams.CentralPawnBonus[0] * primary;
-        if (extended) scores[c] += evalParams.CentralPawnBonus[1] * extended;
     }
 }
 
@@ -1295,7 +1267,6 @@ int evaluate(const Board &board) {
     buildAttackMaps(board, ctx);
 
     evaluatePieces(board, ctx, scores);
-    evaluateCentralPawns(board, scores);
     evaluatePassedPawnExtras(board, ctx, passers, scores);
     evaluateBlockedPawns(board, passers, scores);
     evaluateThreats(board, ctx, scores);
@@ -1379,10 +1350,6 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluatePieces(board, ctx, pieceScores);
     Score pieceScore = pieceScores[White] - pieceScores[Black];
 
-    Score centerScores[2] = {0, 0};
-    evaluateCentralPawns(board, centerScores);
-    Score centerScore = centerScores[White] - centerScores[Black];
-
     Score passerExtrasScores[2] = {0, 0};
     evaluatePassedPawnExtras(board, ctx, passers, passerExtrasScores);
     Score passerExtrasScore = passerExtrasScores[White] - passerExtrasScores[Black];
@@ -1403,9 +1370,9 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score totalBeforeInitiative = pstScore + matScore + pieceScore + centerScore +
-                                  passerExtrasScore + blockedPawnScore + threatScore + spaceScore +
-                                  kingSafetyScore + pawnScore;
+    Score totalBeforeInitiative = pstScore + matScore + pieceScore + passerExtrasScore +
+                                  blockedPawnScore + threatScore + spaceScore + kingSafetyScore +
+                                  pawnScore;
     Score initiativeScore = evaluateInitiative(board, ctx, passers, totalBeforeInitiative);
     Score total = totalBeforeInitiative + initiativeScore;
     int mg = mg_value(total);
@@ -1479,7 +1446,6 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     bucket("PST", pstScores[White], pstScores[Black], pstScore);
     bucket("Pawns", pawnPerSide[White], pawnPerSide[Black], pawnScore);
     bucket("Pieces", pieceScores[White], pieceScores[Black], pieceScore);
-    bucket("Center", centerScores[White], centerScores[Black], centerScore);
     bucket("Passed extras", passerExtrasScores[White], passerExtrasScores[Black],
            passerExtrasScore);
     bucket("Blocked pawns", blockedPawnScores[White], blockedPawnScores[Black], blockedPawnScore);

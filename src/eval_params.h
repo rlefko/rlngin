@@ -23,7 +23,6 @@ struct EvalParams {
     Score PassedBlockedPenalty[8];
     Score PassedSupportedBonus[8];
     Score ConnectedPassersBonus[8];
-    Score RookOn7thBonus;
     Score BadBishopPenalty;
     Score Tempo;
 
@@ -159,16 +158,6 @@ struct EvalParams {
     // field, the default, the use in evaluatePawns, and the tuner entry
     // together.
     // Score PhalanxBonus;
-
-    // Classical central pawn occupancy. [0] rewards own pawns on the
-    // primary center squares (d4/e4 for White, d5/e5 for Black); [1]
-    // rewards pawns on the extended center (c4/f4 and mirror). Kept
-    // middlegame-only because the endgame has no structural opinion on
-    // which file an extra pawn sits on. The PST carries a related signal
-    // but landed after the strict tune with nearly equal MG weights for
-    // an e2 pawn and an e4 pawn, so an explicit term is needed to bias
-    // classical center occupation at low search depths.
-    Score CentralPawnBonus[2];
 
     // Bonus for a bishop whose long diagonal (a1-h8 or a8-h1) sweeps
     // both central squares on that diagonal unobstructed. Applied at
