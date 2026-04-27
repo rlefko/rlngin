@@ -656,6 +656,7 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
 // TT per position.
 static void precomputeLeaves(std::vector<LabeledPosition> &positions) {
     std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions...\n";
+    resetQsearchLeafCounters();
     size_t reported = 0;
     for (size_t i = 0; i < positions.size(); i++) {
         positions[i].board = qsearchLeafBoard(positions[i].board);
@@ -664,7 +665,10 @@ static void precomputeLeaves(std::vector<LabeledPosition> &positions) {
             reported = i;
         }
     }
-    std::cerr << "  done\n";
+    auto stats = qsearchLeafCounters();
+    std::cerr << "leaf stats: " << stats.total << " leaves, " << stats.inCheck
+              << " returned in check, " << stats.ttMiss << " TT-miss exits, "
+              << stats.cappedIterations << " hit iteration cap\n";
 }
 
 static double findBestK(const std::vector<LabeledPosition> &positions, int numThreads) {

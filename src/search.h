@@ -129,4 +129,18 @@ int qsearchScore(const Board &board);
 // loop run cheap static evaluate() calls instead of full qsearch.
 Board qsearchLeafBoard(const Board &root);
 
+// Aggregate stats accumulated by every `qsearchLeafBoard` call since
+// the last `resetQsearchLeafCounters()`. The tuner inspects these
+// after `precomputeLeaves` so anomalies (returned-in-check leaves,
+// TT-miss exits, hitting the iteration cap) surface explicitly rather
+// than silently corrupting Texel labels.
+struct QsearchLeafStats {
+    uint64_t total = 0;
+    uint64_t inCheck = 0;
+    uint64_t ttMiss = 0;
+    uint64_t cappedIterations = 0;
+};
+QsearchLeafStats qsearchLeafCounters();
+void resetQsearchLeafCounters();
+
 #endif

@@ -367,6 +367,13 @@ int qsearchScore(const Board &board) {
     return quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
 }
 
+// Aggregate counters describing how `qsearchLeafBoard` exited across the
+// entire precompute. The tuner reads these via `qsearchLeafCounters()`
+// after the precompute finishes so a non-zero in-check count, a wave
+// of TT-miss exits, or hitting the iteration cap shows up explicitly
+// instead of silently producing noisy labels.
+static QsearchLeafStats g_qsearchLeafStats;
+
 Board qsearchLeafBoard(const Board &root) {
     // Clear TT so the post-search walk only follows entries that this
     // call wrote. Not thread-safe: the tuner must run this step
@@ -388,21 +395,45 @@ Board qsearchLeafBoard(const Board &root) {
     quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
 
     // Walk the best-move chain. Qsearch writes a zero move for pure
-    // stand-pat returns; walking stops when no move, a non-capture, or
-    // a TT miss is seen. The cap on iterations guards against any
-    // pathological cycle we might observe under perturbation.
+    // stand-pat returns; walking stops when no move or a TT miss is
+    // seen. While the current position is in check we keep walking
+    // along legal evasions even when they are non-captures, because
+    // returning a still-in-check leaf to the static evaluator produces
+    // meaningless label noise. Outside of check we still stop at the
+    // first non-capture so the leaf reflects a quiet position. The
+    // 32-iteration cap remains as a guard against pathological cycles.
     Board cur = root;
-    for (int iter = 0; iter < 32; iter++) {
+    int iter = 0;
+    bool ttMissed = false;
+    bool capped = false;
+    for (; iter < 32; iter++) {
         TTEntry entry;
-        if (!tt.probe(cur.key, entry, 0)) break;
+        if (!tt.probe(cur.key, entry, 0)) {
+            ttMissed = true;
+            break;
+        }
         Move m = entry.best_move;
         if (m.from == 0 && m.to == 0 && m.promotion == None) break;
-        if (!isCapture(cur, m)) break;
+        bool inCheckNow = isInCheck(cur);
+        if (!inCheckNow && !isCapture(cur, m)) break;
         cur.makeMove(m);
     }
+    if (iter == 32) capped = true;
+
+    g_qsearchLeafStats.total++;
+    if (isInCheck(cur)) g_qsearchLeafStats.inCheck++;
+    if (ttMissed) g_qsearchLeafStats.ttMiss++;
+    if (capped) g_qsearchLeafStats.cappedIterations++;
 
     g_tunerLeafMode = false;
     return cur;
+}
+
+QsearchLeafStats qsearchLeafCounters() {
+    return g_qsearchLeafStats;
+}
+void resetQsearchLeafCounters() {
+    g_qsearchLeafStats = {};
 }
 
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {
