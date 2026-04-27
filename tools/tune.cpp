@@ -1341,8 +1341,12 @@ int main(int argc, char **argv) {
         // Project + validate before any tuning starts. tune() also runs
         // these but doing them up front means a malformed checkpoint
         // never reaches the corpus load / leaf precompute stages.
+        // Center the PST/material gauge so the first post-resume pass
+        // starts from the same canonical form `tune()` produces between
+        // passes; loss is bit-identical, but the gauge stops drifting.
         projectToConstraints(params);
         validateConstraints(params);
+        centerPSTGauge();
     }
 
     std::cerr << "loading " << dataset << "...\n";
