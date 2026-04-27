@@ -279,6 +279,82 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("PawnIslandPenaltyEg", &evalParams.PawnIslandPenalty, false,
                                     -60, 0, 5.0, 2.0));
 
+    // --- Trapped bishop on the rim. Penalty-signed: max pinned at 0 so
+    // SPSA cannot flip the surcharge into a bonus that would reward the
+    // a7/h7 trap. The wide lower bound matches the magnitude of the
+    // largest existing structural penalties. ---
+    out.push_back(makeScoreHalfSpec("TrappedBishopPenaltyMg", &evalParams.TrappedBishopPenalty,
+                                    true, -200, 0, 8.0, 3.0));
+    out.push_back(makeScoreHalfSpec("TrappedBishopPenaltyEg", &evalParams.TrappedBishopPenalty,
+                                    false, -120, 0, 6.0, 2.0));
+
+    // --- Doubled rook on a file: bonus-signed, sized in line with the
+    // rook semi-open file bonus. ---
+    out.push_back(makeScoreHalfSpec("DoubledRookBonusMg", &evalParams.DoubledRookBonus, true, 0, 60,
+                                    4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("DoubledRookBonusEg", &evalParams.DoubledRookBonus, false, 0,
+                                    60, 4.0, 1.5));
+
+    // --- Rook on enemy king file (open and semi-open). Bonus-signed.
+    // Open is the higher-value subset and gets a wider band. ---
+    out.push_back(makeScoreHalfSpec("RookOnKingFileOpenMg", &evalParams.RookOnKingFileBonus[0],
+                                    true, 0, 100, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookOnKingFileOpenEg", &evalParams.RookOnKingFileBonus[0],
+                                    false, 0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("RookOnKingFileSemiMg", &evalParams.RookOnKingFileBonus[1],
+                                    true, 0, 60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("RookOnKingFileSemiEg", &evalParams.RookOnKingFileBonus[1],
+                                    false, 0, 40, 3.0, 1.0));
+
+    // --- King flank attack feeds the king-danger accumulator. The mg
+    // halves carry the dominant signal and pass through KingDangerMgCap;
+    // the eg halves stay bonus-signed to keep the bonus invariant
+    // intact. Magnitudes per square are intentionally small because the
+    // popcount that multiplies them ranges into the high single digits.
+    // ---
+    out.push_back(
+        makeScoreHalfSpec("KingFlankAttackMg", &evalParams.KingFlankAttack, true, 0, 30, 2.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KingFlankAttackEg", &evalParams.KingFlankAttack, false, 0, 20,
+                                    2.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KingFlankAttack2Mg", &evalParams.KingFlankAttack2, true, 0, 40,
+                                    3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KingFlankAttack2Eg", &evalParams.KingFlankAttack2, false, 0,
+                                    30, 2.0, 1.0));
+
+    // --- Queen contact check surcharge inside the king-danger
+    // accumulator. Tight upper bound to avoid runaway king-danger when
+    // multiple contact squares fire at once. ---
+    out.push_back(makeScoreHalfSpec("KingQueenContactCheckMg", &evalParams.KingQueenContactCheck,
+                                    true, 0, 80, 5.0, 2.0));
+
+    // --- Push attack on enemy king ring. Bonus-signed, sized as a
+    // fraction of SafePawnPush. ---
+    out.push_back(makeScoreHalfSpec("PushAttackKingRingMg", &evalParams.PushAttackKingRing, true, 0,
+                                    80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("PushAttackKingRingEg", &evalParams.PushAttackKingRing, false,
+                                    0, 60, 4.0, 1.5));
+
+    // --- Threat by rook on minor and threat by minor on minor. Bonus-
+    // signed; the rook variants land on lower-value victims so the
+    // bands are looser than the rook-on-queen entry already exposed
+    // via Texel only. ---
+    out.push_back(makeScoreHalfSpec("ThreatByRookKnightMg", &evalParams.ThreatByRook[Knight], true,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByRookKnightEg", &evalParams.ThreatByRook[Knight], false,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByRookBishopMg", &evalParams.ThreatByRook[Bishop], true,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByRookBishopEg", &evalParams.ThreatByRook[Bishop], false,
+                                    0, 120, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorKnightMg", &evalParams.ThreatByMinor[Knight],
+                                    true, 0, 80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorKnightEg", &evalParams.ThreatByMinor[Knight],
+                                    false, 0, 80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorBishopMg", &evalParams.ThreatByMinor[Bishop],
+                                    true, 0, 80, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("ThreatByMinorBishopEg", &evalParams.ThreatByMinor[Bishop],
+                                    false, 0, 80, 5.0, 2.0));
+
     return out;
 }
 

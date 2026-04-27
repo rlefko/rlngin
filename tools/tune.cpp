@@ -82,8 +82,10 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Threats ---
     addMgEg("ThreatByPawn", &evalParams.ThreatByPawn);
-    for (int v = Rook; v <= Queen; v++)
+    for (int v = Knight; v <= Queen; v++)
         addMgEg("ThreatByMinor[" + std::to_string(v) + "]", &evalParams.ThreatByMinor[v]);
+    addMgEg("ThreatByRook[Knight]", &evalParams.ThreatByRook[Knight]);
+    addMgEg("ThreatByRook[Bishop]", &evalParams.ThreatByRook[Bishop]);
     addMgEg("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen]);
     addMgEg("ThreatByKing", &evalParams.ThreatByKing);
     addMgEg("Hanging", &evalParams.Hanging);
@@ -219,6 +221,19 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Restricted piece ---
     addMgEg("RestrictedPiece", &evalParams.RestrictedPiece);
+
+    // --- New HCE additions: trapped bishop, doubled rooks, rook on
+    // king file, king flank attack, queen contact check, push attack on
+    // enemy king ring. Penalty-signed scalars carry the matching
+    // predicate so coordinate descent never flips their sign. ---
+    addMgEgConstr("TrappedBishopPenalty", &evalParams.TrappedBishopPenalty, nonPositive());
+    addMgEg("DoubledRookBonus", &evalParams.DoubledRookBonus);
+    addMgEg("RookOnKingFileBonus[0]", &evalParams.RookOnKingFileBonus[0]);
+    addMgEg("RookOnKingFileBonus[1]", &evalParams.RookOnKingFileBonus[1]);
+    addMgEg("KingFlankAttack", &evalParams.KingFlankAttack);
+    addMgEg("KingFlankAttack2", &evalParams.KingFlankAttack2);
+    addMgEg("KingQueenContactCheck", &evalParams.KingQueenContactCheck, true, false); // mg only
+    addMgEg("PushAttackKingRing", &evalParams.PushAttackKingRing);
 
     return out;
 }
