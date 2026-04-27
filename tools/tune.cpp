@@ -340,11 +340,21 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("BishopOutpostBonus", &evalParams.BishopOutpostBonus, boundsNonNegative());
     out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
                    boundsNonPositive()}); // mg only, must stay a penalty
-    // Tarrasch's-rule rook-behind-passer: pure bonus on either side.
+    // Tarrasch's-rule rook-behind-passer. RookBehindOurPasserBonus is
+    // a pure bonus on both halves; the eg half especially carries the
+    // canonical "escort the passer to promotion" prior. For the
+    // RookBehindTheirPasserBonus side, only the eg half is a strong
+    // prior (rook blockading from behind an enemy passer is the
+    // textbook endgame technique). The mg half is left unconstrained
+    // because in middlegame, a rook stuck behind the opponent's passer
+    // is often genuinely passive; the corpus' negative MG signal there
+    // is plausibly real, not a prior violation.
     addMgEgConstr("RookBehindOurPasserBonus", &evalParams.RookBehindOurPasserBonus,
                   boundsNonNegative());
-    addMgEgConstr("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus,
-                  boundsNonNegative());
+    addMgEg("RookBehindTheirPasserBonus", &evalParams.RookBehindTheirPasserBonus, true,
+            false); // mg unconstrained
+    out.push_back({"RookBehindTheirPasserBonus.eg", &evalParams.RookBehindTheirPasserBonus, false,
+                   boundsNonNegative()});
     addMgEgConstr("MinorBehindPawnBonus", &evalParams.MinorBehindPawnBonus, boundsNonNegative());
     // King-ring pressure: a piece whose attack set intersects the enemy
     // king zone is a positive influence on our score by definition.
