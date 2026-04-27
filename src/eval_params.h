@@ -55,6 +55,19 @@ struct EvalParams {
     // Minor-piece outposts and trapped-rook-by-own-king.
     Score KnightOutpostBonus;
     Score BishopOutpostBonus;
+
+    // Bonus when a knight could reach an outpost square in one move.
+    // Smaller than the on-outpost bonus because the move still has to
+    // be played and the destination square has to remain unchallenged.
+    Score ReachableOutpost;
+
+    // Penalty for a knight occupying a "bad" outpost: a flank outpost
+    // (a-file / h-file / b-file / g-file) where the enemy has limited
+    // exploitable counterplay. The outpost still earns the regular
+    // bonus elsewhere; this layer fires when the wing-outpost shape
+    // shows there is nothing concrete to attack.
+    Score BadOutpost;
+
     Score TrappedRookByKingPenalty;
 
     // Tarrasch's rule: rooks belong behind passed pawns. Credit a small
@@ -79,6 +92,26 @@ struct EvalParams {
     // pressure (a lone outposted knight on f5, say) still gets credit.
     Score MinorOnKingRing;
     Score RookOnKingRing;
+
+    // Bishop x-rays through enemy pawns: per enemy pawn that sits on
+    // the bishop's empty-board diagonal. A bishop with multiple enemy
+    // pawns on its long diagonal pressures those pawns even through
+    // intermediate pieces.
+    Score BishopXRayPawns;
+
+    // Bishop x-rays into the enemy king ring through pawns: a bishop
+    // that does not directly attack the ring but whose empty-board
+    // diagonals would intersect it once the obstruction clears earns a
+    // smaller bonus than direct attack.
+    Score BishopOnKingRingXRay;
+
+    // Rook on a file shared with any queen of either side.
+    Score RookOnQueenFile;
+
+    // Penalty when our queen sits on rank 5 or higher (relative to us)
+    // on a square outside the enemy pawn's attack span. The queen is
+    // exposed to gain-of-tempo harassment.
+    Score QueenInfiltration;
 
     // Penalty per square of Chebyshev distance from our own king to each
     // of our knights and bishops. Linear in distance because distances to

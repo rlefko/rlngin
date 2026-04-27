@@ -125,12 +125,18 @@ static const EvalParams kDefaultEvalParams = {
     S( 15,  37), // RookSemiOpenFileBonus
     S( 81,  30), // KnightOutpostBonus
     S( 78,  45), // BishopOutpostBonus
+    S( 31,  22), // ReachableOutpost
+    S( -7,  36), // BadOutpost
     S( -7,   0), // TrappedRookByKingPenalty
     S( 10,  20), // RookBehindOurPasserBonus
     S(  5,  15), // RookBehindTheirPasserBonus
     S( 10,   5), // MinorBehindPawnBonus
     S(  3,   1), // MinorOnKingRing
     S(  5,   0), // RookOnKingRing
+    S(  4,   5), // BishopXRayPawns
+    S( 24,   0), // BishopOnKingRingXRay
+    S(  6,  11), // RookOnQueenFile
+    S( -2,  14), // QueenInfiltration
     S( -3,  -1), // KingProtector
     S(  8,  74), // BishopPair
 
