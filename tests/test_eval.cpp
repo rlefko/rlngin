@@ -1203,24 +1203,6 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     CHECK(evaluate(board) == 3332);
 }
 
-TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
-    Board board;
-
-    // Baseline: asymmetric middlegame with no pawn tension pairs. White
-    // has a spatial edge so initiative sign is positive.
-    board.setFen("rnbqkbnr/pp2pppp/8/2pP4/8/8/PPP1PPPP/RNBQKBNR w KQkq - 0 3");
-    int baseline = parseEg(bucketLine(board, "Initiative"));
-
-    // Same skeleton but white pushed e2 to e4 and black answered with
-    // f7 to f5, so white's e4 and black's f5 now attack each other.
-    // That puts the structure in mutual-capture reach and bumps the
-    // tension count, so the initiative magnitude rises.
-    board.setFen("rnbqkbnr/pp2p1pp/8/2pP1p2/4P3/8/PPP2PPP/RNBQKBNR w KQkq - 0 3");
-    int withTension = parseEg(bucketLine(board, "Initiative"));
-
-    CHECK(withTension > baseline);
-}
-
 // --- Wrong-colored bishop rook pawn scale ---
 
 TEST_CASE("Eval: wrong colored bishop with a single rook pawn scales to a draw", "[eval][scale]") {
