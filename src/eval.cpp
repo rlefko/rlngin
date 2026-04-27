@@ -510,20 +510,22 @@ static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]
             int blockingPawns = popcount(ourPawns & sameColorSquares);
             scores[c] += evalParams.BadBishopPenalty * blockingPawns;
 
-            // Bishop x-ray pawns: bonus per enemy pawn sitting on the
-            // bishop's empty-board diagonal. The pawn pressure persists
-            // through intermediate pieces, so the term fires regardless
-            // of whether the diagonal is currently obstructed.
-            Bitboard emptyBoardDiag = bishopAttacks(sq, 0);
-            int xrayPawns = popcount(emptyBoardDiag & theirPawns);
+            // Bishop x-ray pawns: bonus per enemy pawn that is the first
+            // pawn on one of the bishop's diagonals when only pawns
+            // count as blockers. Using pawn-blocked rays prevents
+            // multiple pawns hidden behind each other on the same
+            // diagonal from each scoring; only the closest pawn on
+            // each ray is credited, matching the classical reference.
+            Bitboard pawnBlockedDiag = bishopAttacks(sq, board.byPiece[Pawn]);
+            int xrayPawns = popcount(pawnBlockedDiag & theirPawns);
             scores[c] += evalParams.BishopXRayPawns * xrayPawns;
 
-            // Bishop on king ring x-ray: bishop's empty-board diagonal
-            // intersects the enemy king ring while its attack set
-            // (with current obstructions) does not. Captures latent
-            // pressure that would activate as soon as the obstruction
-            // moves.
-            if (theirKingRing && (emptyBoardDiag & theirKingRing) && !(atk & theirKingRing)) {
+            // Bishop on king ring x-ray: bishop's pawn-blocked diagonal
+            // intersects the enemy king ring. Stacks freely with the
+            // direct MinorOnKingRing bonus above; the two layers
+            // capture different latent / immediate pressures and the
+            // reference applies them additively.
+            if (theirKingRing && (pawnBlockedDiag & theirKingRing)) {
                 scores[c] += evalParams.BishopOnKingRingXRay;
             }
 
