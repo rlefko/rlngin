@@ -1309,6 +1309,42 @@ static int scaleFactor(const Board &board) {
         }
     }
 
+    // Two rooks each side, pawns confined to a single wing: a structural
+    // simplification that frequently draws because the defender can hold
+    // the only contested wing with the king and rook.
+    int wRooks = board.pieceCount[White][Rook];
+    int bRooks = board.pieceCount[Black][Rook];
+    if (wRooks == 1 && bRooks == 1 && !board.pieceCount[White][Queen] &&
+        !board.pieceCount[Black][Queen] && !board.pieceCount[White][Knight] &&
+        !board.pieceCount[Black][Knight] && !board.pieceCount[White][Bishop] &&
+        !board.pieceCount[Black][Bishop]) {
+        Bitboard allP = board.byPiece[Pawn];
+        bool onlyKingside = allP && !(allP & QueenSideBB);
+        bool onlyQueenside = allP && !(allP & KingSideBB);
+        if (onlyKingside || onlyQueenside) {
+            return 36;
+        }
+    }
+
+    // Single queen on the board (any side) opposed by minors and rooks
+    // is the classical "queen versus distributed material" family that
+    // scales toward a draw. Gated on the other side actually having
+    // pieces to defend with: KQ vs K is a clear win and must not be
+    // damped here.
+    int totalQueens = board.pieceCount[White][Queen] + board.pieceCount[Black][Queen];
+    if (totalQueens == 1) {
+        bool whiteHasQueen = board.pieceCount[White][Queen] > 0;
+        int otherMinors = whiteHasQueen
+                              ? (board.pieceCount[Black][Knight] + board.pieceCount[Black][Bishop])
+                              : (board.pieceCount[White][Knight] + board.pieceCount[White][Bishop]);
+        int otherRooks =
+            whiteHasQueen ? board.pieceCount[Black][Rook] : board.pieceCount[White][Rook];
+        if (otherMinors + otherRooks > 0) {
+            int sf = 37 + 3 * otherMinors;
+            if (sf < 64) return sf;
+        }
+    }
+
     return 64;
 }
 
@@ -1553,6 +1589,11 @@ int evaluate(const Board &board) {
     int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
     result += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
 
+    // Eval grain: round the final score to a multiple of 16 so tuner
+    // noise smaller than the grain cannot perturb move ordering and so
+    // tiny eval flickers do not chain into search instabilities.
+    result = (result / 16) * 16;
+
     return (board.sideToMove == White) ? result : -result;
 }
 
@@ -1640,6 +1681,7 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
     int whitePovResult =
         halfmoveScaled + ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
+    whitePovResult = (whitePovResult / 16) * 16;
     int stmResult = (board.sideToMove == White) ? whitePovResult : -whitePovResult;
 
     // Render one eval half (mg or eg) as a pawns-with-two-decimals string
