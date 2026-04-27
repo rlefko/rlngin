@@ -961,6 +961,21 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             kingDangerEg -= eg_value(evalParams.KingNoQueenDiscount);
         }
 
+        // King-pawn distance: per chebyshev step from our king to the
+        // nearest friendly pawn, applied as an eg-only score penalty.
+        // A king far from its own pawns is structurally exposed and slow
+        // to respond when an endgame race breaks out.
+        if (ourPawnsAll) {
+            int minDist = 8;
+            Bitboard pawnIter = ourPawnsAll;
+            while (pawnIter) {
+                int pSq = popLsb(pawnIter);
+                int d = chebyshev(kingSq, pSq);
+                if (d < minDist) minDist = d;
+            }
+            scores[us] += evalParams.KingPawnDistance * minDist;
+        }
+
         // Only penalize when at least 2 pieces attack the zone: a single
         // piece rarely creates a real mating threat on its own. Clamp
         // kingDanger to a non-negative bounded range before feeding the
@@ -1012,6 +1027,14 @@ static void evaluatePassedPawnExtras(const Board &board, const EvalContext &ctx,
         while (remaining) {
             int sq = popLsb(remaining);
             int relRank = relativeRank(us, sq);
+
+            // PassedFile: per-passer penalty that scales with file
+            // edge-distance. Central passers are harder to escort
+            // because the promotion square sits on a contested rank,
+            // while rook-file passers can hide in the corner.
+            int fileEdgeDistance = std::min(squareFile(sq), 7 - squareFile(sq));
+            scores[us] += evalParams.PassedFile * fileEdgeDistance;
+
             if (relRank < 3) continue;
 
             int stopSq = (us == White) ? sq + 8 : sq - 8;
@@ -1135,17 +1158,31 @@ static Score evaluateInitiative(const Board &board, const EvalContext & /*ctx*/,
                           board.pieceCount[Black][Rook] + board.pieceCount[Black][Queen] ==
                       0);
 
+    bool bothFlanks = kingsidePawns > 0 && queensidePawns > 0;
+    int signedOutflank = 0;
+    if (whiteKingBB && blackKingBB) {
+        int wks = lsb(whiteKingBB);
+        int bks = lsb(blackKingBB);
+        signedOutflank = std::abs(squareFile(wks) - squareFile(bks)) -
+                         std::abs(squareRank(wks) - squareRank(bks));
+    }
+    bool almostUnwinnable = signedOutflank < 0 && !bothFlanks;
+
     int mgMag = mg_value(evalParams.InitiativePasser) * passerCount +
                 mg_value(evalParams.InitiativePawnCount) * pawnCount +
                 mg_value(evalParams.InitiativeOutflank) * outflank +
                 mg_value(evalParams.InitiativeInfiltrate) * infiltrated +
                 mg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
+                mg_value(evalParams.InitiativeBothFlanks) * (bothFlanks ? 1 : 0) +
+                mg_value(evalParams.InitiativeAlmostUnwinnable) * (almostUnwinnable ? 1 : 0) +
                 mg_value(evalParams.InitiativeConstant);
     int egMag = eg_value(evalParams.InitiativePasser) * passerCount +
                 eg_value(evalParams.InitiativePawnCount) * pawnCount +
                 eg_value(evalParams.InitiativeOutflank) * outflank +
                 eg_value(evalParams.InitiativeInfiltrate) * infiltrated +
                 eg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
+                eg_value(evalParams.InitiativeBothFlanks) * (bothFlanks ? 1 : 0) +
+                eg_value(evalParams.InitiativeAlmostUnwinnable) * (almostUnwinnable ? 1 : 0) +
                 eg_value(evalParams.InitiativeConstant);
 
     int egBefore = eg_value(totalBeforeInitiative);
