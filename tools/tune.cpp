@@ -16,6 +16,7 @@
 #include "zobrist.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <cmath>
 #include <cstdint>
@@ -539,15 +540,19 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
 
-    // Texel's Tuning Method, pseudocode verbatim from chessprogramming.org:
-    // for each parameter, try +1 then -1 and keep any change that reduces
-    // the loss; repeat until a full pass makes no change. Strict +/-1
-    // steps with no drift cap and no per-pass step extension. A tiny
-    // relative threshold keeps double-precision noise from being
-    // mistaken for progress. Constrained scalars skip any direction
-    // that would leave their feasible region (sign / monotonicity).
-    // maxPasses caps runtime when convergence stalls on large corpora.
+    // Texel's Tuning Method with a step ladder. The strict CPW pseudocode
+    // tries `+1` then `-1` per scalar; we generalize to a descending
+    // ladder `[8, 4, 2, 1]` so larger plateaus get crossed in early
+    // passes without losing the strict-improvement guarantee. The
+    // bottom rung is still `+/-1`, so a pass that produces no movement
+    // at any step is at least as tight a local optimum as strict CPW
+    // would ever reach -- anything `+/-1` would catch is still caught,
+    // plus larger jumps that strict `+/-1` would miss are now seen.
+    // Each accepted step still strictly decreases the global loss, and
+    // constrained scalars skip any direction that would leave their
+    // feasible region. maxPasses caps runtime when convergence stalls.
     const double relThreshold = 1e-8;
+    static const std::array<int, 4> stepLadder = {8, 4, 2, 1};
 
     for (int pass = 0; pass < maxPasses; pass++) {
         bool improved = false;
@@ -555,32 +560,36 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             auto &p = params[pi];
             int original = p.read();
             double threshold = bestLoss * relThreshold;
+            bool accepted = false;
 
-            if (p.allow(original + 1)) {
-                p.write(original + 1);
-                double lossUp = computeLoss(positions, K, numThreads);
-                if (bestLoss - lossUp > threshold) {
-                    bestLoss = lossUp;
-                    improved = true;
-                    std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
-                              << (original + 1) << " loss=" << bestLoss << "\n";
-                    continue;
+            for (int step : stepLadder) {
+                if (p.allow(original + step)) {
+                    p.write(original + step);
+                    double loss = computeLoss(positions, K, numThreads);
+                    if (bestLoss - loss > threshold) {
+                        bestLoss = loss;
+                        improved = true;
+                        accepted = true;
+                        std::cerr << "  pass " << pass << " " << p.name << ": " << original
+                                  << " -> " << (original + step) << " loss=" << bestLoss << "\n";
+                        break;
+                    }
+                }
+                if (p.allow(original - step)) {
+                    p.write(original - step);
+                    double loss = computeLoss(positions, K, numThreads);
+                    if (bestLoss - loss > threshold) {
+                        bestLoss = loss;
+                        improved = true;
+                        accepted = true;
+                        std::cerr << "  pass " << pass << " " << p.name << ": " << original
+                                  << " -> " << (original - step) << " loss=" << bestLoss << "\n";
+                        break;
+                    }
                 }
             }
 
-            if (p.allow(original - 1)) {
-                p.write(original - 1);
-                double lossDown = computeLoss(positions, K, numThreads);
-                if (bestLoss - lossDown > threshold) {
-                    bestLoss = lossDown;
-                    improved = true;
-                    std::cerr << "  pass " << pass << " " << p.name << ": " << original << " -> "
-                              << (original - 1) << " loss=" << bestLoss << "\n";
-                    continue;
-                }
-            }
-
-            p.write(original);
+            if (!accepted) p.write(original);
         }
         std::cerr << "pass " << pass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";

@@ -202,6 +202,13 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
+// Tuner-leaf mode flag. While `qsearchLeafBoard` is running, delta and
+// SEE pruning are turned off so every plausible capture gets resolved
+// and the leaf the tuner labels is genuinely quiet. Real search reads
+// this as `false`; the flag is set sequentially from the precompute
+// path, so no synchronization is needed.
+static bool g_tunerLeafMode = false;
+
 int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
@@ -263,7 +270,8 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         }
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[board.sideToMove];
         Bitboard promoReady = ourPawns & ((board.sideToMove == White) ? Rank7BB : Rank2BB);
-        if (!promoReady && standPat + bestTargetValue + searchParams.QsDeltaMargin <= alpha) {
+        if (!g_tunerLeafMode && !promoReady &&
+            standPat + bestTargetValue + searchParams.QsDeltaMargin <= alpha) {
             // Mirror the no-move-tried store path below so future probes
             // can cut immediately instead of recomputing stand-pat from
             // scratch. The shortcut fires only when standPat < alpha, so
@@ -281,13 +289,16 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     while (picker.next(pm)) {
         const Move &m = pm.move;
         if (!inCheck && isCapture(board, m)) {
-            // Prune losing captures
-            if (see(board, m) < 0) continue;
+            // Prune losing captures. Disabled under tuner-leaf mode so
+            // SEE-losing tactical captures still feed into the leaf
+            // resolution.
+            if (!g_tunerLeafMode && see(board, m) < 0) continue;
             // Delta pruning: skip captures that cannot raise alpha even on a
             // full recapture with a positional bonus. With a wider eval
             // distribution, standPat often sits well below alpha, so qsearch
             // fans out captures that have no chance of moving the score.
-            if (m.promotion == None &&
+            // Also disabled under tuner-leaf mode.
+            if (!g_tunerLeafMode && m.promotion == None &&
                 standPat + PieceValue[capturedType(board, m)] + searchParams.QsDeltaMargin <=
                     alpha) {
                 continue;
@@ -362,18 +373,13 @@ Board qsearchLeafBoard(const Board &root) {
     // sequentially before the multi-threaded loss loop starts.
     tt.clear();
 
-    // Disable qsearch delta pruning while resolving a tuner leaf. The
-    // SPSA-tuned QsDeltaMargin is calibrated for real-search speed,
-    // where alpha is tight against stand-pat and the prune saves work.
-    // For Texel labels we want every plausible capture exchanged so
-    // the static eval is fitted to a genuinely quiet position; a
-    // marginal capture pruned by delta inside a deep recursive chain
-    // would otherwise leave a leaf with unresolved tactics. The
-    // wide value is restored after the qsearch and walk complete; the
-    // full-window stand-pat short-circuit still closes out branches
-    // with no profitable continuation.
-    int savedDelta = searchParams.QsDeltaMargin;
-    searchParams.QsDeltaMargin = 100000;
+    // Switch qsearch into tuner-leaf mode for the duration of this
+    // call. Both delta pruning (against searchParams.QsDeltaMargin)
+    // and SEE-loss capture pruning are disabled so every plausible
+    // capture is resolved before the static eval is fitted to the
+    // returned leaf. Real search keeps both prunes for speed; the
+    // SPSA-tuned QsDeltaMargin is unchanged.
+    g_tunerLeafMode = true;
 
     SearchState state;
     state.startTime = std::chrono::steady_clock::now();
@@ -395,7 +401,7 @@ Board qsearchLeafBoard(const Board &root) {
         cur.makeMove(m);
     }
 
-    searchParams.QsDeltaMargin = savedDelta;
+    g_tunerLeafMode = false;
     return cur;
 }
 
