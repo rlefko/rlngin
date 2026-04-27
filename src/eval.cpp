@@ -439,9 +439,33 @@ static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]
             scores[c] += evalParams.MobilityBonus[Knight][count];
             ctx.mobility[c] += evalParams.MobilityBonus[Knight][count];
 
-            if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
-                !(PawnSpanMask[c][sq] & theirPawns)) {
-                scores[c] += evalParams.KnightOutpostBonus;
+            bool onOutpost = (squareBB(sq) & OutpostRanks[c]) &&
+                             (PawnAttacks[c ^ 1][sq] & ourPawns) &&
+                             !(PawnSpanMask[c][sq] & theirPawns);
+            if (onOutpost) {
+                int outpostFile = squareFile(sq);
+                if (outpostFile <= 1 || outpostFile >= 6) {
+                    // Bad outpost: a flank-file outpost has limited
+                    // tactical leverage; the layer replaces the regular
+                    // outpost reward with the BadOutpost score.
+                    scores[c] += evalParams.BadOutpost;
+                } else {
+                    scores[c] += evalParams.KnightOutpostBonus;
+                }
+            } else {
+                // Reachable outpost: at least one outpost square in the
+                // knight's attack set is defended by our pawn and not
+                // contestable by enemy pawns. Smaller weight than the
+                // on-outpost bonus.
+                Bitboard reachable = atk & OutpostRanks[c] & ~board.byColor[c];
+                while (reachable) {
+                    int rsq = popLsb(reachable);
+                    if ((PawnAttacks[c ^ 1][rsq] & ourPawns) &&
+                        !(PawnSpanMask[c][rsq] & theirPawns)) {
+                        scores[c] += evalParams.ReachableOutpost;
+                        break;
+                    }
+                }
             }
 
             if (theirKingRing && (atk & theirKingRing)) {
@@ -470,6 +494,23 @@ static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
             int blockingPawns = popcount(ourPawns & sameColorSquares);
             scores[c] += evalParams.BadBishopPenalty * blockingPawns;
+
+            // Bishop x-ray pawns: bonus per enemy pawn sitting on the
+            // bishop's empty-board diagonal. The pawn pressure persists
+            // through intermediate pieces, so the term fires regardless
+            // of whether the diagonal is currently obstructed.
+            Bitboard emptyBoardDiag = bishopAttacks(sq, 0);
+            int xrayPawns = popcount(emptyBoardDiag & theirPawns);
+            scores[c] += evalParams.BishopXRayPawns * xrayPawns;
+
+            // Bishop on king ring x-ray: bishop's empty-board diagonal
+            // intersects the enemy king ring while its attack set
+            // (with current obstructions) does not. Captures latent
+            // pressure that would activate as soon as the obstruction
+            // moves.
+            if (theirKingRing && (emptyBoardDiag & theirKingRing) && !(atk & theirKingRing)) {
+                scores[c] += evalParams.BishopOnKingRingXRay;
+            }
 
             // Long diagonal sweep: the two central squares on this bishop's
             // long diagonal must both be covered by the bishop itself (from
@@ -519,6 +560,13 @@ static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]
                 scores[c] += evalParams.RookSemiOpenFileBonus;
             }
 
+            // Rook on queen file: rook shares a file with any queen on
+            // the board. Queens often shuttle along their files, so a
+            // rook on the same file is always one move from contact.
+            if (fileMask & board.byPiece[Queen]) {
+                scores[c] += evalParams.RookOnQueenFile;
+            }
+
             // Trapped rook: little room to move and our king is on the same
             // side of the board, so the rook cannot swing across. Gating on
             // mobility rather than piece-square heuristics avoids the old
@@ -545,6 +593,15 @@ static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]
             int count = popcount(queenAttacks(sq, occ) & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Queen][count];
             ctx.mobility[c] += evalParams.MobilityBonus[Queen][count];
+
+            // Queen infiltration: queen sits on rank 5 or higher (relative
+            // to us) on a square outside the enemy pawn span. The queen
+            // is exposed to gain-of-tempo harassment by minor pieces, so
+            // the term is signed to penalize the queen for sitting there.
+            int relRank = relativeRank(static_cast<Color>(c), sq);
+            if (relRank >= 4 && !(PawnSpanMask[c ^ 1][sq] & theirPawns)) {
+                scores[c] += evalParams.QueenInfiltration;
+            }
         }
     }
 }
