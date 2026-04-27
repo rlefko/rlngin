@@ -270,15 +270,6 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("RestrictedPieceEg", &evalParams.RestrictedPiece, false, 0, 20,
                                     1.5, 0.5));
 
-    // --- Pawn islands penalty: penalty-signed so SPSA cannot flip it
-    // into a bonus. The first penalty-valued scalar exposed via SPSA, so
-    // the bounds follow the "bonuses stay bonuses" invariant inverted:
-    // maxValue pinned at 0 keeps the sign. ---
-    out.push_back(makeScoreHalfSpec("PawnIslandPenaltyMg", &evalParams.PawnIslandPenalty, true, -40,
-                                    0, 4.0, 1.5));
-    out.push_back(makeScoreHalfSpec("PawnIslandPenaltyEg", &evalParams.PawnIslandPenalty, false,
-                                    -60, 0, 5.0, 2.0));
-
     return out;
 }
 

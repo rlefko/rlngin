@@ -205,11 +205,9 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("DoubledPawnPenalty", &evalParams.DoubledPawnPenalty, nonPositive());
     addMgEgConstr("BackwardPawnPenalty", &evalParams.BackwardPawnPenalty, nonPositive());
     addMgEgConstr("WeakUnopposedPenalty", &evalParams.WeakUnopposedPenalty, nonPositive());
-    addMgEgConstr("DoubledIsolatedPenalty", &evalParams.DoubledIsolatedPenalty, nonPositive());
     for (int i = 0; i < 2; i++)
         addMgEgConstr("BlockedPawnPenalty[" + std::to_string(i) + "]",
                       &evalParams.BlockedPawnPenalty[i], nonPositive());
-    addMgEgConstr("PawnIslandPenalty", &evalParams.PawnIslandPenalty, nonPositive());
     // PhalanxBonus is disabled in eval (see eval_params.h); skip tuning it.
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
@@ -564,8 +562,6 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.BackwardPawnPenalty) << ", // BackwardPawnPenalty\n";
     std::cout << "    " << fmtScore(evalParams.WeakUnopposedPenalty)
               << ", // WeakUnopposedPenalty\n";
-    std::cout << "    " << fmtScore(evalParams.DoubledIsolatedPenalty)
-              << ", // DoubledIsolatedPenalty\n";
     std::cout << "    {" << fmtScore(evalParams.BlockedPawnPenalty[0]) << ", "
               << fmtScore(evalParams.BlockedPawnPenalty[1])
               << "}, // BlockedPawnPenalty (rel rank 5, 6)\n";

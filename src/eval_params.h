@@ -142,25 +142,12 @@ struct EvalParams {
     // worse than opposed weakness.
     Score WeakUnopposedPenalty;
 
-    // Extra penalty when a pawn is both doubled and isolated. The joint
-    // case is strictly worse than either alone: the doubled pair cannot
-    // be defended by a friendly pawn from any file, and losing the lead
-    // pawn leaves the trailing pawn equally defenseless.
-    Score DoubledIsolatedPenalty;
-
     // Penalty for a non-passer pawn whose stop square is occupied by an
     // enemy piece (including an enemy pawn), indexed by relative rank
     // minus 5, so entry [0] is rank 5 and entry [1] is rank 6. Captures
     // the over-extended-but-stuck pattern that passers already get via
     // PassedBlockedPenalty.
     Score BlockedPawnPenalty[2];
-
-    // Penalty per extra pawn island beyond the first. A side's pawns
-    // split into islands at every empty file: one contiguous group is
-    // ideal, and each additional island loses the ability to use the
-    // in-between file as a support highway while doubling the number
-    // of chain endpoints the opponent can attack.
-    Score PawnIslandPenalty;
 
     // Extra bonus layered on top of ConnectedPawnBonus when the connected
     // pawn sits in a phalanx (same rank, adjacent file) rather than only
