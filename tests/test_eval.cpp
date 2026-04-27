@@ -47,7 +47,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
     // (isolated penalty, passed bonus) collapse into this expected score.
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 377);
+    CHECK(evaluate(board) == 313);
 
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
@@ -473,7 +473,7 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // winning king-and-pawn endings downward. The eval must match the
     // baseline (same score as before the weak-unopposed term existed).
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 377);
+    CHECK(evaluate(board) == 313);
 
     // Textbook K + P vs K with an outside passed pawn: white is winning
     // and the score should not be dragged down by treating the "no
@@ -482,7 +482,7 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // which boosts White's relative eval beyond the pre-pawnless-flank
     // baseline; the term is correct so the value moves with it.
     board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
-    CHECK(evaluate(board) == 437);
+    CHECK(evaluate(board) == 397);
 }
 
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {

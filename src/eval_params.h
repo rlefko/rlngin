@@ -271,6 +271,26 @@ struct EvalParams {
     Score InitiativePureBase;
     Score InitiativeConstant;
 
+    // Bonus when pawns sit on both kingside and queenside flanks. The
+    // signal that the position has play on both wings is a complexity
+    // multiplier the outflank product alone underweights.
+    Score InitiativeBothFlanks;
+
+    // Negative input fired when outflank is negative (sides on opposite
+    // wings) AND pawns are not on both flanks. This is the
+    // "almost-unwinnable" structural signature.
+    Score InitiativeAlmostUnwinnable;
+
+    // Per-step penalty in the eg-only "king to nearest friendly pawn"
+    // distance. A king far from its own pawns is structurally exposed
+    // and slow to respond to threats.
+    Score KingPawnDistance;
+
+    // Per-passer file edge-distance penalty: passers on central files
+    // are harder to escort than passers on rook files where the
+    // promotion square is in a corner. Negative-signed.
+    Score PassedFile;
+
     // Bonus per friendly slider that "x-rays" the enemy queen through
     // exactly one intermediate blocker: our bishop or rook shares a ray
     // with the queen and there is one piece (of either color) between

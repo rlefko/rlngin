@@ -211,6 +211,10 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 12),  // InitiativeInfiltrate
     S(0, 18),  // InitiativePureBase
     S(0, -30), // InitiativeConstant
+    S(0, 21),  // InitiativeBothFlanks
+    S(0, -43), // InitiativeAlmostUnwinnable
+    S(0, -16), // KingPawnDistance
+    S(-11, -8), // PassedFile
 
     S(15,  8), // SliderOnQueenBishop
     S(20, 10), // SliderOnQueenRook
