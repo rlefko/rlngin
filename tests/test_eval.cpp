@@ -1290,6 +1290,23 @@ TEST_CASE("Eval: long diagonal bonus applies to both diagonals", "[eval][bishop]
     CHECK(openMg - blockedMg >= 30);
 }
 
+TEST_CASE("Eval: doubled rooks on the same file score above two separate rooks", "[eval][rook]") {
+    Board board;
+
+    // Two white rooks stacked on the d-file. The per-rook open-file
+    // credit fires twice and the doubled-rook bonus fires once.
+    board.setFen("4k3/8/8/8/8/8/8/3RR2K w - - 0 1");
+    int splitMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Same two rooks but stacked on the d-file (a doubled pair).
+    board.setFen("4k3/8/8/8/8/8/3R4/3R3K w - - 0 1");
+    int doubledMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Doubled pair earns the extra DoubledRookBonus on top of the
+    // per-rook file bonus that the split arrangement already gets.
+    CHECK(doubledMg - splitMg >= 15);
+}
+
 TEST_CASE("Eval: bishop trapped on a7 by an enemy b6 pawn loses material", "[eval][bishop]") {
     Board board;
 

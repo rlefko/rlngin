@@ -125,6 +125,7 @@ static const EvalParams kDefaultEvalParams = {
 
     S(114, -49), // RookOpenFileBonus
     S( 15,  37), // RookSemiOpenFileBonus
+    S( 20,  10), // DoubledRookBonus
     S( 81,  30), // KnightOutpostBonus
     S( 78,  45), // BishopOutpostBonus
     S( -7,   0), // TrappedRookByKingPenalty

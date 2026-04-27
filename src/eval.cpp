@@ -592,6 +592,22 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             }
         }
 
+        // Doubled rooks: per-file pass credits the pair-on-file pattern
+        // separately from the per-rook open / semi-open file bonus
+        // already applied above. The per-rook bonus credits each rook
+        // for emptiness of the file, which doubles naturally when two
+        // rooks both sit there, but it does not capture the additional
+        // synergy of the pair (battery, defense rotation), so this term
+        // adds a single bonus per shared file.
+        Bitboard rooksOnFiles = board.byPiece[Rook] & board.byColor[c];
+        if (rooksOnFiles) {
+            for (int f = 0; f < 8; f++) {
+                if (popcount(rooksOnFiles & FileBB[f]) >= 2) {
+                    scores[c] += evalParams.DoubledRookBonus;
+                }
+            }
+        }
+
         Bitboard queens = board.byPiece[Queen] & board.byColor[c];
         while (queens) {
             int sq = popLsb(queens);

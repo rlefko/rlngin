@@ -54,6 +54,13 @@ struct EvalParams {
     Score RookOpenFileBonus;
     Score RookSemiOpenFileBonus;
 
+    // Bonus per file shared by two or more friendly rooks. Goes on top
+    // of the per-rook open or semi-open file credit because a pair of
+    // doubled rooks generates pressure that is qualitatively beyond the
+    // sum of two individual rooks: the pair can cover the file in
+    // tandem and rotate cleanly between attack and defense.
+    Score DoubledRookBonus;
+
     // Minor-piece outposts and trapped-rook-by-own-king.
     Score KnightOutpostBonus;
     Score BishopOutpostBonus;
