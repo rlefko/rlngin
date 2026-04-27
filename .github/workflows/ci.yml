@@ -81,11 +81,11 @@ jobs:
           chmod +x build/rlngin-base
           git worktree remove /tmp/base
 
-      - name: Download fastchess
+      - name: Build fastchess from source
         run: |
-          curl -sL https://github.com/Disservin/fastchess/releases/latest/download/fastchess-linux-x86-64.tar -o fastchess.tar
-          tar xf fastchess.tar
-          cp fastchess-linux-x86-64/fastchess ./fastchess
+          git clone --depth 1 https://github.com/Disservin/fastchess.git /tmp/fastchess
+          make -C /tmp/fastchess -j"$(nproc)"
+          cp /tmp/fastchess/fastchess ./fastchess
           chmod +x ./fastchess
 
       - name: Download opening book
