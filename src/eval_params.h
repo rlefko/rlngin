@@ -212,6 +212,11 @@ struct EvalParams {
     Score DoubledPawnPenalty;
     Score BackwardPawnPenalty;
 
+    // WeakLever: an unsupported pawn that is attacked diagonally by two
+    // or more enemy pawns. The pawn cannot be defended by another pawn
+    // and is sure to be lost in subsequent exchanges.
+    Score WeakLever;
+
     // Extra penalty on top of IsolatedPawnPenalty or BackwardPawnPenalty
     // when the pawn is "unopposed", meaning no enemy pawn sits on the
     // same file ahead of it. An open file behind a weak pawn makes it an
@@ -275,6 +280,16 @@ struct EvalParams {
     // variants are scored per counted slider.
     Score SliderOnQueenBishop;
     Score SliderOnQueenRook;
+
+    // Bonus per weak (undefended or non-pawn double-attacked) enemy
+    // piece whose only defender is the enemy queen. Tying the queen to
+    // a defensive task is itself a positional gain.
+    Score WeakQueenProtection;
+
+    // Bonus per safe square our knight could move to that attacks the
+    // enemy queen. Counts only safe destinations for the knight, so
+    // walk-in tactics don't false-fire.
+    Score KnightOnQueen;
 
     // Bonus per square that both sides' non-pawn pieces attack, minus
     // squares the opponent's pawns defend. A square we attack that the

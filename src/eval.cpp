@@ -287,6 +287,17 @@ static void computePawns(const Board &board, Score perSide[2], Bitboard passers[
                 score += evalParams.DoubledPawnPenalty;
             }
 
+            // Weak lever: an unsupported pawn with two enemy pawn
+            // attackers on its diagonals. The pawn cannot be defended
+            // by another pawn and is a long-term liability.
+            bool defendedByPawn = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
+            if (!defendedByPawn) {
+                Bitboard leverAttackers = PawnAttacks[c][sq] & theirPawns;
+                if (popcount(leverAttackers) >= 2) {
+                    score += evalParams.WeakLever;
+                }
+            }
+
             // "Unopposed" is the absence of any enemy pawn on the same
             // file ahead of this pawn. It is used by the weak-pawn term
             // below, and potentially by future pawn-structure signals, so
@@ -1284,18 +1295,29 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard pawnThreats = ctx.pawnAttacks[us] & theirNonPawnNonKing;
         scores[us] += evalParams.ThreatByPawn * popcount(pawnThreats);
 
-        // Threat by minor: our knights or bishops attacking an enemy rook
-        // or queen. Index by the victim so the table naturally zeroes out
-        // same-value targets and we never credit minor-on-minor threats.
+        // Threat by minor: our knights or bishops attacking enemy
+        // pieces. The same-value-victim slots remain zero in the
+        // defaults so they fold out naturally; the knight/bishop slots
+        // additionally filter on "not defended by an enemy pawn" so we
+        // do not credit a trade-losing tactic.
         Bitboard minorAttacks = ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop];
         Bitboard victims = minorAttacks & theirPieces;
+        Bitboard minorVsKnight = victims & board.byPiece[Knight] & ~ctx.pawnAttacks[them];
+        Bitboard minorVsBishop = victims & board.byPiece[Bishop] & ~ctx.pawnAttacks[them];
         Bitboard minorVsRook = victims & board.byPiece[Rook];
         Bitboard minorVsQueen = victims & board.byPiece[Queen];
+        scores[us] += evalParams.ThreatByMinor[Knight] * popcount(minorVsKnight);
+        scores[us] += evalParams.ThreatByMinor[Bishop] * popcount(minorVsBishop);
         scores[us] += evalParams.ThreatByMinor[Rook] * popcount(minorVsRook);
         scores[us] += evalParams.ThreatByMinor[Queen] * popcount(minorVsQueen);
 
-        // Threat by rook: our rooks attacking an enemy queen.
-        Bitboard rookVsQueen = ctx.attackedBy[us][Rook] & theirPieces & board.byPiece[Queen];
+        // Threat by rook: our rooks attacking an enemy minor or queen.
+        Bitboard rookVictims = ctx.attackedBy[us][Rook] & theirPieces;
+        Bitboard rookVsKnight = rookVictims & board.byPiece[Knight];
+        Bitboard rookVsBishop = rookVictims & board.byPiece[Bishop];
+        Bitboard rookVsQueen = rookVictims & board.byPiece[Queen];
+        scores[us] += evalParams.ThreatByRook[Knight] * popcount(rookVsKnight);
+        scores[us] += evalParams.ThreatByRook[Bishop] * popcount(rookVsBishop);
         scores[us] += evalParams.ThreatByRook[Queen] * popcount(rookVsQueen);
 
         // Threat by king: enemy pieces sitting on a square our king attacks
@@ -1319,6 +1341,36 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // Weak queen: enemy queen attacked by two or more of our pieces.
         Bitboard weakQueen = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
         if (weakQueen) scores[us] += evalParams.WeakQueen;
+
+        // Weak queen protection: a weak enemy piece (in the Hanging
+        // sense) whose only defender is the enemy queen. Tying the
+        // queen to a single defensive task is itself a positional gain.
+        Bitboard weakDefendedByQueen = undefended & ctx.attackedBy[them][Queen] &
+                                       ~ctx.attackedBy[them][Pawn] & ~ctx.attackedBy[them][Knight] &
+                                       ~ctx.attackedBy[them][Bishop] & ~ctx.attackedBy[them][Rook] &
+                                       ~ctx.attackedBy[them][King];
+        scores[us] += evalParams.WeakQueenProtection * popcount(weakDefendedByQueen);
+
+        // Knight on queen: per safe square our knight could move to that
+        // attacks the enemy queen. Counts only safe destinations so
+        // walk-in tactics do not false-fire.
+        Bitboard ourKnights = board.byPiece[Knight] & board.byColor[us];
+        Bitboard enemyQueensIter = theirPieces & board.byPiece[Queen];
+        if (ourKnights && enemyQueensIter) {
+            Bitboard safeKnightDests = ~board.byColor[us] & ~ctx.pawnAttacks[them];
+            int knightOnQueenCount = 0;
+            Bitboard kIter = ourKnights;
+            while (kIter) {
+                int knSq = popLsb(kIter);
+                Bitboard hops = KnightAttacks[knSq] & safeKnightDests;
+                Bitboard qIter = enemyQueensIter;
+                while (qIter) {
+                    int qSq = popLsb(qIter);
+                    knightOnQueenCount += popcount(hops & KnightAttacks[qSq]);
+                }
+            }
+            scores[us] += evalParams.KnightOnQueen * knightOnQueenCount;
+        }
 
         // Slider on queen: every friendly bishop or rook whose ray to an
         // enemy queen passes through exactly one intermediate piece. Done
