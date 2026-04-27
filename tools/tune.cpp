@@ -1060,17 +1060,22 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         }
     }
 
-    // Deterministic single-thread finalizer at the tighter threshold.
-    // The threaded passes throw away small candidate improvements that
-    // sit below their loss noise; deterministic passes recover them.
-    // Loops until a finalizer pass produces no further movement. Pass
-    // numbers continue the global sequence so log replay stays valid.
-    std::cerr << "deterministic finalizer at threshold " << relThresholdDeterministic
-              << " (single-thread)\n";
-    bestLoss = computeLoss(positions, K, 1);
-    std::cerr << "deterministic baseline loss: " << bestLoss << "\n";
+    // Tight-threshold finalizer. The main passes use 1e-7 to skim above
+    // the (now small, since pawn / material hashes are thread_local)
+    // floating-point summation noise; the finalizer uses 1e-8 to
+    // recover smaller real improvements. With thread_local hashes the
+    // loss is bit-deterministic for a given thread count, so we keep
+    // running at the user-requested numThreads instead of dropping to
+    // single-thread; the result is the same canonical convergence
+    // point at far less wall time. Loops until a pass produces no
+    // movement. Global pass numbering continues so log replay stays
+    // valid.
+    std::cerr << "tight-threshold finalizer at " << relThresholdDeterministic
+              << " (numThreads=" << numThreads << ")\n";
+    bestLoss = computeLoss(positions, K, numThreads);
+    std::cerr << "finalizer baseline loss: " << bestLoss << "\n";
     for (int finalPass = 0; finalPass < maxPasses; finalPass++, globalPass++) {
-        bool improved = runPass(globalPass, /*passNumThreads=*/1, relThresholdDeterministic);
+        bool improved = runPass(globalPass, numThreads, relThresholdDeterministic);
         // Canonicalize PST/material gauge so the per-term values stay
         // interpretable. Bit-identical eval, and the next pass picks
         // up from the centered point.
