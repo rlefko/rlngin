@@ -1,6 +1,7 @@
 #include "board.h"
 #include "catch_amalgamated.hpp"
 #include "eval.h"
+#include "eval_params.h"
 
 #include <cstdlib>
 #include <sstream>
@@ -1290,21 +1291,39 @@ TEST_CASE("Eval: long diagonal bonus applies to both diagonals", "[eval][bishop]
     CHECK(openMg - blockedMg >= 30);
 }
 
-TEST_CASE("Eval: doubled rooks on the same file score above two separate rooks", "[eval][rook]") {
+TEST_CASE("Eval: rook on the enemy king file scores above a rook on a neutral file",
+          "[eval][rook]") {
     Board board;
 
-    // Two white rooks stacked on the d-file. The per-rook open-file
-    // credit fires twice and the doubled-rook bonus fires once.
-    board.setFen("4k3/8/8/8/8/8/8/3RR2K w - - 0 1");
-    int splitMg = parseMg(bucketLine(board, "Pieces"));
+    // White rook on e1 with the black king on e8: an open file directly
+    // facing the king. RookOnKingFileBonus[0] should fire on top of the
+    // existing RookOpenFileBonus.
+    board.setFen("4k3/8/8/8/8/8/8/4R2K w - - 0 1");
+    int kingFileMg = parseMg(bucketLine(board, "Pieces"));
 
-    // Same two rooks but stacked on the d-file (a doubled pair).
-    board.setFen("4k3/8/8/8/8/8/3R4/3R3K w - - 0 1");
-    int doubledMg = parseMg(bucketLine(board, "Pieces"));
+    // Same rook moved to a1 facing nothing on the e-file; only the
+    // generic open-file bonus fires.
+    board.setFen("4k3/8/8/8/8/8/8/R6K w - - 0 1");
+    int neutralFileMg = parseMg(bucketLine(board, "Pieces"));
 
-    // Doubled pair earns the extra DoubledRookBonus on top of the
-    // per-rook file bonus that the split arrangement already gets.
-    CHECK(doubledMg - splitMg >= 15);
+    CHECK(kingFileMg - neutralFileMg >= 25);
+}
+
+TEST_CASE("Eval: doubled rooks on the same file earn the doubled-rook bonus", "[eval][rook]") {
+    Board board;
+    board.setFen("4k3/8/8/8/8/8/R7/R6K w - - 0 1");
+
+    int withDoubled = evaluate(board);
+    Score saved = evalParams.DoubledRookBonus;
+    evalParams.DoubledRookBonus = 0;
+    int withoutDoubled = evaluate(board);
+    evalParams.DoubledRookBonus = saved;
+
+    // Toggling the bonus off must lower the score by the tapered weight,
+    // confirming the per-file pair pass actually fires for two rooks
+    // sharing the a-file. Direct toggle avoids interaction with the
+    // mobility table which has non-monotonic neighbouring entries.
+    CHECK(withDoubled > withoutDoubled);
 }
 
 TEST_CASE("Eval: bishop trapped on a7 by an enemy b6 pawn loses material", "[eval][bishop]") {

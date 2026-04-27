@@ -544,6 +544,9 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
         bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
 
+        Bitboard theirKingForFile = board.byPiece[King] & board.byColor[c ^ 1];
+        int theirKingFile = theirKingForFile ? squareFile(lsb(theirKingForFile)) : -1;
+
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
         while (rooks) {
             int sq = popLsb(rooks);
@@ -558,6 +561,20 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += evalParams.RookOpenFileBonus;
             } else if (noOurPawns) {
                 scores[c] += evalParams.RookSemiOpenFileBonus;
+            }
+
+            // Rook on the file of the enemy king: independent of the
+            // generic open / semi-open file bonus above (which does not
+            // care about king location) and of the king-ring attack
+            // bonus below (which keys on attack-set intersection, not
+            // on file alignment), so this signal is not double-counted
+            // even when the rook also satisfies those conditions. We
+            // only credit the open / semi-open shapes here because a
+            // file blocked by our own pawn does not yet generate king
+            // pressure; the rook still has to clear the obstruction.
+            if (theirKingFile == squareFile(sq) && noOurPawns) {
+                int idx = noTheirPawns ? 0 : 1;
+                scores[c] += evalParams.RookOnKingFileBonus[idx];
             }
 
             // Rook on the seventh: either targets enemy pawns on the 7th

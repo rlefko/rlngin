@@ -61,6 +61,16 @@ struct EvalParams {
     // tandem and rotate cleanly between attack and defense.
     Score DoubledRookBonus;
 
+    // Bonus when a friendly rook shares a file with the enemy king.
+    // Index 0 is the open variant (no pawns of either color on the
+    // file), index 1 is the semi-open variant (no friendly pawns but
+    // enemy pawns on the file). The signal is independent of the
+    // existing RookOpenFileBonus (which ignores king location) and the
+    // king-ring attack bonus (which fires on attack-set intersection,
+    // not on file alignment); a rook directly facing the enemy king
+    // creates pressure that neither term currently captures.
+    Score RookOnKingFileBonus[2];
+
     // Minor-piece outposts and trapped-rook-by-own-king.
     Score KnightOutpostBonus;
     Score BishopOutpostBonus;
