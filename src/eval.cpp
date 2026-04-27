@@ -1322,7 +1322,9 @@ static int scaleFactor(const Board &board) {
 
     // Two rooks each side, pawns confined to a single wing: a structural
     // simplification that frequently draws because the defender can hold
-    // the only contested wing with the king and rook.
+    // the only contested wing with the king and rook. Use 4-file
+    // half-board masks (not the 3-file KingSideBB / QueenSideBB which
+    // exclude d/e and would treat center pawns as on no wing at all).
     int wRooks = board.pieceCount[White][Rook];
     int bRooks = board.pieceCount[Black][Rook];
     if (wRooks == 1 && bRooks == 1 && !board.pieceCount[White][Queen] &&
@@ -1330,8 +1332,10 @@ static int scaleFactor(const Board &board) {
         !board.pieceCount[Black][Knight] && !board.pieceCount[White][Bishop] &&
         !board.pieceCount[Black][Bishop]) {
         Bitboard allP = board.byPiece[Pawn];
-        bool onlyKingside = allP && !(allP & QueenSideBB);
-        bool onlyQueenside = allP && !(allP & KingSideBB);
+        const Bitboard QueenFlank = FileABB | FileBBB | FileCBB | FileDBB;
+        const Bitboard KingFlank = FileEBB | FileFBB | FileGBB | FileHBB;
+        bool onlyKingside = allP && !(allP & QueenFlank);
+        bool onlyQueenside = allP && !(allP & KingFlank);
         if (onlyKingside || onlyQueenside) {
             return 36;
         }
