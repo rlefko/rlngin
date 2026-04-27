@@ -362,6 +362,19 @@ Board qsearchLeafBoard(const Board &root) {
     // sequentially before the multi-threaded loss loop starts.
     tt.clear();
 
+    // Disable qsearch delta pruning while resolving a tuner leaf. The
+    // SPSA-tuned QsDeltaMargin is calibrated for real-search speed,
+    // where alpha is tight against stand-pat and the prune saves work.
+    // For Texel labels we want every plausible capture exchanged so
+    // the static eval is fitted to a genuinely quiet position; a
+    // marginal capture pruned by delta inside a deep recursive chain
+    // would otherwise leave a leaf with unresolved tactics. The
+    // wide value is restored after the qsearch and walk complete; the
+    // full-window stand-pat short-circuit still closes out branches
+    // with no profitable continuation.
+    int savedDelta = searchParams.QsDeltaMargin;
+    searchParams.QsDeltaMargin = 100000;
+
     SearchState state;
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = std::numeric_limits<int64_t>::max();
@@ -381,6 +394,8 @@ Board qsearchLeafBoard(const Board &root) {
         if (!isCapture(cur, m)) break;
         cur.makeMove(m);
     }
+
+    searchParams.QsDeltaMargin = savedDelta;
     return cur;
 }
 
