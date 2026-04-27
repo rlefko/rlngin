@@ -668,17 +668,41 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
 // leaf so the loss loop can use a fast static evaluate() call. Runs
 // sequentially because qsearchLeafBoard clears and rewrites the global
 // TT per position.
-static void precomputeLeaves(std::vector<LabeledPosition> &positions) {
-    std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions...\n";
+static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThreads) {
+    std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions on "
+              << numThreads << " threads...\n";
     resetQsearchLeafCounters();
-    size_t reported = 0;
-    for (size_t i = 0; i < positions.size(); i++) {
-        positions[i].board = qsearchLeafBoard(positions[i].board);
-        if (i - reported >= 50000) {
-            std::cerr << "  " << i << " leaves computed\n";
-            reported = i;
+
+    // Workers share an atomic cursor so any uneven per-position cost
+    // (some leaves walk a long capture chain, others stand-pat at the
+    // root) load-balances naturally. Each worker has its own
+    // thread_local TT inside qsearchLeafBoard, so there is no
+    // contention on the table itself.
+    std::atomic<size_t> nextIndex{0};
+    std::atomic<size_t> nextReport{50000};
+    const size_t total = positions.size();
+
+    auto worker = [&]() {
+        while (true) {
+            size_t i = nextIndex.fetch_add(1, std::memory_order_relaxed);
+            if (i >= total) break;
+            positions[i].board = qsearchLeafBoard(positions[i].board);
+            size_t threshold = nextReport.load(std::memory_order_relaxed);
+            if (i + 1 >= threshold) {
+                if (nextReport.compare_exchange_strong(threshold, threshold + 50000)) {
+                    std::cerr << "  " << (i + 1) << " leaves computed\n";
+                }
+            }
         }
-    }
+    };
+
+    std::vector<std::thread> workers;
+    workers.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++)
+        workers.emplace_back(worker);
+    for (auto &th : workers)
+        th.join();
+
     auto stats = qsearchLeafCounters();
     std::cerr << "leaf stats: " << stats.total << " leaves, " << stats.inCheck
               << " returned in check, " << stats.ttMiss << " TT-miss exits, "
@@ -1026,7 +1050,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         // precompute over the whole corpus), so default off.
         if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
             std::cerr << "refresh leaves after pass " << globalPass << "\n";
-            precomputeLeaves(positions);
+            precomputeLeaves(positions, numThreads);
             // Re-fit K against the new leaves and rebase loss.
             double oldK = K;
             K = findBestK(positions, numThreads);
@@ -1353,7 +1377,7 @@ int main(int argc, char **argv) {
     auto positions = loadDataset(dataset);
     std::cerr << "loaded " << positions.size() << " positions\n";
 
-    precomputeLeaves(positions);
+    precomputeLeaves(positions, numThreads);
 
     std::cerr << "finding K...\n";
     double K = findBestK(positions, numThreads);

@@ -23,7 +23,16 @@ static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 
-static TranspositionTable tt(16);
+// Per-thread transposition table. The engine's UCI search runs on a
+// single thread, so behavior there is identical to the prior global
+// TT (the main thread instance is sized via setHashSize). The tuner's
+// leaf precompute now spawns worker threads that each touch
+// `qsearchLeafBoard`; with thread_local each worker gets its own 16 MB
+// TT on first use, no inter-thread races on tt.clear() / tt.store().
+// Loss-eval workers never call qsearch and so never default-construct
+// their copies (thread_local with a non-trivial constructor only runs
+// on first access in that thread).
+static thread_local TranspositionTable tt(16);
 
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
@@ -205,9 +214,10 @@ static bool isInCheck(const Board &board) {
 // Tuner-leaf mode flag. While `qsearchLeafBoard` is running, delta and
 // SEE pruning are turned off so every plausible capture gets resolved
 // and the leaf the tuner labels is genuinely quiet. Real search reads
-// this as `false`; the flag is set sequentially from the precompute
-// path, so no synchronization is needed.
-static bool g_tunerLeafMode = false;
+// this as `false`. Thread-local so the parallelized leaf precompute
+// can set/reset per worker without races; default-false on every
+// thread that hasn't entered tuner-leaf mode (real search).
+static thread_local bool g_tunerLeafMode = false;
 
 int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
@@ -371,8 +381,13 @@ int qsearchScore(const Board &board) {
 // entire precompute. The tuner reads these via `qsearchLeafCounters()`
 // after the precompute finishes so a non-zero in-check count, a wave
 // of TT-miss exits, or hitting the iteration cap shows up explicitly
-// instead of silently producing noisy labels.
-static QsearchLeafStats g_qsearchLeafStats;
+// instead of silently producing noisy labels. Stored as atomics so
+// the parallelized leaf precompute can increment from worker threads
+// without racing.
+static std::atomic<uint64_t> g_qsearchLeafTotal{0};
+static std::atomic<uint64_t> g_qsearchLeafInCheck{0};
+static std::atomic<uint64_t> g_qsearchLeafTtMiss{0};
+static std::atomic<uint64_t> g_qsearchLeafCapped{0};
 
 Board qsearchLeafBoard(const Board &root) {
     // Clear TT so the post-search walk only follows entries that this
@@ -420,20 +435,28 @@ Board qsearchLeafBoard(const Board &root) {
     }
     if (iter == 32) capped = true;
 
-    g_qsearchLeafStats.total++;
-    if (isInCheck(cur)) g_qsearchLeafStats.inCheck++;
-    if (ttMissed) g_qsearchLeafStats.ttMiss++;
-    if (capped) g_qsearchLeafStats.cappedIterations++;
+    g_qsearchLeafTotal.fetch_add(1, std::memory_order_relaxed);
+    if (isInCheck(cur)) g_qsearchLeafInCheck.fetch_add(1, std::memory_order_relaxed);
+    if (ttMissed) g_qsearchLeafTtMiss.fetch_add(1, std::memory_order_relaxed);
+    if (capped) g_qsearchLeafCapped.fetch_add(1, std::memory_order_relaxed);
 
     g_tunerLeafMode = false;
     return cur;
 }
 
 QsearchLeafStats qsearchLeafCounters() {
-    return g_qsearchLeafStats;
+    QsearchLeafStats s;
+    s.total = g_qsearchLeafTotal.load(std::memory_order_relaxed);
+    s.inCheck = g_qsearchLeafInCheck.load(std::memory_order_relaxed);
+    s.ttMiss = g_qsearchLeafTtMiss.load(std::memory_order_relaxed);
+    s.cappedIterations = g_qsearchLeafCapped.load(std::memory_order_relaxed);
+    return s;
 }
 void resetQsearchLeafCounters() {
-    g_qsearchLeafStats = {};
+    g_qsearchLeafTotal.store(0, std::memory_order_relaxed);
+    g_qsearchLeafInCheck.store(0, std::memory_order_relaxed);
+    g_qsearchLeafTtMiss.store(0, std::memory_order_relaxed);
+    g_qsearchLeafCapped.store(0, std::memory_order_relaxed);
 }
 
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {
