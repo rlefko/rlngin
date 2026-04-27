@@ -611,11 +611,12 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
                           int numThreads) {
     // Positions here already hold qsearch-resolved leaf boards, so the
     // inner loop only needs static evaluate(). The pawn and material
-    // hashes still cache per-eval-param state, so clear them on each
-    // loss evaluation; threads within a single loss call race on the
-    // shared hash writes, which we accept as tuner noise.
-    clearPawnHash();
-    clearMaterialHash();
+    // hashes are now thread_local; each std::thread we spawn below gets
+    // a freshly-initialized empty table on first use inside that thread
+    // and the table is destroyed when the thread exits at the end of
+    // this loss eval. So no clearing is needed and no two threads ever
+    // touch the same hash entry, removing the race that previously sat
+    // under our 1e-8 acceptance threshold.
     size_t n = positions.size();
     std::vector<double> partial(numThreads, 0.0);
     std::vector<std::thread> threads;
@@ -863,10 +864,22 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     // Each accepted step still strictly decreases the global loss, and
     // constrained scalars skip any direction that would leave their
     // feasible region. maxPasses caps runtime when convergence stalls.
-    const double relThreshold = 1e-8;
+    //
+    // Threshold strategy: threaded passes use a slightly looser
+    // relative threshold (1e-7) to avoid chasing improvements smaller
+    // than the residual noise floor of the parallel loss. Once the
+    // ladder bails out, a deterministic single-thread finalizer at
+    // 1e-8 picks up any improvements that survive the tighter cut.
+    const double relThresholdThreaded = 1e-7;
+    const double relThresholdDeterministic = 1e-8;
     static const std::array<int, 4> stepLadder = {8, 4, 2, 1};
 
-    for (int pass = 0; pass < maxPasses; pass++) {
+    // Per-pass body. Returns true iff at least one scalar moved. The
+    // log line format is identical to the prior strict CPW output so
+    // `--replay` keeps reconstructing checkpoints from a tune.log
+    // without caring whether the line came from a threaded or a
+    // deterministic pass.
+    auto runPass = [&](int pass, int passNumThreads, double relThreshold) {
         bool improved = false;
         for (size_t pi = 0; pi < params.size(); pi++) {
             auto &p = params[pi];
@@ -877,7 +890,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             for (int step : stepLadder) {
                 if (p.allow(original + step)) {
                     p.write(original + step);
-                    double loss = computeLoss(positions, K, numThreads);
+                    double loss = computeLoss(positions, K, passNumThreads);
                     if (bestLoss - loss > threshold) {
                         bestLoss = loss;
                         improved = true;
@@ -889,7 +902,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                 }
                 if (p.allow(original - step)) {
                     p.write(original - step);
-                    double loss = computeLoss(positions, K, numThreads);
+                    double loss = computeLoss(positions, K, passNumThreads);
                     if (bestLoss - loss > threshold) {
                         bestLoss = loss;
                         improved = true;
@@ -903,7 +916,30 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
 
             if (!accepted) p.write(original);
         }
-        std::cerr << "pass " << pass << " done, loss=" << bestLoss
+        return improved;
+    };
+
+    int globalPass = 0;
+    for (int pass = 0; pass < maxPasses; pass++, globalPass++) {
+        bool improved = runPass(globalPass, numThreads, relThresholdThreaded);
+        std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
+                  << (improved ? " (improved)" : " (no change)") << "\n";
+        writeCheckpoint("tuning/checkpoint.txt", params);
+        if (!improved) break;
+    }
+
+    // Deterministic single-thread finalizer at the tighter threshold.
+    // The threaded passes throw away small candidate improvements that
+    // sit below their loss noise; deterministic passes recover them.
+    // Loops until a finalizer pass produces no further movement. Pass
+    // numbers continue the global sequence so log replay stays valid.
+    std::cerr << "deterministic finalizer at threshold " << relThresholdDeterministic
+              << " (single-thread)\n";
+    bestLoss = computeLoss(positions, K, 1);
+    std::cerr << "deterministic baseline loss: " << bestLoss << "\n";
+    for (int finalPass = 0; finalPass < maxPasses; finalPass++, globalPass++) {
+        bool improved = runPass(globalPass, /*passNumThreads=*/1, relThresholdDeterministic);
+        std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
