@@ -1419,13 +1419,19 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard weakQueen = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
         if (weakQueen) scores[us] += evalParams.WeakQueen;
 
-        // Weak queen protection: a weak enemy piece (in the Hanging
-        // sense) whose only defender is the enemy queen. Tying the
-        // queen to a single defensive task is itself a positional gain.
-        Bitboard weakDefendedByQueen = undefended & ctx.attackedBy[them][Queen] &
-                                       ~ctx.attackedBy[them][Pawn] & ~ctx.attackedBy[them][Knight] &
-                                       ~ctx.attackedBy[them][Bishop] & ~ctx.attackedBy[them][Rook] &
-                                       ~ctx.attackedBy[them][King];
+        // Weak queen protection: an enemy piece we attack whose only
+        // defender is the enemy queen. The earlier `undefended` set is
+        // built with `~ctx.allAttacks[them]`, which silently zeroes
+        // out any square the queen defends, so it cannot be reused
+        // here. The "weak" set below mirrors the classical formulation:
+        // a non-pawn, non-king victim we attack, not pawn-defended,
+        // and either fully undefended or doubly attacked by us.
+        Bitboard weak = theirNonPawnNonKing & ctx.allAttacks[us] & ~ctx.attackedBy[them][Pawn] &
+                        (~ctx.allAttacks[them] | ctx.attackedBy2[us]);
+        Bitboard onlyQueenDef = ctx.attackedBy[them][Queen] & ~ctx.attackedBy[them][Pawn] &
+                                ~ctx.attackedBy[them][Knight] & ~ctx.attackedBy[them][Bishop] &
+                                ~ctx.attackedBy[them][Rook] & ~ctx.attackedBy[them][King];
+        Bitboard weakDefendedByQueen = weak & onlyQueenDef;
         scores[us] += evalParams.WeakQueenProtection * popcount(weakDefendedByQueen);
 
         // Knight on queen: per safe square our knight could move to that

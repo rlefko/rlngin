@@ -1065,6 +1065,29 @@ TEST_CASE("Eval: safe pawn push threat does not double count pawn attacks", "[ev
     CHECK(delta < 400);
 }
 
+TEST_CASE("Eval: weak queen protection fires when only the queen defends a hanging piece",
+          "[eval][threats]") {
+    Board board;
+
+    // White knight on d5 and bishop on c3 both attack the black knight
+    // on f6. f6 is defended only by the black queen on d8 (no pawn,
+    // minor, rook, or king covers it). With two attackers from us, the
+    // "weak" set catches f6 even though the queen attacks it, and the
+    // queen-only-defender filter then triggers the bonus. Amplify the
+    // parameter for the test so the eval grain (multiple of 16) does
+    // not absorb the small per-square contribution.
+    board.setFen("3q3k/8/5n2/3N4/8/2B5/8/4K3 w - - 0 1");
+
+    Score saved = evalParams.WeakQueenProtection;
+    evalParams.WeakQueenProtection = S(400, 400);
+    int withProtection = evaluate(board);
+    evalParams.WeakQueenProtection = 0;
+    int withoutProtection = evaluate(board);
+    evalParams.WeakQueenProtection = saved;
+
+    CHECK(withProtection > withoutProtection);
+}
+
 TEST_CASE("Eval: two pieces converging on the enemy queen are a weak queen", "[eval][threats]") {
     Board board;
 
