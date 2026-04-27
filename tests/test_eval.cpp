@@ -1010,22 +1010,6 @@ TEST_CASE("Eval: bishop blocked by same-color pawns is penalized", "[eval][bisho
     CHECK(goodBishops > badBishops);
 }
 
-TEST_CASE("Eval: rook on the seventh with pawns to chew earns a bonus", "[eval][rook]") {
-    Board board;
-
-    // White rook already raided to a7 with seven black pawns still on the
-    // seventh rank to chew on.
-    board.setFen("4k3/Rppppppp/8/8/8/8/8/4K3 w - - 0 1");
-    int rookOn7th = evaluate(board);
-
-    // Same pawn chain but the rook sits quietly on a1 and no longer
-    // qualifies for the seventh-rank bonus.
-    board.setFen("4k3/1ppppppp/8/8/8/8/8/R3K3 w - - 0 1");
-    int rookOnBack = evaluate(board);
-
-    CHECK(rookOn7th > rookOnBack);
-}
-
 TEST_CASE("Eval: enemy king far from passer is preferred", "[eval][passed]") {
     Board board;
 
@@ -1122,8 +1106,6 @@ TEST_CASE("Eval: rook attacking enemy queen earns a threat bonus", "[eval][threa
     CHECK(rookThreatensQueen > rookIdle);
 }
 
-// --- Central pawn bonus ---
-
 namespace {
 
 std::string bucketLine(const Board &b, const char *name) {
@@ -1149,37 +1131,6 @@ int parseEg(const std::string &line) {
 }
 
 } // namespace
-
-TEST_CASE("Eval: central pawn bonus credits primary and extended center squares",
-          "[eval][center]") {
-    Board board;
-
-    // White pawn on e4: primary central square fires once.
-    board.setFen("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == 12);
-
-    // White pawn on e3: off the central mask, no bonus.
-    board.setFen("4k3/8/8/8/8/4P3/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == 0);
-
-    // White pawn pair on d4 and e4: both primary squares fire.
-    board.setFen("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == 24);
-
-    // Extended center: pawn on c4 carries the smaller weight.
-    board.setFen("4k3/8/8/8/2P5/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == 4);
-}
-
-TEST_CASE("Eval: central pawn bonus mirrors for black pawns", "[eval][center]") {
-    Board board;
-
-    // Black pawn on d5 is the black-side primary center square; the
-    // Center bucket tracks it as a negative contribution from white's
-    // perspective.
-    board.setFen("4k3/8/8/3p4/8/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == -12);
-}
 
 // --- Bishop long diagonal ---
 
@@ -1464,7 +1415,6 @@ TEST_CASE("Eval: verbose output renders a per side grid", "[eval][verbose]") {
     CHECK(text.find("White") != std::string::npos);
     CHECK(text.find("Black") != std::string::npos);
     CHECK(text.find("Total") != std::string::npos);
-    CHECK(text.find("Center") != std::string::npos);
     CHECK(text.find("Initiative") != std::string::npos);
     CHECK(text.find("WARNING") == std::string::npos);
 }

@@ -105,7 +105,6 @@ static std::vector<ParamRef> collectParams() {
                 &evalParams.ConnectedPassersBonus[r]);
     }
 
-    addMgEg("RookOn7thBonus", &evalParams.RookOn7thBonus);
     addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, nonPositive());
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
@@ -478,7 +477,6 @@ static void printCurrentValues() {
     printArr8("    ", evalParams.PassedSupportedBonus);
     printArr8("    ", evalParams.ConnectedPassersBonus);
 
-    std::cout << "    " << fmtScore(evalParams.RookOn7thBonus) << ", // RookOn7thBonus\n";
     std::cout << "    " << fmtScore(evalParams.BadBishopPenalty) << ", // BadBishopPenalty\n";
     std::cout << "    " << fmtScore(evalParams.Tempo) << ", // Tempo\n";
 
