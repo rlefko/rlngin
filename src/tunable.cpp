@@ -304,10 +304,12 @@ std::vector<TunableSpec> buildRegistry() {
                                     5.0, 2.0));
     out.push_back(makeScoreHalfSpec("ReachableOutpostEg", &evalParams.ReachableOutpost, false, 0,
                                     60, 4.0, 1.5));
+    // BadOutpost is a penalty layered on top of the regular outpost
+    // bonus on flank-file outposts, so it must stay non-positive.
     out.push_back(
-        makeScoreHalfSpec("BadOutpostMg", &evalParams.BadOutpost, true, -60, 60, 4.0, 1.5));
+        makeScoreHalfSpec("BadOutpostMg", &evalParams.BadOutpost, true, -80, 0, 4.0, 1.5));
     out.push_back(
-        makeScoreHalfSpec("BadOutpostEg", &evalParams.BadOutpost, false, -60, 80, 5.0, 2.0));
+        makeScoreHalfSpec("BadOutpostEg", &evalParams.BadOutpost, false, -80, 0, 5.0, 2.0));
     out.push_back(
         makeScoreHalfSpec("BishopXRayPawnsMg", &evalParams.BishopXRayPawns, true, 0, 20, 1.5, 0.5));
     out.push_back(makeScoreHalfSpec("BishopXRayPawnsEg", &evalParams.BishopXRayPawns, false, 0, 20,

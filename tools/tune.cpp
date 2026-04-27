@@ -217,30 +217,37 @@ static std::vector<ParamRef> collectParams() {
     // --- Restricted piece ---
     addMgEg("RestrictedPiece", &evalParams.RestrictedPiece);
 
-    // --- New classical-aligned terms ---
-    addMgEg("ReachableOutpost", &evalParams.ReachableOutpost);
-    addMgEg("BadOutpost", &evalParams.BadOutpost);
-    addMgEg("BishopXRayPawns", &evalParams.BishopXRayPawns);
-    out.push_back({"BishopOnKingRingXRay.mg", &evalParams.BishopOnKingRingXRay, true});
-    addMgEg("RookOnQueenFile", &evalParams.RookOnQueenFile);
+    // --- New classical-aligned terms. Every bonus-signed scalar is
+    // wrapped in nonNegative() so coordinate descent cannot drive it
+    // across zero and turn the term into a penalty (and vice versa for
+    // penalty-signed scalars). ---
+    addMgEgConstr("ReachableOutpost", &evalParams.ReachableOutpost, nonNegative());
+    addMgEgConstr("BadOutpost", &evalParams.BadOutpost, nonPositive());
+    addMgEgConstr("BishopXRayPawns", &evalParams.BishopXRayPawns, nonNegative());
+    out.push_back(
+        {"BishopOnKingRingXRay.mg", &evalParams.BishopOnKingRingXRay, true, nonNegative()});
+    addMgEgConstr("RookOnQueenFile", &evalParams.RookOnQueenFile, nonNegative());
     addMgEg("QueenInfiltration", &evalParams.QueenInfiltration);
     addMgEgConstr("WeakLever", &evalParams.WeakLever, nonPositive());
-    out.push_back({"WeakQueenProtection.mg", &evalParams.WeakQueenProtection, true});
-    addMgEg("KnightOnQueen", &evalParams.KnightOnQueen);
-    out.push_back({"KingUnsafeCheckWeight.mg", &evalParams.KingUnsafeCheckWeight, true});
-    out.push_back({"KingAttacksWeight.mg", &evalParams.KingAttacksWeight, true});
-    out.push_back({"KingBlockerWeight.mg", &evalParams.KingBlockerWeight, true});
-    out.push_back({"KingKnightDefenderDiscount.mg", &evalParams.KingKnightDefenderDiscount, true});
-    out.push_back({"KingDangerConstant.mg", &evalParams.KingDangerConstant, true});
+    out.push_back({"WeakQueenProtection.mg", &evalParams.WeakQueenProtection, true, nonNegative()});
+    addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, nonNegative());
+    out.push_back(
+        {"KingUnsafeCheckWeight.mg", &evalParams.KingUnsafeCheckWeight, true, nonNegative()});
+    out.push_back({"KingAttacksWeight.mg", &evalParams.KingAttacksWeight, true, nonNegative()});
+    out.push_back({"KingBlockerWeight.mg", &evalParams.KingBlockerWeight, true, nonNegative()});
+    out.push_back({"KingKnightDefenderDiscount.mg", &evalParams.KingKnightDefenderDiscount, true,
+                   nonNegative()});
+    out.push_back({"KingDangerConstant.mg", &evalParams.KingDangerConstant, true, nonNegative()});
     addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, nonPositive());
-    out.push_back({"KingFlankAttack.mg", &evalParams.KingFlankAttack, true});
-    out.push_back({"KingFlankAttack2.mg", &evalParams.KingFlankAttack2, true});
+    out.push_back({"KingFlankAttack.mg", &evalParams.KingFlankAttack, true, nonNegative()});
+    out.push_back({"KingFlankAttack2.mg", &evalParams.KingFlankAttack2, true, nonNegative()});
     out.push_back({"KingFlankDefense.mg", &evalParams.KingFlankDefense, true, nonPositive()});
     for (int pt = Knight; pt <= Queen; pt++) {
         out.push_back({"KingSafeCheck[" + std::to_string(pt) + "][1].mg",
-                       &evalParams.KingSafeCheck[pt][1], true});
+                       &evalParams.KingSafeCheck[pt][1], true, nonNegative()});
     }
-    out.push_back({"InitiativeBothFlanks.eg", &evalParams.InitiativeBothFlanks, false});
+    out.push_back(
+        {"InitiativeBothFlanks.eg", &evalParams.InitiativeBothFlanks, false, nonNegative()});
     out.push_back({"InitiativeAlmostUnwinnable.eg", &evalParams.InitiativeAlmostUnwinnable, false,
                    nonPositive()});
     out.push_back({"KingPawnDistance.eg", &evalParams.KingPawnDistance, false, nonPositive()});
