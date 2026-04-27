@@ -954,8 +954,12 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         // Mobility differential: the net of their non-king mobility
         // minus ours. A side outmobile by a wide margin is much harder
         // to defend even before counting concrete attackers, so this
-        // feeds the king-danger quadratic on the slow side.
-        kingDangerMg += mg_value(ctx.mobility[them] - ctx.mobility[us]);
+        // feeds the king-danger quadratic on the slow side. Both
+        // halves contribute -- mobility deltas matter in the endgame
+        // too, where the slow side cannot redeploy quickly.
+        Score mobilityDiff = ctx.mobility[them] - ctx.mobility[us];
+        kingDangerMg += mg_value(mobilityDiff);
+        kingDangerEg += eg_value(mobilityDiff);
 
         // Constant baseline: small additive shift so the multi-attacker
         // gate is not anchored at zero, producing a smoother quadratic.
