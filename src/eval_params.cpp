@@ -18,8 +18,8 @@
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
     S(177, 126), // ThreatByPawn  (Texel-tuned; SPSA's proposal was reverted)
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(131, 57), S(131, 88), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(168, 138), S(0, 0)},
+    {S(0, 0), S(0, 0), S(15, 25), S(15, 25), S(131, 57), S(131, 88), S(0, 0)},
+    {S(0, 0), S(0, 0), S(40, 35), S(40, 35), S(0, 0), S(168, 138), S(0, 0)},
     S(124, 62), // ThreatByKing
     S(29, -5),  // Hanging       (Texel-tuned; SPSA's proposal was reverted)
     S(53, 29),  // WeakQueen
@@ -192,6 +192,7 @@ static const EvalParams kDefaultEvalParams = {
     S(-15, -24), // IsolatedPawnPenalty
     S(  0, -83), // DoubledPawnPenalty
     S(-13, -36), // BackwardPawnPenalty
+    S(  0, -56), // WeakLever
     S( -5, -10), // WeakUnopposedPenalty
     {S(-5, -2), S(-2, -1)}, // BlockedPawnPenalty (rel rank 5, 6)
     // S(  3,   2), // PhalanxBonus (disabled, see eval_params.h)
@@ -213,6 +214,8 @@ static const EvalParams kDefaultEvalParams = {
 
     S(15,  8), // SliderOnQueenBishop
     S(20, 10), // SliderOnQueenRook
+    S(14,  0), // WeakQueenProtection
+    S(16, 11), // KnightOnQueen
 
     S( 2,  1), // RestrictedPiece
 };
