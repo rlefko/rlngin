@@ -186,8 +186,10 @@ TEST_CASE("Eval: king zone attacks reduce eval for defending side", "[eval][king
     CHECK(attacking < passive);
     // The king-danger quadratic keeps the delta bounded to around the
     // capped per-side penalty so the term cannot swing the eval past a
-    // reasonable attack-magnitude contribution.
-    CHECK(passive - attacking < 600);
+    // reasonable attack-magnitude contribution. Headroom widened to
+    // accommodate flank-attack, mobility-differential, attacks-count,
+    // unsafe-check, and blocker contributions to the accumulator.
+    CHECK(passive - attacking < 900);
 }
 
 TEST_CASE("Eval: pawn storm penalizes defending side", "[eval][kingsafety]") {
@@ -474,9 +476,12 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
 
     // Textbook K + P vs K with an outside passed pawn: white is winning
     // and the score should not be dragged down by treating the "no
-    // opposing pawn" feature as a weakness.
+    // opposing pawn" feature as a weakness. The PawnlessFlank penalty
+    // fires asymmetrically here because Black has no pawns at all,
+    // which boosts White's relative eval beyond the pre-pawnless-flank
+    // baseline; the term is correct so the value moves with it.
     board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
-    CHECK(evaluate(board) == 342);
+    CHECK(evaluate(board) == 437);
 }
 
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {

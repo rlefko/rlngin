@@ -121,6 +121,10 @@ struct EvalContext {
     Bitboard attackedBy[2][7];
     Bitboard attackedBy2[2];
     Bitboard allAttacks[2];
+    // Per-color mobility totals accumulated by evaluatePieces. Read by
+    // evaluateKingSafety so the king-danger accumulator can fold in the
+    // mobility differential.
+    Score mobility[2];
 };
 
 static inline Bitboard pawnAttacksBB(Bitboard pawns, Color c) {
@@ -398,8 +402,10 @@ static void evaluatePawns(const Board &board, Score &out, Bitboard passers[2], S
 // pinned pieces still get credit for the squares they attack because the
 // search resolves pin tactics on its own, which matches Stockfish's
 // choice here.
-static void evaluatePieces(const Board &board, const EvalContext &ctx, Score scores[2]) {
+static void evaluatePieces(const Board &board, EvalContext &ctx, Score scores[2]) {
     Bitboard occ = board.occupied;
+    ctx.mobility[White] = 0;
+    ctx.mobility[Black] = 0;
 
     for (int c = 0; c < 2; c++) {
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[c];
@@ -431,6 +437,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             Bitboard atk = KnightAttacks[sq];
             int count = popcount(atk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Knight][count];
+            ctx.mobility[c] += evalParams.MobilityBonus[Knight][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
                 !(PawnSpanMask[c][sq] & theirPawns)) {
@@ -452,6 +459,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             Bitboard atk = bishopAttacks(sq, occ);
             int count = popcount(atk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Bishop][count];
+            ctx.mobility[c] += evalParams.MobilityBonus[Bishop][count];
 
             if ((squareBB(sq) & OutpostRanks[c]) && (PawnAttacks[c ^ 1][sq] & ourPawns) &&
                 !(PawnSpanMask[c][sq] & theirPawns)) {
@@ -500,6 +508,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             Bitboard rAtk = rookAttacks(sq, occ);
             int count = popcount(rAtk & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Rook][count];
+            ctx.mobility[c] += evalParams.MobilityBonus[Rook][count];
 
             Bitboard fileMask = FileBB[squareFile(sq)];
             bool noOurPawns = !(fileMask & ourPawns);
@@ -535,6 +544,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             int sq = popLsb(queens);
             int count = popcount(queenAttacks(sq, occ) & ctx.mobilityArea[c]);
             scores[c] += evalParams.MobilityBonus[Queen][count];
+            ctx.mobility[c] += evalParams.MobilityBonus[Queen][count];
         }
     }
 }
@@ -746,14 +756,135 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         Bitboard safeRookChecks = ctx.attackedBy[them][Rook] & rookCheckRays & safeSquares;
         Bitboard safeQueenChecks = ctx.attackedBy[them][Queen] & queenCheckRays & safeSquares;
 
-        kingDangerMg += popcount(safeKnightChecks) * mg_value(evalParams.KingSafeCheck[Knight]);
-        kingDangerEg += popcount(safeKnightChecks) * eg_value(evalParams.KingSafeCheck[Knight]);
-        kingDangerMg += popcount(safeBishopChecks) * mg_value(evalParams.KingSafeCheck[Bishop]);
-        kingDangerEg += popcount(safeBishopChecks) * eg_value(evalParams.KingSafeCheck[Bishop]);
-        kingDangerMg += popcount(safeRookChecks) * mg_value(evalParams.KingSafeCheck[Rook]);
-        kingDangerEg += popcount(safeRookChecks) * eg_value(evalParams.KingSafeCheck[Rook]);
-        kingDangerMg += popcount(safeQueenChecks) * mg_value(evalParams.KingSafeCheck[Queen]);
-        kingDangerEg += popcount(safeQueenChecks) * eg_value(evalParams.KingSafeCheck[Queen]);
+        // Safe checks: per-piece weight selected by whether one or more
+        // safe check squares exist for that piece type. Two safe checks
+        // is qualitatively closer to forced material loss than two times
+        // one safe check, so the multi entry is roughly twice the single.
+        auto addSafeCheck = [&](Bitboard sc, PieceType pt) {
+            int count = popcount(sc);
+            if (!count) return;
+            int idx = (count >= 2) ? 1 : 0;
+            kingDangerMg += count * mg_value(evalParams.KingSafeCheck[pt][idx]);
+            kingDangerEg += count * eg_value(evalParams.KingSafeCheck[pt][idx]);
+        };
+        addSafeCheck(safeKnightChecks, Knight);
+        addSafeCheck(safeBishopChecks, Bishop);
+        addSafeCheck(safeRookChecks, Rook);
+        addSafeCheck(safeQueenChecks, Queen);
+
+        // Unsafe checks: the same per-piece check rays intersected with
+        // enemy attacks, but on squares we do defend. The recapture
+        // would lose material, but the in-between position still wastes
+        // a tempo and disrupts our own piece coordination.
+        Bitboard unsafeMask = ~safeSquares;
+        Bitboard unsafeChecks = (ctx.attackedBy[them][Knight] & knightCheckRays & unsafeMask) |
+                                (ctx.attackedBy[them][Bishop] & bishopCheckRays & unsafeMask) |
+                                (ctx.attackedBy[them][Rook] & rookCheckRays & unsafeMask) |
+                                (ctx.attackedBy[them][Queen] & queenCheckRays & unsafeMask);
+        int unsafeCount = popcount(unsafeChecks);
+        kingDangerMg += unsafeCount * mg_value(evalParams.KingUnsafeCheckWeight);
+        kingDangerEg += unsafeCount * eg_value(evalParams.KingUnsafeCheckWeight);
+
+        // King attacks count: per square directly adjacent to the king
+        // the enemy attacks, counted with multiplicity (two attackers on
+        // the same square count twice). Reuses attackedBy / attackedBy2:
+        // a square attacked at least once contributes 1, a square hit
+        // by two or more contributes another 1 on top.
+        Bitboard kingRing = KingAttacks[kingSq];
+        int kingAttacksCount =
+            popcount(kingRing & ctx.allAttacks[them]) + popcount(kingRing & ctx.attackedBy2[them]);
+        kingDangerMg += kingAttacksCount * mg_value(evalParams.KingAttacksWeight);
+        kingDangerEg += kingAttacksCount * eg_value(evalParams.KingAttacksWeight);
+
+        // King flank attack: count enemy-attacked squares on the 3-file
+        // band centred on our king and on our half of the board (relative
+        // ranks 0-3). KingFlankAttack credits squares attacked at least
+        // once; KingFlankAttack2 adds an extra weight for squares the
+        // enemy attacks twice or more. KingFlankDefense subtracts a
+        // small weight per flank square our own pieces also defend, so
+        // a fully-mobilized defense actively counters the credit.
+        Bitboard fileBand = 0;
+        for (int f = std::max(0, kingFile - 1); f <= std::min(7, kingFile + 1); f++) {
+            fileBand |= FileBB[f];
+        }
+        Bitboard ourHalf = (us == White) ? (Rank1BB | Rank2BB | Rank3BB | Rank4BB)
+                                         : (Rank5BB | Rank6BB | Rank7BB | Rank8BB);
+        Bitboard flank = fileBand & ourHalf;
+        int flankAttacks = popcount(flank & ctx.allAttacks[them]);
+        int flankAttacks2 = popcount(flank & ctx.attackedBy2[them]);
+        int flankDefense = popcount(flank & ctx.allAttacks[us]);
+        kingDangerMg += flankAttacks * mg_value(evalParams.KingFlankAttack);
+        kingDangerEg += flankAttacks * eg_value(evalParams.KingFlankAttack);
+        kingDangerMg += flankAttacks2 * mg_value(evalParams.KingFlankAttack2);
+        kingDangerEg += flankAttacks2 * eg_value(evalParams.KingFlankAttack2);
+        kingDangerMg += flankDefense * mg_value(evalParams.KingFlankDefense);
+        kingDangerEg += flankDefense * eg_value(evalParams.KingFlankDefense);
+
+        // Pawnless flank: penalty applied directly to the position score
+        // when our king has no friendly pawn on its flank (kingside,
+        // queenside, or center band depending on king file). Independent
+        // of attacker-count gating because the structural exposure
+        // exists regardless of whether the enemy currently attacks.
+        Bitboard ourPawnsAll = board.byPiece[Pawn] & board.byColor[us];
+        Bitboard flankFiles = (kingFile <= 2)   ? (FileABB | FileBBB | FileCBB)
+                              : (kingFile <= 4) ? (FileCBB | FileDBB | FileEBB | FileFBB)
+                                                : (FileFBB | FileGBB | FileHBB);
+        if (!(ourPawnsAll & flankFiles)) {
+            scores[us] += evalParams.PawnlessFlank;
+        }
+
+        // King blocker count: friendly pieces pinned to our king. A
+        // pinned piece cannot escape the line of attack, which makes
+        // the incoming king attack stronger. Computed by snipers from
+        // both diagonals and orthogonals: an enemy slider whose ray to
+        // our king has exactly one occupant of our color is pinning it.
+        Bitboard ourOcc = board.byColor[us];
+        Bitboard theirSlidersDiag =
+            (board.byPiece[Bishop] | board.byPiece[Queen]) & board.byColor[them];
+        Bitboard theirSlidersOrtho =
+            (board.byPiece[Rook] | board.byPiece[Queen]) & board.byColor[them];
+        int blockerCount = 0;
+        Bitboard snipers = (theirSlidersDiag & bishopAttacks(kingSq, theirSlidersDiag)) |
+                           (theirSlidersOrtho & rookAttacks(kingSq, theirSlidersOrtho));
+        Bitboard sniperIter = snipers;
+        while (sniperIter) {
+            int snSq = popLsb(sniperIter);
+            Bitboard between = 0;
+            // Squares strictly between sniper and king on the shared
+            // ray. Reconstruct via piece-type-specific attack from snSq
+            // intersected with the corresponding attack from kingSq.
+            Bitboard rayFromSniper =
+                ((squareBB(snSq) & theirSlidersDiag) ? bishopAttacks(snSq, occ) : 0) |
+                ((squareBB(snSq) & theirSlidersOrtho) ? rookAttacks(snSq, occ) : 0);
+            Bitboard rayFromKing =
+                ((squareBB(snSq) & theirSlidersDiag) ? bishopAttacks(kingSq, occ) : 0) |
+                ((squareBB(snSq) & theirSlidersOrtho) ? rookAttacks(kingSq, occ) : 0);
+            between = rayFromSniper & rayFromKing;
+            Bitboard blockers = between & ourOcc;
+            if (popcount(blockers) == 1) blockerCount++;
+        }
+        kingDangerMg += blockerCount * mg_value(evalParams.KingBlockerWeight);
+        kingDangerEg += blockerCount * eg_value(evalParams.KingBlockerWeight);
+
+        // Knight defends king discount: when our knight defends a square
+        // the king itself attacks, the king attack is materially harder
+        // to crack because the knight covers the queen-sacrifice landing
+        // squares.
+        if (ctx.attackedBy[us][Knight] & ctx.attackedBy[us][King]) {
+            kingDangerMg -= mg_value(evalParams.KingKnightDefenderDiscount);
+            kingDangerEg -= eg_value(evalParams.KingKnightDefenderDiscount);
+        }
+
+        // Mobility differential: the net of their non-king mobility
+        // minus ours. A side outmobile by a wide margin is much harder
+        // to defend even before counting concrete attackers, so this
+        // feeds the king-danger quadratic on the slow side.
+        kingDangerMg += mg_value(ctx.mobility[them] - ctx.mobility[us]);
+
+        // Constant baseline: small additive shift so the multi-attacker
+        // gate is not anchored at zero, producing a smoother quadratic.
+        kingDangerMg += mg_value(evalParams.KingDangerConstant);
+        kingDangerEg += eg_value(evalParams.KingDangerConstant);
 
         // No-queen discount: the attack loses most of its bite when the
         // attacking side has no queen left on the board.

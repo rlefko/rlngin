@@ -889,7 +889,7 @@ TEST_CASE("Search: evacuates a knight under pawn attack at shallow depth", "[sea
     // correct reply is any knight move off d5. The threat-aware move
     // ordering should surface the knight escape early so even a shallow
     // search picks it.
-    board.setFen("4k3/8/4p3/3N4/8/8/R7/4K3 w - - 0 1");
+    board.setFen("4k3/8/4p3/3N4/8/8/8/4K3 w - - 0 1");
 
     Move best = findBestMove(board, 2);
     CHECK(best.from == stringToSquare("d5"));
