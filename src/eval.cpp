@@ -10,6 +10,42 @@
 #include <iomanip>
 #include <sstream>
 
+// ----------------------------------------------------------------------
+// Ideas reserved for later.
+//
+// The classical reference covers a handful of additional concepts that
+// are intentionally deferred from this file. Each entry below records
+// what the concept is and why it is not implemented today, so a future
+// reader does not have to re-discover the gap.
+//
+//   * KPK exact-value endgame eval. A precomputed bitbase or a "rule
+//     of the square" plus key-square heuristic. Distinguishes won from
+//     drawn KPK at search leaves where the general scaleFactor cannot.
+//
+//   * Specialized endgame Value evaluators: KXK (lone king mate),
+//     KNNK (always draw), KNNKP, KBNK (corner mate driver), KRKP,
+//     KRKB, KRKN, KQKP, KQKR. Each covers a technical-win family with
+//     position-aware logic that overrides the heuristic eval.
+//
+//   * Specialized scaling factors: KBPsK (wrong-color rook-pawn
+//     fortress, partially handled by our wrong-color check), KQKRPs,
+//     KRPKR, KRPKB, KRPPKRP, KPsK, KBPKB, KBPPKB, KBPKN, KPKP. Each
+//     captures a known drawish endgame shape with material-specific
+//     scaling beyond what scaleFactor() applies today.
+//
+//   * Lazy eval thresholds. Skip threats / space when the running
+//     material differential is already decisive. NPS-only optimization;
+//     would require staging evaluate() into early/middle/late phases.
+//
+//   * Third lever-push passer condition. Reference condition (c) for
+//     single-stopper passers at relRank >= 4 with safe push, gated on
+//     the precomputed attackedBy2[Them]. Adds a few more passer
+//     detections in narrow positions on top of the (a) and (b)
+//     conditions already in computePawns.
+//
+//   * Contempt term. Search-side personality bias, not core eval.
+// ----------------------------------------------------------------------
+
 // Material values used by SEE and move ordering (MG values, king kept large for SEE)
 const int PieceValue[] = {0, 198, 817, 836, 1270, 2521, 20000};
 
