@@ -311,10 +311,26 @@ static void computePawns(const Board &board, Score perSide[2], Bitboard passers[
             // it is computed once here and reused.
             bool opposed = (ForwardFileBB[c][sq] & theirPawns) != 0;
 
-            // Passed pawn: no enemy pawns ahead on same or adjacent files,
-            // and no friendly pawn ahead on the same file (rear doubled pawns
-            // are not passed)
-            bool isPassed = !isDoubled && !(PassedPawnMask[c][sq] & theirPawns);
+            // Phalanx bitboard: friendly pawns on adjacent files at the
+            // same rank. Used both by the lever-aware passer detection
+            // here and by the connected-pawn bonus below; cache it once.
+            Bitboard phalanxBB = ourPawns & AdjacentFilesBB[f] & RankBB[r];
+
+            // Passer detection. The conservative form "no enemy pawn
+            // anywhere on the front mask" misses dynamic candidate
+            // passers whose stoppers are levers we already attack, or
+            // lever-push threats outnumbered by our phalanx. The
+            // classical reference adds those two cases, capturing the
+            // common pawn-break shapes that arise in middlegames.
+            Bitboard stoppers = theirPawns & PassedPawnMask[c][sq];
+            Bitboard lever = theirPawns & PawnAttacks[c][sq];
+            int sqAhead = (c == White) ? sq + 8 : sq - 8;
+            Bitboard leverPush =
+                (sqAhead >= 0 && sqAhead < 64) ? (theirPawns & PawnAttacks[c][sqAhead]) : 0;
+            bool isPassed =
+                !isDoubled &&
+                ((stoppers ^ lever) == 0 ||
+                 ((stoppers ^ leverPush) == 0 && popcount(phalanxBB) >= popcount(leverPush)));
             if (isPassed) {
                 score += evalParams.PassedPawnBonus[relRank];
                 if (c == White)
@@ -340,7 +356,7 @@ static void computePawns(const Board &board, Score perSide[2], Bitboard passers[
             }
 
             // Connected pawn: phalanx (same rank, adjacent file) or defended by friendly pawn
-            bool phalanx = (ourPawns & AdjacentFilesBB[f] & RankBB[r]) != 0;
+            bool phalanx = phalanxBB != 0;
             bool defended = (PawnAttacks[c ^ 1][sq] & ourPawns) != 0;
             if (phalanx || defended) {
                 score += evalParams.ConnectedPawnBonus[relRank];

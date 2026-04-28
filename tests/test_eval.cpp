@@ -328,6 +328,35 @@ TEST_CASE("Eval: passed pawn scores higher than blocked pawn", "[eval][pawn]") {
     CHECK(passedScore > blockedScore);
 }
 
+TEST_CASE("Eval: pawn whose only stoppers are levers we attack is detected as passed",
+          "[eval][pawn]") {
+    Board board;
+
+    // White pawn on e5 with black pawns on d6 and f6. The two black
+    // pawns are exactly the squares the white pawn attacks, so the
+    // only "stoppers" on the front mask are levers we already cover.
+    // The conservative mask test would call this pawn not-passed; the
+    // lever-aware refinement recognises the candidate-passer shape.
+    board.setFen("4k3/8/3p1p2/4P3/8/8/8/4K3 w - - 0 1");
+
+    // Pawn hash caches the passer bonus per pawnKey, so a parameter
+    // toggle without a flush would read a stale entry. Clear the hash
+    // around each evaluate() call to make the toggle observable.
+    clearPawnHash();
+    int withPasserBonus = evaluate(board);
+    Score saved = evalParams.PassedPawnBonus[4];
+    evalParams.PassedPawnBonus[4] = 0;
+    clearPawnHash();
+    int withoutPasserBonus = evaluate(board);
+    evalParams.PassedPawnBonus[4] = saved;
+    clearPawnHash();
+
+    // The toggle only changes the eval if the e5 pawn is in the passer
+    // bitboard. With the pre-refinement detector it would not be, and
+    // the toggle would have no effect.
+    CHECK(withPasserBonus != withoutPasserBonus);
+}
+
 TEST_CASE("Eval: advanced passed pawn worth more than rear passed pawn", "[eval][pawn]") {
     Board board;
 
@@ -458,10 +487,12 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
         CHECK(line.find("eg=    -2") != std::string::npos);
     }
 
-    // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
-    // keeping e6 non-passed. This is the rank 6 slot of BlockedPawnPenalty,
-    // which at default values is smaller in magnitude than the rank 5 slot.
-    board.setFen("4k3/3pn3/4P3/8/8/8/8/4K3 w - - 0 1");
+    // White e6 pawn blocked by a black e7 pawn, with a black d7 pawn
+    // also on the front mask. The e7 pawn is the actual stop-square
+    // blocker; the d7 pawn is a lever so by itself it would let e6 be
+    // detected as a candidate passer, but the additional non-lever
+    // e7 stopper keeps e6 non-passed and fires the rank 6 slot.
+    board.setFen("4k3/3pp3/4P3/8/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
         CHECK(line.find("mg=    -2") != std::string::npos);
