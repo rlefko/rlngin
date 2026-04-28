@@ -181,13 +181,13 @@ struct EvalParams {
     // knight is the strongest defender against rook and queen sacrifices.
     Score KingKnightDefenderDiscount;
 
-    // Negative penalty added to the position score when our king has no
-    // friendly pawn on the same flank. A king without flank pawns is
-    // structurally exposed regardless of attack-count.
+    // Negative penalty added to the position score when our king's flank
+    // has no pawns of either color. The structural void, not just missing
+    // friendly shelter, is what makes the king exposed.
     Score PawnlessFlank;
 
     // King flank attack: per-square weight folded into the king-danger
-    // accumulator for every square on the 3-file band centred on our
+    // accumulator for every square on the 3-file band centered on our
     // king and on our half of the board (relative ranks 0-3) that the
     // enemy attacks. KingFlankAttack credits squares attacked at least
     // once; KingFlankAttack2 adds an extra weight for squares the enemy
@@ -261,7 +261,7 @@ struct EvalParams {
     //   PureBase    -- flat when no non-pawn non-king material remains
     //   Constant    -- baseline shift (typically negative)
     //
-    // All seven carry MG=0 so the term is primarily an endgame effect,
+    // These carry MG=0 so the term is primarily an endgame effect,
     // applied at half strength to MG inside evaluateInitiative so sharp
     // middlegame positions still get a nudge.
     Score InitiativePasser;
@@ -276,8 +276,8 @@ struct EvalParams {
     // multiplier the outflank product alone underweights.
     Score InitiativeBothFlanks;
 
-    // Negative input fired when outflank is negative (sides on opposite
-    // wings) AND pawns are not on both flanks. This is the
+    // Negative input fired when the kings are separated more by rank than
+    // by file AND pawns are not on both flanks. This is the
     // "almost-unwinnable" structural signature.
     Score InitiativeAlmostUnwinnable;
 

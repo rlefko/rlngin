@@ -96,7 +96,7 @@ class MovePicker {
     // board. `state` / `ply` drive killer, counter-move, and continuation
     // history lookups. `threats` is optional; when non-null, quiet scoring
     // applies threat-escape bonuses and walk-in penalties on top of the
-    // usual history ordering. Passing null keeps the previous behaviour
+    // usual history ordering. Passing null keeps the previous behavior
     // (tests construct pickers without a threat map).
     MovePicker(Board &board, const SearchState &state, int ply, Move ttMove, bool inCheck,
                const ThreatMap *threats = nullptr);

@@ -336,7 +336,7 @@ TEST_CASE("Eval: pawn whose only stoppers are levers we attack is detected as pa
     // pawns are exactly the squares the white pawn attacks, so the
     // only "stoppers" on the front mask are levers we already cover.
     // The conservative mask test would call this pawn not-passed; the
-    // lever-aware refinement recognises the candidate-passer shape.
+    // lever-aware refinement recognizes the candidate-passer shape.
     board.setFen("4k3/8/3p1p2/4P3/8/8/8/4K3 w - - 0 1");
 
     // Pawn hash caches the passer bonus per pawnKey, so a parameter
@@ -426,12 +426,12 @@ TEST_CASE("Eval: connected pawns score higher than disconnected pawns", "[eval][
     Board board;
 
     // White phalanx on b3 and c3: each pawn defended by its file
-    // neighbour, ConnectedPawnBonus fires.
+    // neighbor, ConnectedPawnBonus fires.
     board.setFen("4k3/8/8/8/8/1PP5/8/4K3 w - - 0 1");
     int connected = evaluate(board);
 
     // Same number of pawns (a3, c3) with the b3 file empty so neither
-    // pawn has a friendly neighbour. Both pawns become isolated; the
+    // pawn has a friendly neighbor. Both pawns become isolated; the
     // ConnectedPawnBonus does not fire and IsolatedPawnPenalty does.
     board.setFen("4k3/8/8/8/8/P1P5/8/4K3 w - - 0 1");
     int disconnected = evaluate(board);

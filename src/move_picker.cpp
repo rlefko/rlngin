@@ -149,7 +149,7 @@ int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
 
     // Plain quiet move: fall back to the precomputed history score, folded
     // with the threat-aware delta. The delta fires only when the move
-    // belongs to a class that exchanges unfavourably against the enemy's
+    // belongs to a class that exchanges unfavorably against the enemy's
     // lesser attackers (minor under pawn attack, rook under minor attack,
     // queen under rook-or-lower attack). `fromThreatened` and `toThreatened`
     // are sampled against the same tier so the sign is consistent: evacuate

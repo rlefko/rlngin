@@ -18,7 +18,7 @@ int clampInt(int v, int lo, int hi) {
 // The default reported over UCI and via the `tune` command is the live
 // value clamped into [minValue, maxValue] so the SPSA driver never starts
 // theta in the infeasible region. The live storage is untouched, so any
-// startup behaviour that depended on a drifted default stays intact until
+// startup behavior that depended on a drifted default stays intact until
 // the driver issues its first setoption.
 TunableSpec makeIntSpec(std::string name, int *target, int minValue, int maxValue, double cEnd,
                         double rEnd, std::function<void()> afterWrite = nullptr) {
@@ -81,7 +81,7 @@ TunableSpec makeScoreHalfSpec(std::string name, Score *target, bool isMg, int mi
 //     holds through every SPSA perturbation.
 std::vector<TunableSpec> buildRegistry() {
     std::vector<TunableSpec> out;
-    out.reserve(24);
+    out.reserve(105);
 
     // --- Search pruning and reduction scalars ---
     //

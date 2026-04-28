@@ -58,9 +58,7 @@ struct ParamRef {
     bool isMg; // true = modify mg half, false = eg half
     std::function<Bounds()> bounds = [] { return Bounds{}; };
 
-    int read() const {
-        return isMg ? mg_value(*target) : eg_value(*target);
-    }
+    int read() const { return isMg ? mg_value(*target) : eg_value(*target); }
     void write(int v) const {
         int mg = mg_value(*target);
         int eg = eg_value(*target);
@@ -104,8 +102,8 @@ static std::vector<ParamRef> collectParams() {
     // Overload that stamps the same bounds factory on both halves. The
     // factory is invoked at every constraint check so chain bounds can
     // read live sibling values without going stale across pass updates.
-    auto addMgEgConstr = [&](const std::string &name, Score *s,
-                             std::function<Bounds()> bounds, bool mg = true, bool eg = true) {
+    auto addMgEgConstr = [&](const std::string &name, Score *s, std::function<Bounds()> bounds,
+                             bool mg = true, bool eg = true) {
         if (mg) out.push_back({name + ".mg", s, true, bounds});
         if (eg) out.push_back({name + ".eg", s, false, bounds});
     };
@@ -114,8 +112,8 @@ static std::vector<ParamRef> collectParams() {
     // none of them should ever go negative regardless of corpus drift.
     addMgEgConstr("ThreatByPawn", &evalParams.ThreatByPawn, boundsNonNegative());
     for (int v = Rook; v <= Queen; v++)
-        addMgEgConstr("ThreatByMinor[" + std::to_string(v) + "]",
-                      &evalParams.ThreatByMinor[v], boundsNonNegative());
+        addMgEgConstr("ThreatByMinor[" + std::to_string(v) + "]", &evalParams.ThreatByMinor[v],
+                      boundsNonNegative());
     addMgEgConstr("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen], boundsNonNegative());
     addMgEgConstr("ThreatByKing", &evalParams.ThreatByKing, boundsNonNegative());
     addMgEgConstr("Hanging", &evalParams.Hanging, boundsNonNegative());
@@ -135,29 +133,25 @@ static std::vector<ParamRef> collectParams() {
     for (int r = 3; r <= 6; r++) {
         // PassedKingProxBonus.eg: non-decreasing in rank, plus >= 0.
         out.push_back({"PassedKingProxBonus[" + std::to_string(r) + "].eg",
-                       &evalParams.PassedKingProxBonus[r], false,
-                       [r] {
+                       &evalParams.PassedKingProxBonus[r], false, [r] {
                            Bounds b{0, 1000000};
                            if (r > 3)
-                               b.lo = std::max(b.lo,
-                                               eg_value(evalParams.PassedKingProxBonus[r - 1]));
+                               b.lo =
+                                   std::max(b.lo, eg_value(evalParams.PassedKingProxBonus[r - 1]));
                            if (r < 6)
-                               b.hi = std::min(b.hi,
-                                               eg_value(evalParams.PassedKingProxBonus[r + 1]));
+                               b.hi =
+                                   std::min(b.hi, eg_value(evalParams.PassedKingProxBonus[r + 1]));
                            return b;
                        }});
         // PassedEnemyKingProxPenalty.eg: stored positive, non-decreasing.
         out.push_back(
             {"PassedEnemyKingProxPenalty[" + std::to_string(r) + "].eg",
-             &evalParams.PassedEnemyKingProxPenalty[r], false,
-             [r] {
+             &evalParams.PassedEnemyKingProxPenalty[r], false, [r] {
                  Bounds b{0, 1000000};
                  if (r > 3)
-                     b.lo = std::max(b.lo,
-                                     eg_value(evalParams.PassedEnemyKingProxPenalty[r - 1]));
+                     b.lo = std::max(b.lo, eg_value(evalParams.PassedEnemyKingProxPenalty[r - 1]));
                  if (r < 6)
-                     b.hi = std::min(b.hi,
-                                     eg_value(evalParams.PassedEnemyKingProxPenalty[r + 1]));
+                     b.hi = std::min(b.hi, eg_value(evalParams.PassedEnemyKingProxPenalty[r + 1]));
                  return b;
              }});
         // PassedBlockedPenalty: <= 0 and non-increasing in rank.
@@ -230,18 +224,14 @@ static std::vector<ParamRef> collectParams() {
         for (int i = 0; i < n; i++) {
             auto mgChain = [pt, i, n] {
                 Bounds b;
-                if (i > 0)
-                    b.lo = std::max(b.lo, mg_value(evalParams.MobilityBonus[pt][i - 1]));
-                if (i < n - 1)
-                    b.hi = std::min(b.hi, mg_value(evalParams.MobilityBonus[pt][i + 1]));
+                if (i > 0) b.lo = std::max(b.lo, mg_value(evalParams.MobilityBonus[pt][i - 1]));
+                if (i < n - 1) b.hi = std::min(b.hi, mg_value(evalParams.MobilityBonus[pt][i + 1]));
                 return b;
             };
             auto egChain = [pt, i, n] {
                 Bounds b;
-                if (i > 0)
-                    b.lo = std::max(b.lo, eg_value(evalParams.MobilityBonus[pt][i - 1]));
-                if (i < n - 1)
-                    b.hi = std::min(b.hi, eg_value(evalParams.MobilityBonus[pt][i + 1]));
+                if (i > 0) b.lo = std::max(b.lo, eg_value(evalParams.MobilityBonus[pt][i - 1]));
+                if (i < n - 1) b.hi = std::min(b.hi, eg_value(evalParams.MobilityBonus[pt][i + 1]));
                 return b;
             };
             std::string base =
@@ -283,8 +273,7 @@ static std::vector<ParamRef> collectParams() {
     // the default sits negative and the corpus signal there is genuine.
     for (int r = 1; r <= 6; r++) {
         for (bool isMg : {true, false}) {
-            std::string name =
-                "ConnectedPawnBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
+            std::string name = "ConnectedPawnBonus[" + std::to_string(r) + (isMg ? "].mg" : "].eg");
             out.push_back({name, &evalParams.ConnectedPawnBonus[r], isMg, [r, isMg] {
                                Bounds b;
                                if (!isMg && r >= 2) b.lo = 0;
@@ -418,18 +407,14 @@ static std::vector<ParamRef> collectParams() {
     for (int i = 0; i < 9; i++) {
         auto mgChain = [i] {
             Bounds b{-1000000, 0}; // every slot is a penalty (<= 0)
-            if (i > 0)
-                b.lo = std::max(b.lo, mg_value(evalParams.KingSafeSqPenalty[i - 1]));
-            if (i < 8)
-                b.hi = std::min(b.hi, mg_value(evalParams.KingSafeSqPenalty[i + 1]));
+            if (i > 0) b.lo = std::max(b.lo, mg_value(evalParams.KingSafeSqPenalty[i - 1]));
+            if (i < 8) b.hi = std::min(b.hi, mg_value(evalParams.KingSafeSqPenalty[i + 1]));
             return b;
         };
         auto egChain = [i] {
             Bounds b{-1000000, 0};
-            if (i > 0)
-                b.lo = std::max(b.lo, eg_value(evalParams.KingSafeSqPenalty[i - 1]));
-            if (i < 8)
-                b.hi = std::min(b.hi, eg_value(evalParams.KingSafeSqPenalty[i + 1]));
+            if (i > 0) b.lo = std::max(b.lo, eg_value(evalParams.KingSafeSqPenalty[i - 1]));
+            if (i < 8) b.hi = std::min(b.hi, eg_value(evalParams.KingSafeSqPenalty[i + 1]));
             return b;
         };
         out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].mg",
@@ -449,10 +434,8 @@ static std::vector<ParamRef> collectParams() {
         return [self, atLeast, atMost, isMg] {
             Bounds b{0, 1000000};
             (void)self;
-            if (atLeast)
-                b.lo = std::max(b.lo, isMg ? mg_value(*atLeast) : eg_value(*atLeast));
-            if (atMost)
-                b.hi = std::min(b.hi, isMg ? mg_value(*atMost) : eg_value(*atMost));
+            if (atLeast) b.lo = std::max(b.lo, isMg ? mg_value(*atLeast) : eg_value(*atLeast));
+            if (atMost) b.hi = std::min(b.hi, isMg ? mg_value(*atMost) : eg_value(*atMost));
             return b;
         };
     };
@@ -484,8 +467,8 @@ static std::vector<ParamRef> collectParams() {
         // Queen: at least Rook (heaviest attacker bound).
         out.push_back({isMg ? "KingAttackByQueen.mg" : "KingAttackByQueen.eg",
                        &evalParams.KingAttackByQueen, isMg,
-                       kingAttackBounds(&evalParams.KingAttackByQueen,
-                                        &evalParams.KingAttackByRook, nullptr, isMg)});
+                       kingAttackBounds(&evalParams.KingAttackByQueen, &evalParams.KingAttackByRook,
+                                        nullptr, isMg)});
     }
     // KingSafeCheck[pt][0]: single-attacker safe-check weight per piece
     // type. Same ordering-by-piece-weight chain as KingAttackBy*.
@@ -534,11 +517,12 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("KingRingWeakWeight", &evalParams.KingRingWeakWeight, boundsNonNegative());
 
     // --- Classical-aligned king-safety inputs that feed the king-danger
-    // accumulator. All carry mg=0 (and eg=0 except PawnlessFlank) by
-    // design; only the mg half tunes for most. Multi-attacker safe-check
-    // weights live alongside the single-attacker dimension above.
-    out.push_back({"KingUnsafeCheckWeight.mg", &evalParams.KingUnsafeCheckWeight, true,
-                   boundsNonNegative()});
+    // accumulator. Most carry eg=0 by design, so only the mg half tunes.
+    // PawnlessFlank keeps both halves because it is applied directly to
+    // the score. Multi-attacker safe-check weights live alongside the
+    // single-attacker dimension above.
+    out.push_back(
+        {"KingUnsafeCheckWeight.mg", &evalParams.KingUnsafeCheckWeight, true, boundsNonNegative()});
     out.push_back(
         {"KingAttacksWeight.mg", &evalParams.KingAttacksWeight, true, boundsNonNegative()});
     out.push_back(
@@ -549,10 +533,8 @@ static std::vector<ParamRef> collectParams() {
         {"KingDangerConstant.mg", &evalParams.KingDangerConstant, true, boundsNonNegative()});
     addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, boundsNonPositive());
     out.push_back({"KingFlankAttack.mg", &evalParams.KingFlankAttack, true, boundsNonNegative()});
-    out.push_back(
-        {"KingFlankAttack2.mg", &evalParams.KingFlankAttack2, true, boundsNonNegative()});
-    out.push_back(
-        {"KingFlankDefense.mg", &evalParams.KingFlankDefense, true, boundsNonPositive()});
+    out.push_back({"KingFlankAttack2.mg", &evalParams.KingFlankAttack2, true, boundsNonNegative()});
+    out.push_back({"KingFlankDefense.mg", &evalParams.KingFlankDefense, true, boundsNonPositive()});
     for (int pt = Knight; pt <= Queen; pt++) {
         out.push_back({"KingSafeCheck[" + std::to_string(pt) + "][1].mg",
                        &evalParams.KingSafeCheck[pt][1], true, boundsNonNegative()});
@@ -575,32 +557,34 @@ static std::vector<ParamRef> collectParams() {
     // addMgEg("PhalanxBonus", &evalParams.PhalanxBonus);
 
     // --- Bishop long diagonal sweep ---
-    addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus, boundsNonNegative());
+    addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus,
+                  boundsNonNegative());
 
     // --- Initiative system. All scalars carry mg=0 by construction
     // (see eval_params.h) and live entirely in the eg half. Six are
     // positive features; InitiativeConstant and InitiativeAlmostUnwinnable
     // are the negative baseline / structural-loss shifts.
-    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, boundsNonNegative()});
-    out.push_back({"InitiativePawnCount.eg", &evalParams.InitiativePawnCount, false,
-                   boundsNonNegative()});
-    out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false,
-                   boundsNonNegative()});
-    out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
-                   boundsNonNegative()});
+    out.push_back(
+        {"InitiativePasser.eg", &evalParams.InitiativePasser, false, boundsNonNegative()});
+    out.push_back(
+        {"InitiativePawnCount.eg", &evalParams.InitiativePawnCount, false, boundsNonNegative()});
+    out.push_back(
+        {"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false, boundsNonNegative()});
+    out.push_back(
+        {"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false, boundsNonNegative()});
     // InitiativePureBase fires only in pure-pawn endgames; it is a
     // binary feature that can absorb a lot of correlation if left
     // unbounded. Cap at 48 (~2.5x the original default of 18) to keep
     // it from acting as a residual sink for the rest of the eg eval.
-    out.push_back({"InitiativePureBase.eg", &evalParams.InitiativePureBase, false,
-                   boundsRange(0, 48)});
+    out.push_back(
+        {"InitiativePureBase.eg", &evalParams.InitiativePureBase, false, boundsRange(0, 48)});
     // InitiativeConstant is the negative baseline shift; force it to
     // stay strictly negative so the Initiative system does not
     // collapse the baseline into the other features.
     out.push_back({"InitiativeConstant.eg", &evalParams.InitiativeConstant, false,
                    boundsRange(-1000000, -1)});
-    out.push_back({"InitiativeBothFlanks.eg", &evalParams.InitiativeBothFlanks, false,
-                   boundsNonNegative()});
+    out.push_back(
+        {"InitiativeBothFlanks.eg", &evalParams.InitiativeBothFlanks, false, boundsNonNegative()});
     out.push_back({"InitiativeAlmostUnwinnable.eg", &evalParams.InitiativeAlmostUnwinnable, false,
                    boundsNonPositive()});
     out.push_back(
@@ -615,8 +599,8 @@ static std::vector<ParamRef> collectParams() {
     // queen to a defensive task is a positive feature for the side that
     // has imposed the threat. Knight-on-queen counts safe knight squares
     // that attack the enemy queen; a pure bonus on both halves.
-    out.push_back({"WeakQueenProtection.mg", &evalParams.WeakQueenProtection, true,
-                   boundsNonNegative()});
+    out.push_back(
+        {"WeakQueenProtection.mg", &evalParams.WeakQueenProtection, true, boundsNonNegative()});
     addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsNonNegative());
 
     // --- Restricted piece: rewards mutual attack on enemy non-pawns.
@@ -654,8 +638,7 @@ static double sigmoid(double x, double K) {
     return 1.0 / (1.0 + std::exp(-K * x));
 }
 
-static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
-                          int numThreads) {
+static double computeLoss(const std::vector<LabeledPosition> &positions, double K, int numThreads) {
     // Positions here already hold qsearch-resolved leaf boards, so the
     // inner loop only needs static evaluate(). The pawn and material
     // hashes are now thread_local; each std::thread we spawn below gets
@@ -955,8 +938,8 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
             replays++;
     }
     std::cerr << "replay: " << clamps << " clamp updates, " << replays
-              << " coordinate-descent steps applied, " << mismatches
-              << " from-value mismatches, " << unknown << " unknown names\n";
+              << " coordinate-descent steps applied, " << mismatches << " from-value mismatches, "
+              << unknown << " unknown names\n";
 
     // Project the replayed state onto current constraint bounds and
     // validate before writing. The replayed snapshot is captured under
@@ -972,8 +955,8 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
     std::cerr << "checkpoint written to " << outPath << "\n";
 }
 
-static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
-                 int maxPasses, int refitKEvery, int refreshLeavesEvery) {
+static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads, int maxPasses,
+                 int refitKEvery, int refreshLeavesEvery) {
     auto params = collectParams();
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
@@ -1260,10 +1243,8 @@ static void printCurrentValues() {
     }
     std::cout << "}, // KingSafeSqPenalty\n";
 
-    std::cout << "    " << fmtScore(evalParams.KingAttackByKnight)
-              << ", // KingAttackByKnight\n";
-    std::cout << "    " << fmtScore(evalParams.KingAttackByBishop)
-              << ", // KingAttackByBishop\n";
+    std::cout << "    " << fmtScore(evalParams.KingAttackByKnight) << ", // KingAttackByKnight\n";
+    std::cout << "    " << fmtScore(evalParams.KingAttackByBishop) << ", // KingAttackByBishop\n";
     std::cout << "    " << fmtScore(evalParams.KingAttackByRook) << ", // KingAttackByRook\n";
     std::cout << "    " << fmtScore(evalParams.KingAttackByQueen) << ", // KingAttackByQueen\n";
     std::cout << "    {\n";
@@ -1272,8 +1253,7 @@ static void printCurrentValues() {
                   << fmtScore(evalParams.KingSafeCheck[pt][1]) << "},\n";
     }
     std::cout << "    }, // KingSafeCheck\n";
-    std::cout << "    " << fmtScore(evalParams.KingRingWeakWeight)
-              << ", // KingRingWeakWeight\n";
+    std::cout << "    " << fmtScore(evalParams.KingRingWeakWeight) << ", // KingRingWeakWeight\n";
     std::cout << "    " << fmtScore(evalParams.KingUnsafeCheckWeight)
               << ", // KingUnsafeCheckWeight\n";
     std::cout << "    " << fmtScore(evalParams.KingAttacksWeight) << ", // KingAttacksWeight\n";
@@ -1285,8 +1265,7 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KingFlankAttack2) << ", // KingFlankAttack2\n";
     std::cout << "    " << fmtScore(evalParams.KingFlankDefense) << ", // KingFlankDefense\n";
     std::cout << "    " << fmtScore(evalParams.KingDangerConstant) << ", // KingDangerConstant\n";
-    std::cout << "    " << fmtScore(evalParams.KingNoQueenDiscount)
-              << ", // KingNoQueenDiscount\n";
+    std::cout << "    " << fmtScore(evalParams.KingNoQueenDiscount) << ", // KingNoQueenDiscount\n";
 
     std::cout << "    " << fmtScore(evalParams.IsolatedPawnPenalty) << ", // IsolatedPawnPenalty\n";
     std::cout << "    " << fmtScore(evalParams.DoubledPawnPenalty) << ", // DoubledPawnPenalty\n";
@@ -1303,27 +1282,21 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.BishopLongDiagonalBonus)
               << ", // BishopLongDiagonalBonus\n";
     std::cout << "    " << fmtScore(evalParams.InitiativePasser) << ", // InitiativePasser\n";
-    std::cout << "    " << fmtScore(evalParams.InitiativePawnCount)
-              << ", // InitiativePawnCount\n";
-    std::cout << "    " << fmtScore(evalParams.InitiativeOutflank)
-              << ", // InitiativeOutflank\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativePawnCount) << ", // InitiativePawnCount\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativeOutflank) << ", // InitiativeOutflank\n";
     std::cout << "    " << fmtScore(evalParams.InitiativeInfiltrate)
               << ", // InitiativeInfiltrate\n";
-    std::cout << "    " << fmtScore(evalParams.InitiativePureBase)
-              << ", // InitiativePureBase\n";
-    std::cout << "    " << fmtScore(evalParams.InitiativeConstant)
-              << ", // InitiativeConstant\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativePureBase) << ", // InitiativePureBase\n";
+    std::cout << "    " << fmtScore(evalParams.InitiativeConstant) << ", // InitiativeConstant\n";
     std::cout << "    " << fmtScore(evalParams.InitiativeBothFlanks)
               << ", // InitiativeBothFlanks\n";
     std::cout << "    " << fmtScore(evalParams.InitiativeAlmostUnwinnable)
               << ", // InitiativeAlmostUnwinnable\n";
     std::cout << "    " << fmtScore(evalParams.KingPawnDistance) << ", // KingPawnDistance\n";
     std::cout << "    " << fmtScore(evalParams.PassedFile) << ", // PassedFile\n";
-    std::cout << "    " << fmtScore(evalParams.SliderOnQueenBishop)
-              << ", // SliderOnQueenBishop\n";
+    std::cout << "    " << fmtScore(evalParams.SliderOnQueenBishop) << ", // SliderOnQueenBishop\n";
     std::cout << "    " << fmtScore(evalParams.SliderOnQueenRook) << ", // SliderOnQueenRook\n";
-    std::cout << "    " << fmtScore(evalParams.WeakQueenProtection)
-              << ", // WeakQueenProtection\n";
+    std::cout << "    " << fmtScore(evalParams.WeakQueenProtection) << ", // WeakQueenProtection\n";
     std::cout << "    " << fmtScore(evalParams.KnightOnQueen) << ", // KnightOnQueen\n";
     std::cout << "    " << fmtScore(evalParams.RestrictedPiece) << ", // RestrictedPiece\n";
     std::cout << "};\n";

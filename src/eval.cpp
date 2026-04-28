@@ -942,7 +942,7 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         kingDangerEg += kingAttacksCount * eg_value(evalParams.KingAttacksWeight);
 
         // King flank attack: count enemy-attacked squares on the 3-file
-        // band centred on our king and on our half of the board (relative
+        // band centered on our king and on our half of the board (relative
         // ranks 0-3). KingFlankAttack credits squares attacked at least
         // once; KingFlankAttack2 adds an extra weight for squares the
         // enemy attacks twice or more. KingFlankDefense subtracts a
@@ -1198,12 +1198,12 @@ static void evaluateBlockedPawns(const Board &board, const Bitboard passers[2], 
 }
 
 // Compute a position-wide initiative contribution. The magnitude is
-// accumulated from six features (passer count, pawn count, outflank,
-// pawn tension, king infiltration, pure-pawn-endgame flag) plus a
-// constant baseline, then signed by the side with the current eg-level
-// positional advantage. A clamp prevents the contribution from flipping
-// the sign of an already small eg score. The mg half is applied at half
-// strength so the term does not distort quiet middlegame positions.
+// accumulated from passers, pawn count, outflank, king infiltration,
+// pure-pawn-endgame shape, both-flanks play, almost-unwinnable shape, and
+// a constant baseline. The result is signed by the side with the current
+// eg-level positional advantage. A clamp prevents the contribution from
+// flipping the sign of an already small eg score. The mg half is applied at
+// half strength so the term does not distort quiet middlegame positions.
 static Score evaluateInitiative(const Board &board, const EvalContext & /*ctx*/,
                                 const Bitboard passers[2], Score totalBeforeInitiative) {
     // Initiative is a positional-complexity signal. It only makes sense
@@ -1330,7 +1330,7 @@ static int scaleFactor(const Board &board) {
     // the bishop can never evict it because the corner square is on a
     // different color. Gated narrowly so this only fires for the book
     // fortress shape (one file of our own pawns on the a or h file, all
-    // other pieces off, defender has at most an opposite-coloured bishop).
+    // other pieces off, defender has at most an opposite-colored bishop).
     for (int c = 0; c < 2; c++) {
         Color us = static_cast<Color>(c);
         Color them = static_cast<Color>(c ^ 1);
@@ -1364,7 +1364,7 @@ static int scaleFactor(const Board &board) {
         // The defender holds the draw as long as the king can reach the
         // promotion square by the time the lead pawn queens. Compute the
         // worst case pawn distance on our side: the furthest-back pawn
-        // needs the most pushes. Bishop colour mismatch alone is not
+        // needs the most pushes. Bishop color mismatch alone is not
         // enough; the king has to make it to the corner in time.
         int leadPawn = (us == White) ? lsb(ourPawns) : msb(ourPawns);
         int pushes = (us == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
