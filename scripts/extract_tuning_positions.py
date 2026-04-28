@@ -4,9 +4,16 @@
 Reads a PGN with game results, walks every game, and for each position
 skips the opening, skips positions that are in check, skips the last
 two plies, and (by default) skips positions where the engine's reported
-score during the game was a mate score. Emits one labeled position per
-surviving ply in the form ``FEN | result`` where ``result`` is
-1.0 / 0.5 / 0.0 from White's perspective.
+score during the game was a mate score. Emits labeled positions in the
+form ``FEN | result`` where ``result`` is in [0, 1] from White's
+perspective.
+
+By default identical FENs are folded into a single row whose label is
+the average of every observed game outcome from that position; the
+tuner's MSE loss handles fractional labels just as well as 1.0 / 0.5 /
+0.0 and a transposition that lost twice and drew once gets the label
+1/6 instead of three rows pulling against the model with conflicting
+gradients. Pass ``--no-dedup`` to keep one row per ply (legacy mode).
 """
 import argparse
 import re
@@ -35,58 +42,89 @@ def comment_is_mate(comment: str) -> bool:
 
 
 def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
-            mate_filter: bool):
-    positions = 0
+            mate_filter: bool, dedup: bool):
+    raw_positions = 0
     games = 0
     skipped_games = 0
     mate_filtered = 0
-    with open(pgn_path) as f_in, open(out_path, "w") as f_out:
-        while True:
-            game = chess.pgn.read_game(f_in)
-            if game is None:
-                break
-            games += 1
-            result = game.headers.get("Result", "*")
-            if result not in RESULT_MAP:
-                skipped_games += 1
-                continue
-            label = RESULT_MAP[result]
+    fen_stats: dict = {} if dedup else {}
+    out_handle = None if dedup else open(out_path, "w")
+    try:
+        with open(pgn_path) as f_in:
+            while True:
+                game = chess.pgn.read_game(f_in)
+                if game is None:
+                    break
+                games += 1
+                result = game.headers.get("Result", "*")
+                if result not in RESULT_MAP:
+                    skipped_games += 1
+                    continue
+                label = RESULT_MAP[result]
 
-            # Walk the mainline as a node sequence so each step exposes
-            # both the move and the engine comment that followed it. The
-            # comment after move N is the engine's evaluation of the
-            # position it was *searching from*, which is the position
-            # before move N -- exactly the position we are about to
-            # label. So a mate comment after move N means we drop the
-            # FEN at that ply.
-            move_records = []
-            node = game
-            while node.variations:
-                nxt = node.variation(0)
-                move_records.append((nxt.move, nxt.comment))
-                node = nxt
-            n = len(move_records)
+                # Walk the mainline as a node sequence so each step
+                # exposes both the move and the engine comment that
+                # followed it. The comment after move N is the engine's
+                # evaluation of the position it was *searching from*,
+                # which is the position before move N -- exactly the
+                # position we are about to label. So a mate comment
+                # after move N means we drop the FEN at that ply.
+                move_records = []
+                node = game
+                while node.variations:
+                    nxt = node.variation(0)
+                    move_records.append((nxt.move, nxt.comment))
+                    node = nxt
+                n = len(move_records)
 
-            board = game.board()
-            for ply, (move, comment) in enumerate(move_records):
-                if ply >= skip_plies and ply < n - tail_plies:
-                    if board.is_check() or board.is_game_over():
-                        pass
-                    elif mate_filter and comment_is_mate(comment):
-                        mate_filtered += 1
-                    else:
-                        f_out.write(f"{board.fen()} | {label}\n")
-                        positions += 1
-                board.push(move)
+                board = game.board()
+                for ply, (move, comment) in enumerate(move_records):
+                    if ply >= skip_plies and ply < n - tail_plies:
+                        if board.is_check() or board.is_game_over():
+                            pass
+                        elif mate_filter and comment_is_mate(comment):
+                            mate_filtered += 1
+                        else:
+                            fen = board.fen()
+                            if dedup:
+                                slot = fen_stats.get(fen)
+                                if slot is None:
+                                    fen_stats[fen] = [1, label]
+                                else:
+                                    slot[0] += 1
+                                    slot[1] += label
+                            else:
+                                out_handle.write(f"{fen} | {label}\n")
+                            raw_positions += 1
+                    board.push(move)
 
-            if games % 500 == 0:
-                print(f"  processed {games} games, {positions} positions, "
-                      f"{mate_filtered} mate-filtered",
-                      file=sys.stderr)
+                if games % 500 == 0:
+                    extra = (f"{len(fen_stats)} unique" if dedup
+                             else f"{raw_positions} positions")
+                    print(f"  processed {games} games, {extra}, "
+                          f"{mate_filtered} mate-filtered",
+                          file=sys.stderr)
+    finally:
+        if out_handle is not None:
+            out_handle.close()
 
-    print(f"done: {games} games, {positions} positions, "
-          f"{mate_filtered} mate-filtered, "
-          f"{skipped_games} games skipped (no result)", file=sys.stderr)
+    if dedup:
+        unique = len(fen_stats)
+        with open(out_path, "w") as f_out:
+            for fen, (count, total) in fen_stats.items():
+                f_out.write(f"{fen} | {total / count}\n")
+        dup_pct = (100.0 * (raw_positions - unique) / raw_positions
+                   if raw_positions else 0.0)
+        print(f"done: {games} games, {raw_positions} raw positions, "
+              f"{unique} unique ({dup_pct:.1f}% folded), "
+              f"{mate_filtered} mate-filtered, "
+              f"{skipped_games} games skipped (no result)",
+              file=sys.stderr)
+    else:
+        print(f"done: {games} games, {raw_positions} positions, "
+              f"{mate_filtered} mate-filtered, "
+              f"{skipped_games} games skipped (no result)",
+              file=sys.stderr)
 
 
 def main():
@@ -102,9 +140,14 @@ def main():
                     help="keep positions whose engine score was a mate "
                          "(default: drop them)")
     ap.set_defaults(mate_filter=True)
+    ap.add_argument("--no-dedup", dest="dedup", action="store_false",
+                    help="emit one row per ply instead of folding "
+                         "identical FENs into a single weighted-average "
+                         "row (default: dedup on)")
+    ap.set_defaults(dedup=True)
     args = ap.parse_args()
     extract(args.pgn, args.out, args.skip_plies, args.tail_plies,
-            args.mate_filter)
+            args.mate_filter, args.dedup)
 
 
 if __name__ == "__main__":
