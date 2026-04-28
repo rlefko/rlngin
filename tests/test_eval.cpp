@@ -1184,13 +1184,7 @@ int parseEg(const std::string &line) {
     return std::atoi(line.c_str() + eg + 3);
 }
 
-} // namespace
-
-TEST_CASE("Eval: multi safe checks select the multi bucket once", "[eval][kingsafety]") {
-    Board board;
-    board.setFen("k7/8/8/4b3/3q4/8/5P2/6K1 w - - 0 1");
-
-    EvalParams saved = evalParams;
+void zeroKingSafetyTerms() {
     evalParams.PawnShieldBonus[0] = 0;
     evalParams.PawnShieldBonus[1] = 0;
     for (Score &s : evalParams.BlockedPawnStorm)
@@ -1214,7 +1208,6 @@ TEST_CASE("Eval: multi safe checks select the multi bucket once", "[eval][kingsa
         byCount[0] = 0;
         byCount[1] = 0;
     }
-    evalParams.KingSafeCheck[Queen][1] = S(80, 0);
     evalParams.KingRingWeakWeight = 0;
     evalParams.KingUnsafeCheckWeight = 0;
     evalParams.KingAttacksWeight = 0;
@@ -1227,11 +1220,44 @@ TEST_CASE("Eval: multi safe checks select the multi bucket once", "[eval][kingsa
     evalParams.KingDangerConstant = 0;
     evalParams.KingNoQueenDiscount = 0;
     evalParams.KingPawnDistance = 0;
+}
+
+} // namespace
+
+TEST_CASE("Eval: multi safe checks select the multi bucket once", "[eval][kingsafety]") {
+    Board board;
+    board.setFen("k7/8/8/4b3/3q4/8/5P2/6K1 w - - 0 1");
+
+    EvalParams saved = evalParams;
+    zeroKingSafetyTerms();
+    evalParams.KingSafeCheck[Queen][1] = S(80, 0);
 
     int kingSafetyMg = parseMg(bucketLine(board, "King safety"));
     evalParams = saved;
 
     CHECK(kingSafetyMg == -200);
+}
+
+TEST_CASE("Eval: unsafe checks ignore enemy-occupied check squares", "[eval][kingsafety]") {
+    Board withBlockedRook;
+    Board withoutRook;
+
+    // The black rook attacks g3, a rook-check square from the white king,
+    // but g3 is occupied by a black pawn. That square is not a legal
+    // checking destination, so adding the rook must not change the isolated
+    // unsafe-check king-safety bucket.
+    withBlockedRook.setFen("4k1r1/8/8/8/7b/4n1p1/8/6K1 w - - 0 1");
+    withoutRook.setFen("4k3/8/8/8/7b/4n1p1/8/6K1 w - - 0 1");
+
+    EvalParams saved = evalParams;
+    zeroKingSafetyTerms();
+    evalParams.KingUnsafeCheckWeight = S(80, 0);
+
+    int withRookMg = parseMg(bucketLine(withBlockedRook, "King safety"));
+    int withoutRookMg = parseMg(bucketLine(withoutRook, "King safety"));
+    evalParams = saved;
+
+    CHECK(withRookMg == withoutRookMg);
 }
 
 // --- Bishop long diagonal ---

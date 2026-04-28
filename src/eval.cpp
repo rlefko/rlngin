@@ -898,6 +898,7 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         // lower-priority checker after a stronger check type already
         // accounts for it.
         Bitboard unsafeChecks = 0;
+        Bitboard unsafeCheckSquares = ~theirOcc & ~safeSquares;
         auto addSafeCheck = [&](Bitboard sc, PieceType pt) {
             if (!sc) return false;
             int idx = (popcount(sc) >= 2) ? 1 : 0;
@@ -908,7 +909,7 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
 
         Bitboard safeRookChecks = ctx.attackedBy[them][Rook] & rookCheckRays & safeSquares;
         if (!addSafeCheck(safeRookChecks, Rook)) {
-            unsafeChecks |= ctx.attackedBy[them][Rook] & rookCheckRays;
+            unsafeChecks |= ctx.attackedBy[them][Rook] & rookCheckRays & unsafeCheckSquares;
         }
 
         Bitboard safeQueenChecks = ctx.attackedBy[them][Queen] & queenCheckRays & safeSquares &
@@ -918,12 +919,12 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         Bitboard safeBishopChecks =
             ctx.attackedBy[them][Bishop] & bishopCheckRays & safeSquares & ~safeQueenChecks;
         if (!addSafeCheck(safeBishopChecks, Bishop)) {
-            unsafeChecks |= ctx.attackedBy[them][Bishop] & bishopCheckRays;
+            unsafeChecks |= ctx.attackedBy[them][Bishop] & bishopCheckRays & unsafeCheckSquares;
         }
 
         Bitboard knightChecks = ctx.attackedBy[them][Knight] & knightCheckRays;
         if (!addSafeCheck(knightChecks & safeSquares, Knight)) {
-            unsafeChecks |= knightChecks;
+            unsafeChecks |= knightChecks & unsafeCheckSquares;
         }
 
         int unsafeCount = popcount(unsafeChecks);
