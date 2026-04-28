@@ -1,4 +1,5 @@
 #include "tunable.h"
+#include "eval.h"
 #include "eval_params.h"
 #include "search.h"
 #include "search_params.h"
@@ -12,6 +13,11 @@ int clampInt(int v, int lo, int hi) {
     if (v < lo) return lo;
     if (v > hi) return hi;
     return v;
+}
+
+void clearEvalCaches() {
+    clearPawnHash();
+    clearMaterialHash();
 }
 
 // Build a spec that reads and writes a plain int field of `searchParams`.
@@ -60,6 +66,7 @@ TunableSpec makeScoreHalfSpec(std::string name, Score *target, bool isMg, int mi
         else
             eg = v;
         *target = S(mg, eg);
+        clearEvalCaches();
     };
     return s;
 }

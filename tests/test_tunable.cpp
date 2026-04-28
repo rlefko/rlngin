@@ -1,4 +1,6 @@
+#include "board.h"
 #include "catch_amalgamated.hpp"
+#include "eval.h"
 #include "eval_params.h"
 #include "search.h"
 #include "search_params.h"
@@ -98,6 +100,31 @@ TEST_CASE("Tunable registry: Score-half setters preserve the other half", "[tuna
     CHECK(egSpec->get() == originalEg - 13);
 
     resetEvalParams();
+}
+
+TEST_CASE("Tunable registry: Score-half eval setters clear eval caches", "[tunable]") {
+    resetEvalParams();
+    clearPawnHash();
+    clearMaterialHash();
+
+    Board board;
+    board.setFen("4k3/8/8/3p1p2/4P3/8/8/4K3 w - - 0 1");
+
+    const TunableSpec *spec = findTunable("WeakLeverEg");
+    REQUIRE(spec != nullptr);
+    const int original = spec->get();
+    REQUIRE(original != 0);
+
+    const int before = evaluate(board);
+    spec->set(0);
+    const int after = evaluate(board);
+
+    spec->set(original);
+    resetEvalParams();
+    clearPawnHash();
+    clearMaterialHash();
+
+    CHECK(after != before);
 }
 
 TEST_CASE("Tunable registry: LmrDivisor mutation rebuilds the reduction table", "[tunable]") {
