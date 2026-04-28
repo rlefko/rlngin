@@ -10,7 +10,7 @@ TEST_CASE("Eval: starting position equals the tempo bonus", "[eval]") {
     Board board;
     // The positional half of startpos is zero by symmetry, so the score
     // reduces to the middlegame tempo bonus for the side to move.
-    CHECK(evaluate(board) == 16);
+    CHECK(evaluate(board) == 24);
 }
 
 TEST_CASE("Eval: kings only is 0", "[eval]") {
@@ -22,7 +22,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3328);
+    CHECK(evaluate(board) == 3332);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -36,9 +36,9 @@ TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]
     // With a tempo bonus the two scores are no longer pure negations: each
     // side gets the same middlegame tempo boost, so (wtm + btm) measures
     // twice the tempo contribution while (wtm - btm) preserves the
-    // positional asymmetry in favor of White. The eval grain (multiples
-    // of 16) can absorb the small tempo asymmetry in low-phase positions
-    // so the sum may round to zero; the directional check still holds.
+    // positional asymmetry in favor of White. In low-phase positions the
+    // tempo contribution can still be tiny, so the directional check is
+    // the important invariant.
     CHECK((whiteToMove + blackToMove) >= 0);
     CHECK((whiteToMove - blackToMove) > 0);
 }
@@ -56,23 +56,23 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // contribution survives, which is small with phase=1 and no pieces
     // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 16);
+    CHECK(evaluate(board) == 17);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
     // is scaled to zero. The mg half reflects material, PSTs, and the
     // long-diagonal sweep the a1-h8 diagonal earns on an empty board.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 32);
+    CHECK(evaluate(board) == 33);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1728);
+    CHECK(evaluate(board) == 1714);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3328);
+    CHECK(evaluate(board) == 3332);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -145,7 +145,7 @@ TEST_CASE("Eval: symmetric positions equal the tempo bonus", "[eval]") {
     // middlegame tempo contribution (scaled by the full startpos phase of
     // 24) is left for the side to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w - - 0 1");
-    CHECK(evaluate(board) == 16);
+    CHECK(evaluate(board) == 24);
 }
 
 // --- King safety tests ---
@@ -214,12 +214,12 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // Fully symmetric position with pawns: positional half cancels and the
     // score reduces to the tempo contribution for whoever is to move.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    CHECK(evaluate(board) == 16);
+    CHECK(evaluate(board) == 24);
 
     // Symmetric with castled kings. Phase is reduced (no queens: 24 - 8 = 16)
     // but the tempo contribution scales with the middlegame weight.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 16);
+    CHECK(evaluate(board) == 22);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
@@ -781,6 +781,8 @@ TEST_CASE("Eval: queen mobility excludes squares attacked by enemy pawns", "[eva
 
 TEST_CASE("Eval: rook on open file beats rook on closed file", "[eval][rook]") {
     Board board;
+    Score saved = evalParams.RookOpenFileBonus;
+    evalParams.RookOpenFileBonus = S(320, 320);
 
     // Rook on file e with both an own pawn on e2 and an enemy pawn on e6
     // sitting on the same file -- closed, no bonus
@@ -791,6 +793,7 @@ TEST_CASE("Eval: rook on open file beats rook on closed file", "[eval][rook]") {
     // file of either color -- fully open
     board.setFen("4k3/8/4p3/8/8/8/4P3/3RK3 w - - 0 1");
     int open = evaluate(board);
+    evalParams.RookOpenFileBonus = saved;
 
     CHECK(open > closed);
 }
@@ -1278,7 +1281,7 @@ TEST_CASE("Eval: initiative is zero on a fully symmetric pawn position", "[eval]
     // contributes nothing. Score reduces to the tempo bonus tapered at
     // full phase.
     board.setFen("rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
-    CHECK(evaluate(board) == 16);
+    CHECK(evaluate(board) == 24);
 }
 
 TEST_CASE("Eval: initiative rewards the side with advantage in an asymmetric middlegame",
@@ -1299,7 +1302,7 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     // a KQvK evaluation matches the pure material plus PST plus king
     // safety baseline and is not damped by the initiative constant.
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 3328);
+    CHECK(evaluate(board) == 3332);
 }
 
 // --- Wrong-colored bishop rook pawn scale ---

@@ -1660,6 +1660,13 @@ int evaluate(const Board &board) {
 
     int result = (mg * mgPhase + eg * egPhase) / 24;
 
+    // Eval grain: round the tapered score to a multiple of 16 so tuner
+    // noise smaller than the grain cannot perturb move ordering and so
+    // tiny eval flickers do not chain into search instabilities. Apply
+    // before tempo and halfmove dampening so full-phase symmetric
+    // positions still keep the exact tempo bonus.
+    result = (result / 16) * 16;
+
     // Scale evaluation toward 0 as the halfmove clock approaches 100 so the
     // engine prefers moves that make progress (captures, pawn pushes) and
     // avoids blundering into 50-move rule draws beyond the search horizon.
@@ -1675,11 +1682,6 @@ int evaluate(const Board &board) {
     // white-perspective total before the final flip.
     int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
     result += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
-
-    // Eval grain: round the final score to a multiple of 16 so tuner
-    // noise smaller than the grain cannot perturb move ordering and so
-    // tiny eval flickers do not chain into search instabilities.
-    result = (result / 16) * 16;
 
     return (board.sideToMove == White) ? result : -result;
 }
@@ -1759,16 +1761,16 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
         scaledEg = eg * scale / 64;
     }
     int blended = (mg * mgPhase + scaledEg * egPhase) / 24;
+    int grained = (blended / 16) * 16;
 
-    int halfmoveScaled = blended;
+    int halfmoveScaled = grained;
     if (board.byPiece[Pawn]) {
-        halfmoveScaled = blended * (200 - board.halfmoveClock) / 200;
+        halfmoveScaled = grained * (200 - board.halfmoveClock) / 200;
     }
 
     int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
     int whitePovResult =
         halfmoveScaled + ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
-    whitePovResult = (whitePovResult / 16) * 16;
     int stmResult = (board.sideToMove == White) ? whitePovResult : -whitePovResult;
 
     // Render one eval half (mg or eg) as a pawns-with-two-decimals string
@@ -1832,6 +1834,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
        << " " << mgPhase << "/24\n";
     os << " " << std::left << std::setw(14) << "Scale"
        << " eg * " << scale << "/64 = " << scaledEg << '\n';
+    os << " " << std::left << std::setw(14) << "Grain"
+       << " " << blended << " -> " << grained << '\n';
     os << " " << std::left << std::setw(14) << "Halfmove"
        << " clock=" << board.halfmoveClock << " -> " << halfmoveScaled << '\n';
     os << " " << std::left << std::setw(14) << "Tempo"
