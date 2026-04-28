@@ -25,13 +25,7 @@ TEST_OBJS := $(patsubst $(TESTDIR)/%.cpp,$(BUILDDIR)/%.o,$(TEST_SRCS))
 CATCH2_OBJ := $(BUILDDIR)/catch_amalgamated.o
 LIB_OBJS := $(filter-out $(BUILDDIR)/main.o,$(OBJS))
 
-UNAME := $(shell uname)
-ifeq ($(UNAME),Darwin)
-FASTCHESS_ASSET := fastchess-mac-arm64
-else
-FASTCHESS_ASSET := fastchess-linux-x86-64
-endif
-FASTCHESS_URL := https://github.com/Disservin/fastchess/releases/latest/download/$(FASTCHESS_ASSET).tar
+FASTCHESS_REPO := https://github.com/Disservin/fastchess.git
 
 CATCH2_VERSION := 3.8.0
 CATCH2_URL := https://raw.githubusercontent.com/catchorg/Catch2/v$(CATCH2_VERSION)/extras
@@ -102,13 +96,14 @@ format-check:
 	@find src tests -name '*.cpp' -o -name '*.h' | grep -v catch2 | xargs clang-format --dry-run --Werror
 
 fetch-fastchess:
-	@echo "Downloading fastchess..."
-	@curl -sL "$(FASTCHESS_URL)" -o /tmp/fastchess.tar
-	@tar xf /tmp/fastchess.tar -C /tmp
-	@cp /tmp/$(FASTCHESS_ASSET)/fastchess ./fastchess
+	@echo "Building fastchess from source..."
+	@rm -rf /tmp/fastchess-src
+	@git clone --depth 1 "$(FASTCHESS_REPO)" /tmp/fastchess-src
+	@$(MAKE) -C /tmp/fastchess-src -j
+	@cp /tmp/fastchess-src/fastchess ./fastchess
 	@chmod +x ./fastchess
-	@rm -rf /tmp/fastchess.tar /tmp/$(FASTCHESS_ASSET)
-	@echo "fastchess downloaded to ./fastchess"
+	@rm -rf /tmp/fastchess-src
+	@echo "fastchess built to ./fastchess"
 
 fetch-openings: $(OPENINGS_FILE)
 

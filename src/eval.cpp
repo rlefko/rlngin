@@ -209,8 +209,15 @@ static void buildAttackMaps(const Board &board, EvalContext &ctx) {
     }
 }
 
-static PawnHashTable pawnHashTable(2);
-static MaterialHashTable materialHashTable(1);
+// Thread-local pawn and material hashes so the multi-threaded tuner
+// loss loop never races on shared writes. Real search uses one thread
+// and behaves identically; each tuner worker gets its own table on
+// first eval call inside that thread, freed when the thread exits.
+// Tuner loss evals create fresh worker threads per call, so stale
+// entries from a prior parameter snapshot never leak into the current
+// loss eval.
+static thread_local PawnHashTable pawnHashTable(2);
+static thread_local MaterialHashTable materialHashTable(1);
 
 // Compute the pure material contribution for this position: piece values
 // (MG/EG), bishop pair bonus, quadratic imbalance, and game phase. The

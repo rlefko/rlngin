@@ -23,7 +23,16 @@ static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 
-static TranspositionTable tt(16);
+// Per-thread transposition table. The engine's UCI search runs on a
+// single thread, so behavior there is identical to the prior global
+// TT (the main thread instance is sized via setHashSize). The tuner's
+// leaf precompute now spawns worker threads that each touch
+// `qsearchLeafBoard`; with thread_local each worker gets its own 16 MB
+// TT on first use, no inter-thread races on tt.clear() / tt.store().
+// Loss-eval workers never call qsearch and so never default-construct
+// their copies (thread_local with a non-trivial constructor only runs
+// on first access in that thread).
+static thread_local TranspositionTable tt(16);
 
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
@@ -202,6 +211,14 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
+// Tuner-leaf mode flag. While `qsearchLeafBoard` is running, delta and
+// SEE pruning are turned off so every plausible capture gets resolved
+// and the leaf the tuner labels is genuinely quiet. Real search reads
+// this as `false`. Thread-local so the parallelized leaf precompute
+// can set/reset per worker without races; default-false on every
+// thread that hasn't entered tuner-leaf mode (real search).
+static thread_local bool g_tunerLeafMode = false;
+
 int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
@@ -263,7 +280,8 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         }
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[board.sideToMove];
         Bitboard promoReady = ourPawns & ((board.sideToMove == White) ? Rank7BB : Rank2BB);
-        if (!promoReady && standPat + bestTargetValue + searchParams.QsDeltaMargin <= alpha) {
+        if (!g_tunerLeafMode && !promoReady &&
+            standPat + bestTargetValue + searchParams.QsDeltaMargin <= alpha) {
             // Mirror the no-move-tried store path below so future probes
             // can cut immediately instead of recomputing stand-pat from
             // scratch. The shortcut fires only when standPat < alpha, so
@@ -281,13 +299,16 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     while (picker.next(pm)) {
         const Move &m = pm.move;
         if (!inCheck && isCapture(board, m)) {
-            // Prune losing captures
-            if (see(board, m) < 0) continue;
+            // Prune losing captures. Disabled under tuner-leaf mode so
+            // SEE-losing tactical captures still feed into the leaf
+            // resolution.
+            if (!g_tunerLeafMode && see(board, m) < 0) continue;
             // Delta pruning: skip captures that cannot raise alpha even on a
             // full recapture with a positional bonus. With a wider eval
             // distribution, standPat often sits well below alpha, so qsearch
             // fans out captures that have no chance of moving the score.
-            if (m.promotion == None &&
+            // Also disabled under tuner-leaf mode.
+            if (!g_tunerLeafMode && m.promotion == None &&
                 standPat + PieceValue[capturedType(board, m)] + searchParams.QsDeltaMargin <=
                     alpha) {
                 continue;
@@ -356,11 +377,31 @@ int qsearchScore(const Board &board) {
     return quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
 }
 
+// Aggregate counters describing how `qsearchLeafBoard` exited across the
+// entire precompute. The tuner reads these via `qsearchLeafCounters()`
+// after the precompute finishes so a non-zero in-check count, a wave
+// of TT-miss exits, or hitting the iteration cap shows up explicitly
+// instead of silently producing noisy labels. Stored as atomics so
+// the parallelized leaf precompute can increment from worker threads
+// without racing.
+static std::atomic<uint64_t> g_qsearchLeafTotal{0};
+static std::atomic<uint64_t> g_qsearchLeafInCheck{0};
+static std::atomic<uint64_t> g_qsearchLeafTtMiss{0};
+static std::atomic<uint64_t> g_qsearchLeafCapped{0};
+
 Board qsearchLeafBoard(const Board &root) {
     // Clear TT so the post-search walk only follows entries that this
     // call wrote. Not thread-safe: the tuner must run this step
     // sequentially before the multi-threaded loss loop starts.
     tt.clear();
+
+    // Switch qsearch into tuner-leaf mode for the duration of this
+    // call. Both delta pruning (against searchParams.QsDeltaMargin)
+    // and SEE-loss capture pruning are disabled so every plausible
+    // capture is resolved before the static eval is fitted to the
+    // returned leaf. Real search keeps both prunes for speed; the
+    // SPSA-tuned QsDeltaMargin is unchanged.
+    g_tunerLeafMode = true;
 
     SearchState state;
     state.startTime = std::chrono::steady_clock::now();
@@ -369,19 +410,53 @@ Board qsearchLeafBoard(const Board &root) {
     quiescence(copy, -INF_SCORE, INF_SCORE, 0, state);
 
     // Walk the best-move chain. Qsearch writes a zero move for pure
-    // stand-pat returns; walking stops when no move, a non-capture, or
-    // a TT miss is seen. The cap on iterations guards against any
-    // pathological cycle we might observe under perturbation.
+    // stand-pat returns; walking stops when no move or a TT miss is
+    // seen. While the current position is in check we keep walking
+    // along legal evasions even when they are non-captures, because
+    // returning a still-in-check leaf to the static evaluator produces
+    // meaningless label noise. Outside of check we still stop at the
+    // first non-capture so the leaf reflects a quiet position. The
+    // 32-iteration cap remains as a guard against pathological cycles.
     Board cur = root;
-    for (int iter = 0; iter < 32; iter++) {
+    int iter = 0;
+    bool ttMissed = false;
+    bool capped = false;
+    for (; iter < 32; iter++) {
         TTEntry entry;
-        if (!tt.probe(cur.key, entry, 0)) break;
+        if (!tt.probe(cur.key, entry, 0)) {
+            ttMissed = true;
+            break;
+        }
         Move m = entry.best_move;
         if (m.from == 0 && m.to == 0 && m.promotion == None) break;
-        if (!isCapture(cur, m)) break;
+        bool inCheckNow = isInCheck(cur);
+        if (!inCheckNow && !isCapture(cur, m)) break;
         cur.makeMove(m);
     }
+    if (iter == 32) capped = true;
+
+    g_qsearchLeafTotal.fetch_add(1, std::memory_order_relaxed);
+    if (isInCheck(cur)) g_qsearchLeafInCheck.fetch_add(1, std::memory_order_relaxed);
+    if (ttMissed) g_qsearchLeafTtMiss.fetch_add(1, std::memory_order_relaxed);
+    if (capped) g_qsearchLeafCapped.fetch_add(1, std::memory_order_relaxed);
+
+    g_tunerLeafMode = false;
     return cur;
+}
+
+QsearchLeafStats qsearchLeafCounters() {
+    QsearchLeafStats s;
+    s.total = g_qsearchLeafTotal.load(std::memory_order_relaxed);
+    s.inCheck = g_qsearchLeafInCheck.load(std::memory_order_relaxed);
+    s.ttMiss = g_qsearchLeafTtMiss.load(std::memory_order_relaxed);
+    s.cappedIterations = g_qsearchLeafCapped.load(std::memory_order_relaxed);
+    return s;
+}
+void resetQsearchLeafCounters() {
+    g_qsearchLeafTotal.store(0, std::memory_order_relaxed);
+    g_qsearchLeafInCheck.store(0, std::memory_order_relaxed);
+    g_qsearchLeafTtMiss.store(0, std::memory_order_relaxed);
+    g_qsearchLeafCapped.store(0, std::memory_order_relaxed);
 }
 
 static bool isRepetition(const Board &board, const SearchState &state, int ply) {

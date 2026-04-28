@@ -2,12 +2,14 @@
 """Extract quiet labeled positions from a PGN for Texel tuning.
 
 Reads a PGN with game results, walks every game, and for each position
-skips the opening, skips positions that are in check, and skips the last
-two plies. Emits one labeled position per surviving ply in the form
-`FEN | result` where `result` is 1.0 / 0.5 / 0.0 from White's
-perspective.
+skips the opening, skips positions that are in check, skips the last
+two plies, and (by default) skips positions where the engine's reported
+score during the game was a mate score. Emits one labeled position per
+surviving ply in the form ``FEN | result`` where ``result`` is
+1.0 / 0.5 / 0.0 from White's perspective.
 """
 import argparse
+import re
 import sys
 
 import chess
@@ -16,11 +18,28 @@ import chess.pgn
 
 RESULT_MAP = {"1-0": 1.0, "0-1": 0.0, "1/2-1/2": 0.5}
 
+# fastchess writes engine scores in the comment after each move:
+#   ``{+0.32/14 0.07s}`` for centipawn, ``{+M5/7 0.008s}`` /
+#   ``{-M4/4 ...}`` for mate, occasionally ``{#5}`` from other engines.
+# python-chess strips the curly braces, so the comment string starts at
+# the score token directly. Match only against that leading token to
+# avoid misfiring on later metadata.
+MATE_RE = re.compile(r"^[+\-]?M\d+|^#\d+", re.IGNORECASE)
 
-def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int):
+
+def comment_is_mate(comment: str) -> bool:
+    if not comment:
+        return False
+    token = comment.split(None, 1)[0] if comment.split() else ""
+    return bool(MATE_RE.match(token))
+
+
+def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
+            mate_filter: bool):
     positions = 0
     games = 0
     skipped_games = 0
+    mate_filtered = 0
     with open(pgn_path) as f_in, open(out_path, "w") as f_out:
         while True:
             game = chess.pgn.read_game(f_in)
@@ -32,21 +51,41 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int):
                 skipped_games += 1
                 continue
             label = RESULT_MAP[result]
-            moves = list(game.mainline_moves())
-            n = len(moves)
+
+            # Walk the mainline as a node sequence so each step exposes
+            # both the move and the engine comment that followed it. The
+            # comment after move N is the engine's evaluation of the
+            # position it was *searching from*, which is the position
+            # before move N -- exactly the position we are about to
+            # label. So a mate comment after move N means we drop the
+            # FEN at that ply.
+            move_records = []
+            node = game
+            while node.variations:
+                nxt = node.variation(0)
+                move_records.append((nxt.move, nxt.comment))
+                node = nxt
+            n = len(move_records)
+
             board = game.board()
-            for ply, move in enumerate(moves):
+            for ply, (move, comment) in enumerate(move_records):
                 if ply >= skip_plies and ply < n - tail_plies:
-                    if not board.is_check() and not board.is_game_over():
-                        fen = board.fen()
-                        f_out.write(f"{fen} | {label}\n")
+                    if board.is_check() or board.is_game_over():
+                        pass
+                    elif mate_filter and comment_is_mate(comment):
+                        mate_filtered += 1
+                    else:
+                        f_out.write(f"{board.fen()} | {label}\n")
                         positions += 1
                 board.push(move)
+
             if games % 500 == 0:
-                print(f"  processed {games} games, {positions} positions",
+                print(f"  processed {games} games, {positions} positions, "
+                      f"{mate_filtered} mate-filtered",
                       file=sys.stderr)
 
     print(f"done: {games} games, {positions} positions, "
+          f"{mate_filtered} mate-filtered, "
           f"{skipped_games} games skipped (no result)", file=sys.stderr)
 
 
@@ -58,8 +97,14 @@ def main():
                     help="skip this many opening plies (default 8)")
     ap.add_argument("--tail-plies", type=int, default=2,
                     help="skip this many plies at the end (default 2)")
+    ap.add_argument("--no-mate-filter", dest="mate_filter",
+                    action="store_false",
+                    help="keep positions whose engine score was a mate "
+                         "(default: drop them)")
+    ap.set_defaults(mate_filter=True)
     args = ap.parse_args()
-    extract(args.pgn, args.out, args.skip_plies, args.tail_plies)
+    extract(args.pgn, args.out, args.skip_plies, args.tail_plies,
+            args.mate_filter)
 
 
 if __name__ == "__main__":
