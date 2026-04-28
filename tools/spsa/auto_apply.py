@@ -31,7 +31,7 @@ from pathlib import Path
 from typing import Dict, Optional
 
 GIT_AUTHOR_NAME = "Ryan Lefkowitz"
-GIT_AUTHOR_EMAIL = "rlefkowitz1800@yahoo.com"
+GIT_AUTHOR_EMAIL = "ryan@outtake.ai"
 
 
 # Each struct line in `src/search_params.cpp` looks like
