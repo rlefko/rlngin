@@ -861,6 +861,10 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         Bitboard enemyAttacks = ctx.allAttacks[them];
         Bitboard friendlyDefense = ctx.allAttacks[us];
 
+        Bitboard weak = enemyAttacks & ~ctx.attackedBy2[us] &
+                        (~friendlyDefense | ctx.attackedBy[us][King] | ctx.attackedBy[us][Queen]);
+        Bitboard weakRing = kZone & weak;
+
         // Undefended zone squares: keep the existing Texel-tuned linear
         // term as-is, and additionally feed the same popcount into the
         // king-danger accumulator via KingRingWeakWeight so the quadratic
@@ -868,56 +872,60 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         Bitboard undefAttacked = kZone & enemyAttacks & ~friendlyDefense;
         int undefCount = popcount(undefAttacked);
         scores[us] += undefCount * evalParams.UndefendedKingZoneSq;
-        kingDangerMg += undefCount * mg_value(evalParams.KingRingWeakWeight);
-        kingDangerEg += undefCount * eg_value(evalParams.KingRingWeakWeight);
+        int weakRingCount = popcount(weakRing);
+        kingDangerMg += weakRingCount * mg_value(evalParams.KingRingWeakWeight);
+        kingDangerEg += weakRingCount * eg_value(evalParams.KingRingWeakWeight);
 
         // Safe checks: squares from which an enemy piece of each type
         // would give check to our king. A check square is "safe" when it
-        // is reachable by the enemy piece, not occupied by another enemy
-        // piece, and not defended by any of our non-king pieces. Squares
-        // defended only by the king itself are treated as weak because a
-        // supported attacker wins the capture: this is the classical
-        // king-danger definition of safe check.
+        // is not occupied by another enemy piece and either we do not
+        // defend it or the square is weak and attacked twice by the enemy.
+        // Check rays ignore our queen so queen-blocked lines are still
+        // visible to the king-danger model.
         Bitboard theirOcc = board.byColor[them];
-        Bitboard nonKingDefense = ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] |
-                                  ctx.attackedBy[us][Bishop] | ctx.attackedBy[us][Rook] |
-                                  ctx.attackedBy[us][Queen];
-        Bitboard safeSquares = ~nonKingDefense & ~theirOcc;
+        Bitboard safeSquares = ~theirOcc & (~friendlyDefense | (weak & ctx.attackedBy2[them]));
+        Bitboard checkOcc = occ ^ (board.byPiece[Queen] & board.byColor[us]);
         Bitboard knightCheckRays = KnightAttacks[kingSq];
-        Bitboard bishopCheckRays = bishopAttacks(kingSq, occ);
-        Bitboard rookCheckRays = rookAttacks(kingSq, occ);
+        Bitboard bishopCheckRays = bishopAttacks(kingSq, checkOcc);
+        Bitboard rookCheckRays = rookAttacks(kingSq, checkOcc);
         Bitboard queenCheckRays = bishopCheckRays | rookCheckRays;
 
-        Bitboard safeKnightChecks = ctx.attackedBy[them][Knight] & knightCheckRays & safeSquares;
-        Bitboard safeBishopChecks = ctx.attackedBy[them][Bishop] & bishopCheckRays & safeSquares;
-        Bitboard safeRookChecks = ctx.attackedBy[them][Rook] & rookCheckRays & safeSquares;
-        Bitboard safeQueenChecks = ctx.attackedBy[them][Queen] & queenCheckRays & safeSquares;
-
         // Safe checks: per-piece weight selected by whether one or more
-        // safe check squares exist for that piece type. Two safe checks
-        // is qualitatively closer to forced material loss than two times
-        // one safe check, so the multi entry is roughly twice the single.
+        // safe check squares exist for that piece type. A multi-check
+        // position selects the multi bucket once; it is not multiplied by
+        // the number of checking squares. Rook, queen, bishop, and knight
+        // checks are prioritized so the same square is not charged to a
+        // lower-priority checker after a stronger check type already
+        // accounts for it.
+        Bitboard unsafeChecks = 0;
         auto addSafeCheck = [&](Bitboard sc, PieceType pt) {
-            int count = popcount(sc);
-            if (!count) return;
-            int idx = (count >= 2) ? 1 : 0;
-            kingDangerMg += count * mg_value(evalParams.KingSafeCheck[pt][idx]);
-            kingDangerEg += count * eg_value(evalParams.KingSafeCheck[pt][idx]);
+            if (!sc) return false;
+            int idx = (popcount(sc) >= 2) ? 1 : 0;
+            kingDangerMg += mg_value(evalParams.KingSafeCheck[pt][idx]);
+            kingDangerEg += eg_value(evalParams.KingSafeCheck[pt][idx]);
+            return true;
         };
-        addSafeCheck(safeKnightChecks, Knight);
-        addSafeCheck(safeBishopChecks, Bishop);
-        addSafeCheck(safeRookChecks, Rook);
+
+        Bitboard safeRookChecks = ctx.attackedBy[them][Rook] & rookCheckRays & safeSquares;
+        if (!addSafeCheck(safeRookChecks, Rook)) {
+            unsafeChecks |= ctx.attackedBy[them][Rook] & rookCheckRays;
+        }
+
+        Bitboard safeQueenChecks = ctx.attackedBy[them][Queen] & queenCheckRays & safeSquares &
+                                   ~(ctx.attackedBy[us][Queen] | safeRookChecks);
         addSafeCheck(safeQueenChecks, Queen);
 
-        // Unsafe checks: the same per-piece check rays intersected with
-        // enemy attacks, but on squares we do defend. The recapture
-        // would lose material, but the in-between position still wastes
-        // a tempo and disrupts our own piece coordination.
-        Bitboard unsafeMask = ~safeSquares;
-        Bitboard unsafeChecks = (ctx.attackedBy[them][Knight] & knightCheckRays & unsafeMask) |
-                                (ctx.attackedBy[them][Bishop] & bishopCheckRays & unsafeMask) |
-                                (ctx.attackedBy[them][Rook] & rookCheckRays & unsafeMask) |
-                                (ctx.attackedBy[them][Queen] & queenCheckRays & unsafeMask);
+        Bitboard safeBishopChecks =
+            ctx.attackedBy[them][Bishop] & bishopCheckRays & safeSquares & ~safeQueenChecks;
+        if (!addSafeCheck(safeBishopChecks, Bishop)) {
+            unsafeChecks |= ctx.attackedBy[them][Bishop] & bishopCheckRays;
+        }
+
+        Bitboard knightChecks = ctx.attackedBy[them][Knight] & knightCheckRays;
+        if (!addSafeCheck(knightChecks & safeSquares, Knight)) {
+            unsafeChecks |= knightChecks;
+        }
+
         int unsafeCount = popcount(unsafeChecks);
         kingDangerMg += unsafeCount * mg_value(evalParams.KingUnsafeCheckWeight);
         kingDangerEg += unsafeCount * eg_value(evalParams.KingUnsafeCheckWeight);
@@ -976,9 +984,9 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         // the incoming king attack stronger. Computed by snipers from
         // both diagonals and orthogonals: an enemy slider whose ray to
         // our king has exactly one occupant of our color is pinning it.
-        // bishopCheckRays and rookCheckRays are reused from the safe
-        // check section above to avoid recomputing king-ray magic
-        // lookups inside the per-sniper loop.
+        // The king-ray lookups here use normal occupancy. Safe-check rays
+        // ignore our queen above, but a pinned blocker test must see the
+        // board as it actually stands.
         Bitboard ourOcc = board.byColor[us];
         Bitboard theirSlidersDiag =
             (board.byPiece[Bishop] | board.byPiece[Queen]) & board.byColor[them];
@@ -994,7 +1002,8 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             bool isOrtho = (squareBB(snSq) & theirSlidersOrtho) != 0;
             Bitboard rayFromSniper =
                 (isDiag ? bishopAttacks(snSq, occ) : 0) | (isOrtho ? rookAttacks(snSq, occ) : 0);
-            Bitboard rayFromKing = (isDiag ? bishopCheckRays : 0) | (isOrtho ? rookCheckRays : 0);
+            Bitboard rayFromKing = (isDiag ? bishopAttacks(kingSq, occ) : 0) |
+                                   (isOrtho ? rookAttacks(kingSq, occ) : 0);
             Bitboard between = rayFromSniper & rayFromKing;
             if (popcount(between & ourOcc) == 1) blockerCount++;
         }
@@ -1013,12 +1022,9 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         // Mobility differential: the net of their non-king mobility
         // minus ours. A side outmobile by a wide margin is much harder
         // to defend even before counting concrete attackers, so this
-        // feeds the king-danger quadratic on the slow side. Both
-        // halves contribute -- mobility deltas matter in the endgame
-        // too, where the slow side cannot redeploy quickly.
+        // feeds the middlegame king-danger quadratic on the slow side.
         Score mobilityDiff = ctx.mobility[them] - ctx.mobility[us];
         kingDangerMg += mg_value(mobilityDiff);
-        kingDangerEg += eg_value(mobilityDiff);
 
         // Constant baseline: small additive shift so the multi-attacker
         // gate is not anchored at zero, producing a smoother quadratic.

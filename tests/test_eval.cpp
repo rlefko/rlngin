@@ -1183,6 +1183,54 @@ int parseEg(const std::string &line) {
 
 } // namespace
 
+TEST_CASE("Eval: multi safe checks select the multi bucket once", "[eval][kingsafety]") {
+    Board board;
+    board.setFen("k7/8/8/4b3/3q4/8/5P2/6K1 w - - 0 1");
+
+    EvalParams saved = evalParams;
+    evalParams.PawnShieldBonus[0] = 0;
+    evalParams.PawnShieldBonus[1] = 0;
+    for (Score &s : evalParams.BlockedPawnStorm)
+        s = 0;
+    for (Score &s : evalParams.UnblockedPawnStorm)
+        s = 0;
+    evalParams.SemiOpenFileNearKing = 0;
+    evalParams.OpenFileNearKing = 0;
+    evalParams.UndefendedKingZoneSq = 0;
+    for (Score &s : evalParams.KingSafeSqPenalty)
+        s = 0;
+    evalParams.KingAttackByKnight = 0;
+    evalParams.KingAttackByBishop = 0;
+    evalParams.KingAttackByRook = 0;
+    evalParams.KingAttackByQueen = 0;
+    for (auto &byPiece : evalParams.MobilityBonus) {
+        for (Score &s : byPiece)
+            s = 0;
+    }
+    for (auto &byCount : evalParams.KingSafeCheck) {
+        byCount[0] = 0;
+        byCount[1] = 0;
+    }
+    evalParams.KingSafeCheck[Queen][1] = S(80, 0);
+    evalParams.KingRingWeakWeight = 0;
+    evalParams.KingUnsafeCheckWeight = 0;
+    evalParams.KingAttacksWeight = 0;
+    evalParams.KingBlockerWeight = 0;
+    evalParams.KingKnightDefenderDiscount = 0;
+    evalParams.PawnlessFlank = 0;
+    evalParams.KingFlankAttack = 0;
+    evalParams.KingFlankAttack2 = 0;
+    evalParams.KingFlankDefense = 0;
+    evalParams.KingDangerConstant = 0;
+    evalParams.KingNoQueenDiscount = 0;
+    evalParams.KingPawnDistance = 0;
+
+    int kingSafetyMg = parseMg(bucketLine(board, "King safety"));
+    evalParams = saved;
+
+    CHECK(kingSafetyMg == -200);
+}
+
 // --- Bishop long diagonal ---
 
 TEST_CASE("Eval: bishop on unblocked long diagonal earns a bonus", "[eval][bishop]") {
