@@ -82,11 +82,7 @@ jobs:
           git worktree remove /tmp/base
 
       - name: Build fastchess from source
-        run: |
-          git clone --depth 1 https://github.com/Disservin/fastchess.git /tmp/fastchess
-          make -C /tmp/fastchess -j"$(nproc)"
-          cp /tmp/fastchess/fastchess ./fastchess
-          chmod +x ./fastchess
+        run: make fetch-fastchess
 
       - name: Download opening book
         run: make fetch-openings
