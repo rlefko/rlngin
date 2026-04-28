@@ -8,12 +8,17 @@ score during the game was a mate score. Emits labeled positions in the
 form ``FEN | result`` where ``result`` is in [0, 1] from White's
 perspective.
 
-By default identical FENs are folded into a single row whose label is
-the average of every observed game outcome from that position; the
-tuner's MSE loss handles fractional labels just as well as 1.0 / 0.5 /
-0.0 and a transposition that lost twice and drew once gets the label
-1/6 instead of three rows pulling against the model with conflicting
-gradients. Pass ``--no-dedup`` to keep one row per ply (legacy mode).
+By default identical positions are folded into a single row whose
+label is the average of every observed game outcome from that
+position; the tuner's MSE loss handles fractional labels just as well
+as 1.0 / 0.5 / 0.0 and a transposition that lost twice and drew once
+gets the label 1/6 instead of three rows pulling against the model
+with conflicting gradients. Equality is the four-field position state
+(board / side to move / castling / en passant), matching the standard
+chess-rules notion of position; halfmove and fullmove counters do not
+participate in the dedup key. The emitted FEN is the first occurrence
+seen, so the eval still reads a real halfmove counter from the game.
+Pass ``--no-dedup`` to keep one row per ply (legacy mode).
 """
 import argparse
 import re
@@ -87,9 +92,10 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
                         else:
                             fen = board.fen()
                             if dedup:
-                                slot = fen_stats.get(fen)
+                                key = fen.rsplit(" ", 2)[0]
+                                slot = fen_stats.get(key)
                                 if slot is None:
-                                    fen_stats[fen] = [1, label]
+                                    fen_stats[key] = [1, label, fen]
                                 else:
                                     slot[0] += 1
                                     slot[1] += label
@@ -111,8 +117,8 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
     if dedup:
         unique = len(fen_stats)
         with open(out_path, "w") as f_out:
-            for fen, (count, total) in fen_stats.items():
-                f_out.write(f"{fen} | {total / count}\n")
+            for _key, (count, total, repr_fen) in fen_stats.items():
+                f_out.write(f"{repr_fen} | {total / count}\n")
         dup_pct = (100.0 * (raw_positions - unique) / raw_positions
                    if raw_positions else 0.0)
         print(f"done: {games} games, {raw_positions} raw positions, "
