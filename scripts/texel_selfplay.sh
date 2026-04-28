@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Usage: texel_selfplay.sh [rounds] [tc] [concurrency]
+# Usage: texel_selfplay.sh [rounds] [limit] [concurrency]
 #   rounds:      number of game pairs (total games = 2 * rounds, default 32000)
-#   tc:          time control string (default "1+0.08")
+#   limit:       per-move budget (default "1+0.08"). Two flavors are
+#                accepted: a Cute-Chess-style time control like
+#                "1+0.08" gets passed through as -each tc=..., and a
+#                literal "nodes=N" gets passed through as -each
+#                nodes=N. Nodes mode is deterministic and roughly 6x
+#                faster wall-clock per game on this engine, at the
+#                cost of label quality vs. real-clock search.
 #   concurrency: parallel games (default 6)
 #
 # Drives a long fastchess self-play match for Texel corpus generation.
@@ -22,8 +28,16 @@ set -euo pipefail
 #   OUTPUT:    output directory (default: tuning/texel)
 
 ROUNDS="${1:-32000}"
-TC="${2:-1+0.08}"
+LIMIT="${2:-1+0.08}"
 CONCURRENCY="${3:-6}"
+
+if [[ "$LIMIT" == nodes=* ]]; then
+    LIMIT_OPT=("$LIMIT")
+    LIMIT_LABEL="$LIMIT"
+else
+    LIMIT_OPT=(tc="$LIMIT")
+    LIMIT_LABEL="tc=$LIMIT"
+fi
 
 ENGINE="${ENGINE:-./build/rlngin}"
 FASTCHESS="${FASTCHESS:-./fastchess}"
@@ -56,7 +70,7 @@ ulimit -n 65536 2>/dev/null || true
 PGN="$OUTPUT/games.pgn"
 LOG="$OUTPUT/selfplay.log"
 
-echo "Texel self-play: $ROUNDS pairs ($((ROUNDS * 2)) games) at tc=$TC, concurrency=$CONCURRENCY"
+echo "Texel self-play: $ROUNDS pairs ($((ROUNDS * 2)) games) at $LIMIT_LABEL, concurrency=$CONCURRENCY"
 echo "  engine:   $ENGINE"
 echo "  openings: $OPENINGS"
 echo "  pgn:      $PGN"
@@ -65,7 +79,7 @@ echo "  log:      $LOG"
 "$FASTCHESS" \
     -engine cmd="$ENGINE" name=rlngin-a \
     -engine cmd="$ENGINE" name=rlngin-b \
-    -each tc="$TC" \
+    -each "${LIMIT_OPT[@]}" \
     -resign movecount=3 score=600 \
     -draw movenumber=34 movecount=8 score=20 \
     -rounds "$ROUNDS" \
