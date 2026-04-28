@@ -176,7 +176,7 @@ def consume_games(buffer: str):
 
 
 def follow(path: str, target: int, tail_moves: int, banner_every: int,
-           poll_interval: float, from_start: bool) -> None:
+           poll_interval: float, from_start: bool, initial_tail: int) -> None:
     stats = Stats(target)
     print(f"watching {path} (target={target})", file=sys.stderr)
     # Wait for the file to exist; fastchess opens it lazily after the
@@ -185,9 +185,25 @@ def follow(path: str, target: int, tail_moves: int, banner_every: int,
     while not os.path.exists(path):
         time.sleep(poll_interval)
     with open(path, "r", encoding="utf-8", errors="replace") as f:
-        if not from_start:
-            f.seek(0, os.SEEK_END)
-        buffer = ""
+        # Read whatever already exists so the viewer shows recent
+        # context immediately rather than waiting for the next game to
+        # land. Without this, attaching to a long-running match looks
+        # frozen until the next completion arrives.
+        existing = f.read()
+        games, buffer = consume_games(existing)
+        seen = []
+        for game in games:
+            summary = summarize_game(game, tail_moves)
+            if summary is None:
+                continue
+            stats.record(summary.result)
+            seen.append(summary)
+        if seen:
+            start = 0 if from_start else max(0, len(seen) - initial_tail)
+            print(stats.banner())
+            for offset, summary in enumerate(seen[start:], start=start + 1):
+                print(summary.line(offset))
+            sys.stdout.flush()
         try:
             while True:
                 chunk = f.read()
@@ -252,8 +268,12 @@ def main() -> int:
     ap.add_argument("--poll-interval", type=float, default=1.0,
                     help="follow-mode poll interval seconds (default 1.0)")
     ap.add_argument("--from-start", action="store_true",
-                    help="in follow mode, start from the beginning of"
-                         " the file rather than the current end")
+                    help="in follow mode, replay every game already in"
+                         " the file before tailing for new ones")
+    ap.add_argument("--initial-tail", type=int, default=15,
+                    help="in follow mode, how many already-completed"
+                         " games to print as context before tailing"
+                         " (default 15)")
     ap.add_argument("--once", action="store_true",
                     help="print recent games + stats once and exit"
                          " (suitable for 'watch -t -n')")
@@ -266,7 +286,7 @@ def main() -> int:
         once(args.path, args.target, args.tail_moves, args.tail_games)
     else:
         follow(args.path, args.target, args.tail_moves, args.banner_every,
-               args.poll_interval, args.from_start)
+               args.poll_interval, args.from_start, args.initial_tail)
     return 0
 
 
