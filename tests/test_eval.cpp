@@ -1525,6 +1525,32 @@ TEST_CASE("Eval: bishop x-ray pawn penalty fires on enemy pawns down the diagona
     CHECK(withXray < withoutXray);
 }
 
+// --- King mobility differential ---
+
+TEST_CASE("Eval: exposed king with no safe squares scores worse than sheltered",
+          "[eval][king-safety]") {
+    Board board;
+
+    // White king centralized on e4 facing two black attackers (queen
+    // and rook) with no escape squares it can reach without walking
+    // into the attackers' fire. The new KingMobilityFactor should
+    // remove no danger from the accumulator, so the king-safety
+    // penalty bites.
+    board.setFen("4k3/8/8/3qr3/4K3/8/8/8 w - - 0 1");
+    int exposedKing = evaluate(board);
+
+    // Same attackers and same material balance, but the king is
+    // tucked into the corner with two non-attacked escape squares
+    // available (h1 and h2 are reachable; the queen and rook on b3
+    // and c3 do not cover them). The mobility differential subtracts
+    // KingMobilityFactor from the accumulator twice, softening the
+    // king-safety penalty.
+    board.setFen("4k3/8/8/8/8/1qr5/8/7K w - - 0 1");
+    int corneredKing = evaluate(board);
+
+    CHECK(corneredKing > exposedKing);
+}
+
 // --- Hanging ---
 
 TEST_CASE("Eval: hanging fires on undefended piece attacked by a single high value attacker",

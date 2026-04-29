@@ -54,7 +54,8 @@
 //     stay non-negative because they are subtracted at the call site.
 //   - King-attack and king-safe-check piece-weight chains:
 //     `Queen >= Rook >= max(Bishop, Knight)` per half.
-//   - `KingSafeSqPenalty` non-decreasing chain on both halves.
+//   - `KingMobilityFactor` >= 0 each half (subtracted from the
+//     accumulator at the call site).
 //   - Mobility non-decreasing chain in count, per piece type and
 //     half.
 //   - Passed pawn rank chains: `PassedPawnBonus`, `ConnectedPawnBonus`,
@@ -201,7 +202,7 @@ static const EvalParams kDefaultEvalParams = {
     // because the rammer is frontally blocked. Mg only; subtracted.
     {S(0, 0), S(0, 0), S(0, 0), S(40, 0), S(88, 0), S(40, 0), S(15, 0)},
     S(-52, 0), // UndefendedKingZoneSq
-    {S(-41, -70), S(0, -23), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)}, // KingSafeSqPenalty
+    S(8, 0), // KingMobilityFactor
     S(24, 13), // KingAttackByKnight
     S(8, 13), // KingAttackByBishop
     S(24, 13), // KingAttackByRook

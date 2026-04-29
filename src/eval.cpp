@@ -854,6 +854,17 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             kingDangerEg -= eg_value(evalParams.KingNoQueenDiscount);
         }
 
+        // King mobility differential: every safe square the king can
+        // step to (not occupied by us, not attacked by them) reduces
+        // the king-danger accumulator by KingMobilityFactor on each
+        // half. Folded in before the clamp so a boxed-in king pays
+        // the full quadratic while a king with escape squares pays
+        // only the residual.
+        Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
+        int safeKingMoves = popcount(kingMoves & ~enemyAttacks);
+        kingDangerMg -= safeKingMoves * mg_value(evalParams.KingMobilityFactor);
+        kingDangerEg -= safeKingMoves * eg_value(evalParams.KingMobilityFactor);
+
         // Only penalize when at least 2 pieces attack the zone: a single
         // piece rarely creates a real mating threat on its own. Clamp
         // kingDanger to a non-negative bounded range before feeding the
@@ -867,13 +878,6 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             int mgPen = kingDangerMg * kingDangerMg / KingDangerDivMg;
             int egPen = kingDangerEg / KingDangerDivEg;
             scores[us] -= S(mgPen, egPen);
-
-            // Gate the safe-square penalty on the same multi-attacker
-            // condition so a king boxed in by its own pawns is not scored
-            // as if it were under attack.
-            Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
-            int safeCount = std::min(popcount(kingMoves & ~enemyAttacks), 8);
-            scores[us] += evalParams.KingSafeSqPenalty[safeCount];
         }
     }
 }

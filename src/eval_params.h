@@ -123,7 +123,12 @@ struct EvalParams {
     // blocker geometry).
     Score BlockedStorm[7];
     Score UndefendedKingZoneSq;
-    Score KingSafeSqPenalty[9];
+    // Linear king-mobility factor folded into the king-danger
+    // accumulator. Each square the king can step to that is not
+    // attacked by the enemy reduces the danger score by this much.
+    // Replaces the saturating 9-bucket KingSafeSqPenalty curve: the
+    // classical signal is a count, not a discrete bucket table.
+    Score KingMobilityFactor;
 
     // Per-attacker weights contributed to the king-danger accumulator for
     // every enemy piece of the given type whose attack set intersects our

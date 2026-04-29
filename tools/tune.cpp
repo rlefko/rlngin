@@ -413,32 +413,10 @@ static std::vector<ParamRef> collectParams() {
                        }});
     }
     addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, boundsNonPositive());
-    // KingSafeSqPenalty: each slot must stay a penalty (<= 0), and the
-    // chain is monotonically non-decreasing -- more safe king-move
-    // squares can never score lower than fewer. Predicate closes over
-    // the index so it can consult the live neighboring Score values.
-    for (int i = 0; i < 9; i++) {
-        auto mgChain = [i] {
-            Bounds b{-1000000, 0}; // every slot is a penalty (<= 0)
-            if (i > 0)
-                b.lo = std::max(b.lo, mg_value(evalParams.KingSafeSqPenalty[i - 1]));
-            if (i < 8)
-                b.hi = std::min(b.hi, mg_value(evalParams.KingSafeSqPenalty[i + 1]));
-            return b;
-        };
-        auto egChain = [i] {
-            Bounds b{-1000000, 0};
-            if (i > 0)
-                b.lo = std::max(b.lo, eg_value(evalParams.KingSafeSqPenalty[i - 1]));
-            if (i < 8)
-                b.hi = std::min(b.hi, eg_value(evalParams.KingSafeSqPenalty[i + 1]));
-            return b;
-        };
-        out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].mg",
-                       &evalParams.KingSafeSqPenalty[i], true, mgChain});
-        out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].eg",
-                       &evalParams.KingSafeSqPenalty[i], false, egChain});
-    }
+    // KingMobilityFactor: linear weight subtracted from the king-danger
+    // accumulator per safe king move. Subtracted at the call site so
+    // both halves stay non-negative.
+    addMgEgConstr("KingMobilityFactor", &evalParams.KingMobilityFactor, boundsNonNegative());
 
     // --- King-danger accumulator weights. Each per-attacker weight
     // feeds the quadratic king-danger term, so all are non-negative.
@@ -1234,12 +1212,8 @@ static void printCurrentValues() {
     std::cout << "}, // BlockedStorm\n";
     std::cout << "    " << fmtScore(evalParams.UndefendedKingZoneSq)
               << ", // UndefendedKingZoneSq\n";
-    std::cout << "    {";
-    for (int i = 0; i < 9; i++) {
-        std::cout << fmtScore(evalParams.KingSafeSqPenalty[i]);
-        if (i < 8) std::cout << ", ";
-    }
-    std::cout << "}, // KingSafeSqPenalty\n";
+    std::cout << "    " << fmtScore(evalParams.KingMobilityFactor)
+              << ", // KingMobilityFactor\n";
 
     std::cout << "    " << fmtScore(evalParams.KingAttackByKnight)
               << ", // KingAttackByKnight\n";
