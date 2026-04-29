@@ -1244,16 +1244,17 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         scores[us] += evalParams.ThreatByKing * popcount(kingVictims);
 
         // Hanging pieces: the conventional weak-piece set is enemy
-        // non-pawn / non-king pieces we attack that are either undefended
-        // or under-defended (we attack the square more times than they
-        // defend it). To avoid double crediting, we subtract any victim
-        // already paid out by a less-valuable attacker via ThreatBy*:
-        // pieces hit by our pawns (ThreatByPawn), rooks or queens hit by
+        // non-pawn / non-king pieces we attack that are either
+        // undefended or under-defended (we attack with two or more
+        // pieces while the defender does not match the count).
+        // To avoid double crediting, we subtract any victim already
+        // paid out by a less-valuable attacker via ThreatBy*: pieces
+        // hit by our pawns (ThreatByPawn), rooks or queens hit by
         // our minors (ThreatByMinor), and queens hit by our rooks
         // (ThreatByRook). The remaining set is the "free" weak-piece
         // signal that no other term has credited.
         Bitboard weak = theirNonPawnNonKing & ctx.allAttacks[us] &
-                        (~ctx.allAttacks[them] | ctx.attackedBy2[us]);
+                        (~ctx.allAttacks[them] | (ctx.attackedBy2[us] & ~ctx.attackedBy2[them]));
         Bitboard rooksAndQueensTheirs = (board.byPiece[Rook] | board.byPiece[Queen]) & theirPieces;
         Bitboard queensTheirs = board.byPiece[Queen] & theirPieces;
         Bitboard creditedElsewhere =

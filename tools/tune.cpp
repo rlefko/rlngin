@@ -405,17 +405,13 @@ static std::vector<ParamRef> collectParams() {
         }
     }
     for (int r = 1; r < 7; r++) {
-        // Blocked storm magnitude must stay <= the matching unblocked
-        // entry on the central edge_distance: a blocked rammer cannot
-        // be more dangerous than the same rammer without a blocker.
-        int rCapture = r;
+        // Blocked storm: subtracted at the call site, so the magnitude
+        // stays non-negative. Left otherwise free of cross-field chain
+        // priors because main's legacy BlockedPawnStorm registration
+        // had no such coupling and the tuner must be free to refit
+        // both halves of the storm on the new shape independently.
         out.push_back({"BlockedStorm[" + std::to_string(r) + "].mg", &evalParams.BlockedStorm[r],
-                       true, [rCapture] {
-                           Bounds b{0, 1000000};
-                           int unblocked = mg_value(evalParams.UnblockedStorm[3][rCapture]);
-                           b.hi = std::min(b.hi, unblocked);
-                           return b;
-                       }});
+                       true, boundsNonNegative()});
     }
     addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, boundsNonPositive());
     // KingMobilityFactor: linear weight subtracted from the king-danger

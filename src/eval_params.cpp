@@ -86,7 +86,12 @@ static const EvalParams kDefaultEvalParams = {
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(211, 14), S(196, 13), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(246, 0), S(0, 0)},
     S(215, 21), // ThreatByKing
-    S(0, 0), // Hanging
+    // Hanging: re-armed at the legacy starting value because main's
+    // tune drove the term to zero against the old over-strict trigger.
+    // The rewritten conventional trigger fires more broadly, so a
+    // non-zero weight is needed for it to carry signal. The next tune
+    // will refit on the new trigger.
+    S(12, 0), // Hanging
     S(34, 28), // WeakQueen
     S(60, 16), // SafePawnPush
     {S(0, 0), S(0, 0), S(0, 0), S(0, 29), S(0, 43), S(0, 46), S(0, 46), S(0, 0)},
@@ -95,8 +100,14 @@ static const EvalParams kDefaultEvalParams = {
     {S(0, 0), S(0, 0), S(0, 0), S(33, 23), S(33, 65), S(230, 124), S(230, 405), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(82, 24), S(89, 28), S(124, 28), S(124, 28), S(0, 0)},
     S(0, 32), // RookOn7thBonus
-    S(-5, -5), // BadBishop
-    S(-6, -6), // BishopPawns
+    // BadBishop / BishopPawns split. Kept dormant in the baseline
+    // (BadBishop = 0) so that BishopPawns alone reproduces main's
+    // legacy `BadBishopPenalty * count` behavior at no closed center;
+    // the closed-center scaling only adds to the legacy line. This
+    // keeps eval-on-open-positions identical to main while the tuner
+    // refits both terms on the next pass.
+    S(0, 0), // BadBishop
+    S(-11, -11), // BishopPawns
     S(36, 0), // Tempo
     {S(0, 0), S(261, 256), S(1002, 656), S(1056, 602), S(1610, 927), S(2692, 2153), S(0, 0)}, // PieceScore
     // PawnPST
@@ -216,7 +227,13 @@ static const EvalParams kDefaultEvalParams = {
     // because the rammer is frontally blocked. Mg only; subtracted.
     {S(0, 0), S(0, 0), S(87, 0), S(9, 0), S(0, 0), S(0, 0), S(0, 0)},
     S(-46, 0), // UndefendedKingZoneSq
-    S(8, 0), // KingMobilityFactor
+    // KingMobilityFactor: linear weight subtracted from the king
+    // danger accumulator per safe king move. Both halves carry signal
+    // because the legacy KingSafeSqPenalty at 0 safe squares applied
+    // S(-12, -68); folding the same shape into the danger accumulator
+    // requires a non-zero eg coefficient so endgame exposed-king
+    // positions still penalize.
+    S(8, 8), // KingMobilityFactor
     S(24, 13), // KingAttackByKnight
     S(6, 13), // KingAttackByBishop
     S(24, 13), // KingAttackByRook
