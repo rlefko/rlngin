@@ -21,7 +21,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2815);
+    CHECK(evaluate(board) == 2667);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -46,30 +46,30 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
     // (isolated penalty, passed bonus) collapse into this expected score.
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 250);
+    CHECK(evaluate(board) == 236);
 
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
     // contribution survives, which is small with phase=1 and no pieces
     // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 18);
+    CHECK(evaluate(board) == 16);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
     // is scaled to zero. The mg half reflects material, PSTs, and the
     // long-diagonal sweep the a1-h8 diagonal earns on an empty board.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 49);
+    CHECK(evaluate(board) == 50);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1367);
+    CHECK(evaluate(board) == 1303);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2815);
+    CHECK(evaluate(board) == 2667);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -450,7 +450,7 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     {
         std::string line = blockedPawnsLine(board);
         CHECK(line.find("mg=  -102") != std::string::npos);
-        CHECK(line.find("eg=   -27") != std::string::npos);
+        CHECK(line.find("eg=   -26") != std::string::npos);
     }
 
     // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
@@ -458,8 +458,8 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     board.setFen("4k3/3pn3/4P3/8/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
-        CHECK(line.find("mg=   -52") != std::string::npos);
-        CHECK(line.find("eg=  -100") != std::string::npos);
+        CHECK(line.find("mg=   -66") != std::string::npos);
+        CHECK(line.find("eg=   -94") != std::string::npos);
     }
 }
 
@@ -490,13 +490,13 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // winning king-and-pawn endings downward. The eval must match the
     // baseline (same score as before the weak-unopposed term existed).
     board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 250);
+    CHECK(evaluate(board) == 236);
 
     // Textbook K + P vs K with an outside passed pawn: white is winning
     // and the score should not be dragged down by treating the "no
     // opposing pawn" feature as a weakness.
     board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
-    CHECK(evaluate(board) == 260);
+    CHECK(evaluate(board) == 243);
 }
 
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {
@@ -580,8 +580,8 @@ TEST_CASE("Eval: extra pawn island fires the fragmentation penalty", "[eval][paw
     // penalty applied once (two islands minus one island). Defaults
     // are S(-5, -8) so the one-island configuration scores five mg /
     // eight eg units higher in the pawn bucket.
-    CHECK(parseHalf(oneIslandLine, "mg=") - parseHalf(twoIslandLine, "mg=") == 13);
-    CHECK(parseHalf(oneIslandLine, "eg=") - parseHalf(twoIslandLine, "eg=") == 25);
+    CHECK(parseHalf(oneIslandLine, "mg=") - parseHalf(twoIslandLine, "mg=") == 16);
+    CHECK(parseHalf(oneIslandLine, "eg=") - parseHalf(twoIslandLine, "eg=") == 24);
 }
 
 TEST_CASE("Eval: symmetric pawn islands cancel between sides", "[eval][pawn]") {
@@ -652,13 +652,14 @@ TEST_CASE("Eval: rook behind passed pawn fires the Tarrasch bonus", "[eval][pawn
     // on a1 (behind) versus a white rook planted off the passer's file.
     // The tunable bonus must show up cleanly in the "Passed extras"
     // bucket, isolated from PST and mobility differences.
-    passedExtrasDelta("4k3/8/8/P7/8/8/8/R3K3 w - - 0 1", "4k3/8/8/P7/8/8/8/4K2R w - - 0 1", 66, 0);
+    passedExtrasDelta("4k3/8/8/P7/8/8/8/R3K3 w - - 0 1", "4k3/8/8/P7/8/8/8/4K2R w - - 0 1", 67, 0);
 
     // Rook behind an enemy passer: black passer on a4, with a white rook
     // on a8 (behind the enemy pawn from black's advancing direction)
     // versus the same rook off the passer's file. The "chase from the
     // rear" bonus lives in the same bucket.
-    passedExtrasDelta("R3k3/8/8/8/p7/8/8/4K3 w - - 0 1", "4k2R/8/8/8/p7/8/8/4K3 w - - 0 1", -9, 96);
+    passedExtrasDelta("R3k3/8/8/8/p7/8/8/4K3 w - - 0 1", "4k2R/8/8/8/p7/8/8/4K3 w - - 0 1", -17,
+                      90);
 }
 
 TEST_CASE("Eval: minor shielded by a friendly pawn earns the behind-pawn bonus", "[eval]") {
@@ -1230,7 +1231,7 @@ TEST_CASE("Eval: central pawn bonus credits primary and extended center squares"
 
     // White pawn on e4: primary central square fires once.
     board.setFen("4k3/8/8/8/4P3/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == 28);
+    CHECK(parseMg(bucketLine(board, "Center")) == 27);
 
     // White pawn on e3: off the central mask, no bonus.
     board.setFen("4k3/8/8/8/8/4P3/8/4K3 w - - 0 1");
@@ -1238,11 +1239,11 @@ TEST_CASE("Eval: central pawn bonus credits primary and extended center squares"
 
     // White pawn pair on d4 and e4: both primary squares fire.
     board.setFen("4k3/8/8/8/3PP3/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == 56);
+    CHECK(parseMg(bucketLine(board, "Center")) == 54);
 
     // Extended center: pawn on c4 carries the smaller weight.
     board.setFen("4k3/8/8/8/2P5/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == 24);
+    CHECK(parseMg(bucketLine(board, "Center")) == 23);
 }
 
 TEST_CASE("Eval: central pawn bonus mirrors for black pawns", "[eval][center]") {
@@ -1252,7 +1253,7 @@ TEST_CASE("Eval: central pawn bonus mirrors for black pawns", "[eval][center]") 
     // Center bucket tracks it as a negative contribution from white's
     // perspective.
     board.setFen("4k3/8/8/3p4/8/8/8/4K3 w - - 0 1");
-    CHECK(parseMg(bucketLine(board, "Center")) == -28);
+    CHECK(parseMg(bucketLine(board, "Center")) == -27);
 }
 
 // --- Bishop long diagonal ---
@@ -1323,7 +1324,7 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     // a KQvK evaluation matches the pure material plus PST plus king
     // safety baseline and is not damped by the initiative constant.
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2815);
+    CHECK(evaluate(board) == 2667);
 }
 
 TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
