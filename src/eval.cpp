@@ -569,7 +569,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 }
             }
 
-            if (theirKingRing && (rAtk & theirKingRing)) {
+            // Rook on king ring fires only when the same rook also sits on
+            // a (semi-)open file. The classical formulation tracks the
+            // pressure that distinct lift-and-attack pattern carries, not
+            // the generic multi-attacker count that the king-danger
+            // accumulator already credits.
+            if (noOurPawns && theirKingRing && (rAtk & theirKingRing)) {
                 scores[c] += evalParams.RookOnKingRing;
             }
         }
