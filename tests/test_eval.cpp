@@ -1,6 +1,7 @@
 #include "board.h"
 #include "catch_amalgamated.hpp"
 #include "eval.h"
+#include "eval_params.h"
 
 #include <cstdlib>
 #include <sstream>
@@ -304,9 +305,9 @@ TEST_CASE("Eval: undefended king zone squares penalize defender", "[eval][kingsa
     board.setFen("4k3/8/8/8/8/Q7/8/4K3 w - - 0 1");
     int strongZone = evaluate(board);
 
-    // TODO: revisit once the in-progress Texel re-tune finalizes.
-    // Mid-tune snapshot has weakZone within ~10 cp of strongZone, so
-    // PST and mobility deltas dominate the undefended-zone signal here.
+    // TODO: tighten back to weakZone > strongZone once the in-progress
+    // Texel re-tune finalizes; the mid-tune snapshot lets PST and
+    // mobility deltas dominate the undefended-zone signal here.
     CHECK(weakZone >= strongZone - 20);
 }
 
@@ -1342,11 +1343,9 @@ TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiativ
     board.setFen("rnbqkbnr/pp2p1pp/8/2pP1p2/4P3/8/PPP2PPP/RNBQKBNR w KQkq - 0 3");
     int withTension = parseEg(bucketLine(board, "Initiative"));
 
-    // TODO: revisit once the in-progress Texel re-tune finalizes.
-    // The mid-tune snapshot drove InitiativeTension to S(0, 0), so
-    // baseline and withTension now print the same Initiative bucket
-    // value. Hold the relationship at >= so the structural intent
-    // survives until the tuner re-acquires a non-zero tension term.
+    // TODO: tighten back to withTension > baseline once the in-progress
+    // Texel re-tune finalizes; the mid-tune snapshot drove
+    // InitiativeTension to zero so the bucket prints equal here.
     CHECK(withTension >= baseline);
 }
 
@@ -1389,12 +1388,9 @@ TEST_CASE("Eval: knight attacking the enemy king ring scores a bonus", "[eval][k
     board.setFen("6k1/8/8/5N2/8/8/8/4K3 w - - 0 1");
     int onRing = parseMg(bucketLine(board, "Pieces"));
 
-    // TODO: revisit once the in-progress Texel re-tune finalizes.
-    // Mid-tune snapshot pushed the knight's PST and mobility deltas
-    // exactly even between f5 and c5, leaving MinorOnKingRing as the
-    // sole differentiator at S(26, 0). The Pieces bucket prints both
-    // halves at integer cp granularity, which folds the small mg
-    // contribution into a tie at this snapshot.
+    // TODO: tighten back to onRing > offRing once the in-progress
+    // Texel re-tune finalizes; the mid-tune snapshot folds the small
+    // MinorOnKingRing contribution into a tie at integer cp granularity.
     CHECK(onRing >= offRing);
 }
 
@@ -1412,11 +1408,9 @@ TEST_CASE("Eval: rook attacking the enemy king ring scores a bonus", "[eval][kin
     board.setFen("6k1/8/R7/8/8/8/8/4K3 w - - 0 1");
     int onRing = parseMg(bucketLine(board, "Pieces"));
 
-    // TODO: revisit once the in-progress Texel re-tune finalizes.
-    // The mid-tune snapshot drove RookOnKingRing to S(0, 0), so the
-    // king-ring rook sweep has no contribution at this snapshot. The
-    // PST and mobility deltas between a3 and a6 cancel by design,
-    // leaving the two positions tied on the Pieces bucket print.
+    // TODO: tighten back to onRing > offRing once the in-progress
+    // Texel re-tune finalizes; the mid-tune snapshot drove
+    // RookOnKingRing to zero so the two positions tie on the bucket.
     CHECK(onRing >= offRing);
 }
 
@@ -1478,17 +1472,12 @@ TEST_CASE("Eval: slider on queen does not double count a direct attacker",
     int withQueen = parseMg(bucketLine(board, "Threats"));
 
     int delta = withQueen - noQueen;
-    // With the fix, delta is roughly ThreatByMinor[Queen] + one
-    // SliderOnQueenBishop. Without the fix it would be ThreatByMinor
-    // plus two SliderOnQueenBishop contributions. The bound is loose
-    // enough to tolerate small re-tunes on either weight.
-    // TODO: tighten back down once the in-progress Texel re-tune
-    // finalizes. The mid-tune snapshot pushed ThreatByMinor[Queen] to
-    // S(247, 0) and SliderOnQueenBishop to S(77, 0), so the
-    // single-x-ray delta now sits comfortably above the pre-tune 155
-    // threshold; widening to 400 keeps the "no double count" intent
-    // (delta < 2x the bishop x-ray contribution) intact.
-    CHECK(delta < 400);
+    // With the fix, delta is ThreatByMinor[Queen] + one
+    // SliderOnQueenBishop. The doubled-fire upper bound below catches
+    // any regression that would let SliderOnQueenBishop fire twice.
+    int doubleFireMg =
+        mg_value(evalParams.ThreatByMinor[Queen]) + 2 * mg_value(evalParams.SliderOnQueenBishop);
+    CHECK(delta < doubleFireMg);
 }
 
 TEST_CASE("Eval: rook xraying the enemy queen through a blocker scores a bonus",
