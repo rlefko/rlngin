@@ -3,9 +3,9 @@
 <!-- BENCHMARK:START -->
 ## Latest Benchmark
 
-![Elo](https://img.shields.io/static/v1?label=Elo&message=-36.62%20%2B%2F-%2037.96&color=red) ![LOS](https://img.shields.io/static/v1?label=LOS&message=2.79%25&color=red) ![LLR](https://img.shields.io/static/v1?label=LLR&message=N%2FA&color=gray) ![W/D/L](https://img.shields.io/static/v1?label=W/D/L&message=64%20%2F%2051%20%2F%2085&color=lightgray) ![Score](https://img.shields.io/static/v1?label=Score&message=89.5%20%2F%20200%20%2844.75%25%29&color=blue) ![Draws](https://img.shields.io/static/v1?label=Draws&message=41.00%25&color=lightgray)
+![Elo](https://img.shields.io/static/v1?label=Elo&message=41.89%20%2B%2F-%2035.74&color=brightgreen) ![LOS](https://img.shields.io/static/v1?label=LOS&message=99.01%25&color=brightgreen) ![LLR](https://img.shields.io/static/v1?label=LLR&message=N%2FA&color=gray) ![W/D/L](https://img.shields.io/static/v1?label=W/D/L&message=79%20%2F%2066%20%2F%2055&color=lightgray) ![Score](https://img.shields.io/static/v1?label=Score&message=112.0%20%2F%20200%20%2856.00%25%29&color=blue) ![Draws](https://img.shields.io/static/v1?label=Draws&message=39.00%25&color=lightgray)
 
-Ptnml(0-2): `[13, 25, 41, 12, 9]`
+Ptnml(0-2): `[4, 19, 39, 25, 13]`
 200 games (100 pairs) | tc=10+0.1 | UHO_Lichess_4852_v1.epd
 <!-- BENCHMARK:END -->
 
@@ -89,6 +89,21 @@ Or run the script directly with a custom round count:
 ```
 
 Results are saved to `results/`.
+
+## Texel tuning
+
+Three-stage pipeline that produces the values shipped in
+`src/eval_params.cpp`:
+
+```bash
+make texel-selfplay   # generate the self-play PGN corpus
+make texel-extract    # filter and dedup labeled positions from the PGN
+make texel-tune       # run coordinate descent over EvalParams
+```
+
+Each stage writes its artifacts under `tuning/texel/` (gitignored).
+Run `./scripts/texel-watch.sh` in a second terminal during the
+self-play stage for a live dashboard of completed games.
 
 ## Cleaning
 

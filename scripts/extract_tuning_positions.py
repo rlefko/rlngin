@@ -1,12 +1,17 @@
 #!/usr/bin/env python3
 """Extract quiet labeled positions from a PGN for Texel tuning.
 
-Reads a PGN with game results, walks every game, and for each position
-skips the opening, skips positions that are in check, skips the last
-two plies, and (by default) skips positions where the engine's reported
-score during the game was a mate score. Emits one labeled position per
-surviving ply in the form ``FEN | result`` where ``result`` is
-1.0 / 0.5 / 0.0 from White's perspective.
+Reads a PGN with game results, walks every game, skips opening and
+trailing plies, drops positions in check, and (by default) drops
+positions whose engine score during the game was a mate score.
+Identical positions (four-field state: board / side to move /
+castling / en passant) are folded into a single row whose label is
+the average of every observed game outcome from that position. The
+emitted FEN is the first occurrence seen, so the eval still reads a
+real halfmove counter from the game.
+
+Output is one ``FEN | result`` line per unique position, with
+``result`` in [0, 1] from White's perspective.
 """
 import argparse
 import re
@@ -36,11 +41,12 @@ def comment_is_mate(comment: str) -> bool:
 
 def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
             mate_filter: bool):
-    positions = 0
+    raw_positions = 0
     games = 0
     skipped_games = 0
     mate_filtered = 0
-    with open(pgn_path) as f_in, open(out_path, "w") as f_out:
+    fen_stats: dict = {}
+    with open(pgn_path) as f_in:
         while True:
             game = chess.pgn.read_game(f_in)
             if game is None:
@@ -52,13 +58,13 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
                 continue
             label = RESULT_MAP[result]
 
-            # Walk the mainline as a node sequence so each step exposes
-            # both the move and the engine comment that followed it. The
-            # comment after move N is the engine's evaluation of the
-            # position it was *searching from*, which is the position
-            # before move N -- exactly the position we are about to
-            # label. So a mate comment after move N means we drop the
-            # FEN at that ply.
+            # Walk the mainline as a node sequence so each step
+            # exposes both the move and the engine comment that
+            # followed it. The comment after move N is the engine's
+            # evaluation of the position it was *searching from*,
+            # which is the position before move N -- exactly the
+            # position we are about to label. So a mate comment
+            # after move N means we drop the FEN at that ply.
             move_records = []
             node = game
             while node.variations:
@@ -75,18 +81,33 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
                     elif mate_filter and comment_is_mate(comment):
                         mate_filtered += 1
                     else:
-                        f_out.write(f"{board.fen()} | {label}\n")
-                        positions += 1
+                        fen = board.fen()
+                        key = fen.rsplit(" ", 2)[0]
+                        slot = fen_stats.get(key)
+                        if slot is None:
+                            fen_stats[key] = [1, label, fen]
+                        else:
+                            slot[0] += 1
+                            slot[1] += label
+                        raw_positions += 1
                 board.push(move)
 
             if games % 500 == 0:
-                print(f"  processed {games} games, {positions} positions, "
+                print(f"  processed {games} games, {len(fen_stats)} unique, "
                       f"{mate_filtered} mate-filtered",
                       file=sys.stderr)
 
-    print(f"done: {games} games, {positions} positions, "
+    unique = len(fen_stats)
+    with open(out_path, "w") as f_out:
+        for _key, (count, total, repr_fen) in fen_stats.items():
+            f_out.write(f"{repr_fen} | {total / count}\n")
+    dup_pct = (100.0 * (raw_positions - unique) / raw_positions
+               if raw_positions else 0.0)
+    print(f"done: {games} games, {raw_positions} raw positions, "
+          f"{unique} unique ({dup_pct:.1f}% folded), "
           f"{mate_filtered} mate-filtered, "
-          f"{skipped_games} games skipped (no result)", file=sys.stderr)
+          f"{skipped_games} games skipped (no result)",
+          file=sys.stderr)
 
 
 def main():
