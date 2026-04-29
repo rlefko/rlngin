@@ -447,10 +447,10 @@ static std::vector<ParamRef> collectParams() {
     // --- King-danger accumulator weights. Each per-attacker weight
     // feeds the quadratic king-danger term, so all are non-negative.
     // Cross-field piece ordering: queen attack is at least as dangerous
-    // as rook, and rook is at least as dangerous as either minor. Same
-    // ordering for safe-checks. Without these chains the tuner has been
-    // pushing queen weight below rook on this corpus, which the chess
-    // prior does not allow.
+    // as rook, and rook is at least as dangerous as a knight. Bishops
+    // are released from the chain because they deliver pressure through
+    // a different geometric pattern; the prior that bishop weight must
+    // sit below rook conflated supporting attackers with mainline ones.
     auto kingAttackBounds = [](Score *self, Score *atLeast, Score *atMost, bool isMg) {
         return [self, atLeast, atMost, isMg] {
             Bounds b{0, 1000000};
@@ -463,27 +463,26 @@ static std::vector<ParamRef> collectParams() {
         };
     };
     for (bool isMg : {true, false}) {
-        // Knight and Bishop: bounded above by Rook (sibling minor floor
-        // stays unconstrained so the two minors can rebalance freely).
+        // Knight: bounded above by Rook (preserves the heavier-attacker
+        // ordering for the only non-bishop minor).
         out.push_back({isMg ? "KingAttackByKnight.mg" : "KingAttackByKnight.eg",
                        &evalParams.KingAttackByKnight, isMg,
                        kingAttackBounds(&evalParams.KingAttackByKnight, nullptr,
                                         &evalParams.KingAttackByRook, isMg)});
+        // Bishop: free of the rook chain. Tuner can place bishop above
+        // or below rook based on its own signal.
         out.push_back({isMg ? "KingAttackByBishop.mg" : "KingAttackByBishop.eg",
-                       &evalParams.KingAttackByBishop, isMg,
-                       kingAttackBounds(&evalParams.KingAttackByBishop, nullptr,
-                                        &evalParams.KingAttackByRook, isMg)});
-        // Rook: at least max(Knight, Bishop), at most Queen.
+                       &evalParams.KingAttackByBishop, isMg, boundsNonNegative()});
+        // Rook: at least Knight, at most Queen. Bishop is no longer a
+        // floor on rook because the chain prior was wrong.
         out.push_back({isMg ? "KingAttackByRook.mg" : "KingAttackByRook.eg",
                        &evalParams.KingAttackByRook, isMg, [isMg] {
                            Bounds b{0, 1000000};
                            int knight = isMg ? mg_value(evalParams.KingAttackByKnight)
                                              : eg_value(evalParams.KingAttackByKnight);
-                           int bishop = isMg ? mg_value(evalParams.KingAttackByBishop)
-                                             : eg_value(evalParams.KingAttackByBishop);
                            int queen = isMg ? mg_value(evalParams.KingAttackByQueen)
                                             : eg_value(evalParams.KingAttackByQueen);
-                           b.lo = std::max({b.lo, knight, bishop});
+                           b.lo = std::max(b.lo, knight);
                            b.hi = std::min(b.hi, queen);
                            return b;
                        }});
@@ -493,9 +492,11 @@ static std::vector<ParamRef> collectParams() {
                        kingAttackBounds(&evalParams.KingAttackByQueen,
                                         &evalParams.KingAttackByRook, nullptr, isMg)});
     }
-    // KingSafeCheck: same ordering by piece weight. Knight and Bishop
-    // capped above by Rook; Rook between max(minors) and Queen; Queen
-    // bounded below by Rook.
+    // KingSafeCheck: Knight stays capped above by Rook; Bishop is free
+    // of the rook prior because bishop checks travel through diagonals
+    // that the rook cannot deliver and vice versa. Rook stays bounded
+    // by Knight below and Queen above; Queen stays bounded below by
+    // Rook.
     for (bool isMg : {true, false}) {
         out.push_back({"KingSafeCheck[2]." + std::string(isMg ? "mg" : "eg"),
                        &evalParams.KingSafeCheck[2], isMg, [isMg] {
@@ -506,23 +507,15 @@ static std::vector<ParamRef> collectParams() {
                            return b;
                        }});
         out.push_back({"KingSafeCheck[3]." + std::string(isMg ? "mg" : "eg"),
-                       &evalParams.KingSafeCheck[3], isMg, [isMg] {
-                           Bounds b{0, 1000000};
-                           int rook = isMg ? mg_value(evalParams.KingSafeCheck[4])
-                                           : eg_value(evalParams.KingSafeCheck[4]);
-                           b.hi = std::min(b.hi, rook);
-                           return b;
-                       }});
+                       &evalParams.KingSafeCheck[3], isMg, boundsNonNegative()});
         out.push_back({"KingSafeCheck[4]." + std::string(isMg ? "mg" : "eg"),
                        &evalParams.KingSafeCheck[4], isMg, [isMg] {
                            Bounds b{0, 1000000};
                            int knight = isMg ? mg_value(evalParams.KingSafeCheck[2])
                                              : eg_value(evalParams.KingSafeCheck[2]);
-                           int bishop = isMg ? mg_value(evalParams.KingSafeCheck[3])
-                                             : eg_value(evalParams.KingSafeCheck[3]);
                            int queen = isMg ? mg_value(evalParams.KingSafeCheck[5])
                                             : eg_value(evalParams.KingSafeCheck[5]);
-                           b.lo = std::max({b.lo, knight, bishop});
+                           b.lo = std::max(b.lo, knight);
                            b.hi = std::min(b.hi, queen);
                            return b;
                        }});
