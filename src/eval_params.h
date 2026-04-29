@@ -198,7 +198,9 @@ struct EvalParams {
     //   Passer      -- per passed pawn on either side
     //   PawnCount   -- per pawn on the board (tiny weight, grows with pawns)
     //   Outflank    -- popcount(kingside pawns) * popcount(queenside pawns)
-    //   Tension     -- enemy pawns under our pawn attacks plus mirror
+    //   Tension     -- enemy pawns under our pawn attacks plus mirror; only
+    //                  the MG half is consumed because the conventional
+    //                  initiative system has no EG analogue for tension.
     //   Infiltrate  -- per king that has crossed into enemy territory
     //   PureBase    -- flat when no non-pawn non-king material remains
     //   Constant    -- baseline shift (typically negative)

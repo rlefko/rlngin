@@ -579,7 +579,6 @@ static std::vector<ParamRef> collectParams() {
                    boundsNonNegative()});
     out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false,
                    boundsNonNegative()});
-    out.push_back({"InitiativeTension.eg", &evalParams.InitiativeTension, false, boundsNonNegative()});
     out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
                    boundsNonNegative()});
     // InitiativePureBase fires only in pure-pawn endgames; it is a

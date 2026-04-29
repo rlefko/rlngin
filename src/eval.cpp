@@ -1038,7 +1038,6 @@ static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
     int egMag = eg_value(evalParams.InitiativePasser) * passerCount +
                 eg_value(evalParams.InitiativePawnCount) * pawnCount +
                 eg_value(evalParams.InitiativeOutflank) * outflank +
-                eg_value(evalParams.InitiativeTension) * tension +
                 eg_value(evalParams.InitiativeInfiltrate) * infiltrated +
                 eg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
                 eg_value(evalParams.InitiativeConstant);
