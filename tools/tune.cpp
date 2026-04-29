@@ -230,9 +230,14 @@ static std::vector<ParamRef> collectParams() {
     // --- Piece-square tables. Each PST has 64 squares; skip the back/
     // front ranks of the pawn PST because they are always zero. King
     // PST squares stay tunable because the king appears on them.
+    // Stopgap range cap at +/-300 prevents corner squares from drifting
+    // into implausible magnitudes during long Texel runs.
     auto addPST = [&](const std::string &name, Score *arr, int start, int end) {
         for (int sq = start; sq < end; sq++) {
-            addMgEg(name + "[" + std::to_string(sq) + "]", &arr[sq]);
+            out.push_back({name + "[" + std::to_string(sq) + "].mg", &arr[sq], true,
+                           boundsRange(-300, 300)});
+            out.push_back({name + "[" + std::to_string(sq) + "].eg", &arr[sq], false,
+                           boundsRange(-300, 300)});
         }
     };
     addPST("PawnPST", evalParams.PawnPST, 8, 56);
