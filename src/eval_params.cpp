@@ -47,9 +47,11 @@
 //     half. Bishop penalties (BadBishop, BishopPawns) <= 0 each half.
 //   - BishopPair / MinorOnKingRing / RookOnKingRing >= 0 against
 //     universal chess priors.
-//   - `RookOpenFile >= RookSemiOpenFile >= 0` per phase, and
-//     `OpenFileNearKing <= SemiOpenFileNearKing <= 0` mirrored for
-//     the king-zone files.
+//   - `RookOpenFile >= RookSemiOpenFile >= 0` per phase. The classical
+//     shelter / storm grids replace the previous semi-open / open file
+//     near-king pair: Shelter[d][0] is the no-pawn (semi-open) file
+//     penalty (<= 0); other Shelter slots are non-negative; storm slots
+//     stay non-negative because they are subtracted at the call site.
 //   - King-attack and king-safe-check piece-weight chains:
 //     `Queen >= Rook >= max(Bishop, Knight)` per half.
 //   - `KingSafeSqPenalty` non-decreasing chain on both halves.
@@ -178,11 +180,26 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 0), // RookOnKingRing
     S(-24, -1), // KingProtector
     S(8, 39), // BishopPair
-    {S(136, 0), S(75, 0)}, // PawnShieldBonus
-    {S(0, 0), S(0, 0), S(88, 0), S(0, 0), S(0, 0)}, // BlockedPawnStorm
-    {S(0, 0), S(40, 0), S(132, 0), S(50, 0), S(16, 0)}, // UnblockedPawnStorm
-    S(-21, 0), // SemiOpenFileNearKing
-    S(-146, 0), // OpenFileNearKing
+    // Shelter[edge_distance][pawn_rank], rank 0 = no own pawn (semi-open
+    // file penalty); ranks 1-6 are relative own-pawn ranks. Mg only.
+    {
+        {S(-30, 0), S(40, 0), S(20, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(-50, 0), S(75, 0), S(40, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(-100, 0), S(110, 0), S(60, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(-146, 0), S(136, 0), S(75, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+    },
+    // UnblockedStorm[edge_distance][storm_rank], rank 0 = no enemy pawn
+    // (structurally zero); ranks 1-6 are relative enemy-pawn ranks. Mg
+    // only; subtracted at the call site so values stay non-negative.
+    {
+        {S(0, 0), S(0, 0), S(15, 0), S(50, 0), S(70, 0), S(40, 0), S(15, 0)},
+        {S(0, 0), S(0, 0), S(20, 0), S(70, 0), S(100, 0), S(50, 0), S(15, 0)},
+        {S(0, 0), S(0, 0), S(30, 0), S(90, 0), S(132, 0), S(60, 0), S(20, 0)},
+        {S(0, 0), S(0, 0), S(40, 0), S(80, 0), S(120, 0), S(60, 0), S(20, 0)},
+    },
+    // BlockedStorm[storm_rank]: file distance dimension collapses out
+    // because the rammer is frontally blocked. Mg only; subtracted.
+    {S(0, 0), S(0, 0), S(0, 0), S(40, 0), S(88, 0), S(40, 0), S(15, 0)},
     S(-52, 0), // UndefendedKingZoneSq
     {S(-41, -70), S(0, -23), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)}, // KingSafeSqPenalty
     S(24, 13), // KingAttackByKnight

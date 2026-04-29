@@ -106,16 +106,22 @@ struct EvalParams {
 
     // King-safety scalar tables (structural divisors for the king-danger
     // quadratic remain static const inside eval.cpp).
-    Score PawnShieldBonus[2];
-    // Pawn storm penalty indexed by distance bucket (0..4 where bucket 4
-    // is closest). Split into blocked and unblocked variants because a
-    // storm pawn frontally blocked by a friendly shield pawn cannot open
-    // lines without a trade, so its effective penalty is much smaller
-    // than an unblocked ram on the same file.
-    Score BlockedPawnStorm[5];
-    Score UnblockedPawnStorm[5];
-    Score SemiOpenFileNearKing;
-    Score OpenFileNearKing;
+    //
+    // Classical shelter and storm grids indexed by [edge_distance][rank]
+    // where edge_distance is min(file, 7 - file) of the shield file
+    // (0 = a/h files, 3 = d/e files) and rank is the relative rank of
+    // the most advanced pawn on that file from our side's perspective.
+    // Rank 0 stands for "no pawn on file": the Shelter[d][0] entry is
+    // the semi-open file penalty, the storm entries on rank 0 are
+    // structurally zero because there is no enemy pawn to advance.
+    Score Shelter[4][7];
+    Score UnblockedStorm[4][7];
+    // Blocked storm: enemy pawn frontally blocked by our pawn one rank
+    // ahead. The threat is greatly reduced because the rammer cannot
+    // open the file without a trade, so the table is one dimensional
+    // in pawn rank only (the file distance signal is dominated by the
+    // blocker geometry).
+    Score BlockedStorm[7];
     Score UndefendedKingZoneSq;
     Score KingSafeSqPenalty[9];
 

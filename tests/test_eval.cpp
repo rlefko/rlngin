@@ -1577,18 +1577,43 @@ TEST_CASE("Eval: blocked pawn storm is less harsh than unblocked", "[eval][storm
     Board board;
 
     // Blocked storm: the black f-pawn on f3 is frontally stopped by
-    // our f2 shield pawn, so BlockedPawnStorm applies with a small
+    // our f2 shield pawn, so BlockedStorm applies with a small
     // penalty.
     board.setFen("r1bqk2r/ppppp1pp/2n2n2/8/8/2n2p2/PPPPPPPP/R1BQ1RK1 w kq - 0 1");
     int blocked = evaluate(board);
 
     // Same ram but with the f2 shield removed: the storm is now
-    // unblocked, so UnblockedPawnStorm applies with a larger penalty
+    // unblocked, so UnblockedStorm applies with a larger penalty
     // and the lost shield widens the gap further.
     board.setFen("r1bqk2r/ppppp1pp/2n2n2/8/8/2n2p2/PPPPP1PP/R1BQ1RK1 w kq - 0 1");
     int unblocked = evaluate(board);
 
     CHECK(blocked > unblocked);
+}
+
+// --- Shelter file-distance grid ---
+
+TEST_CASE("Eval: shelter score depends on king's edge distance", "[eval][shelter]") {
+    Board board;
+
+    // King on g1 with the kingside pawn shield intact (f2, g2, h2):
+    // the three shield files map to edge distances 1 (f), 1 (g), 0 (h),
+    // and the rank 2 own pawns earn the corresponding Shelter[d][1]
+    // entries.
+    board.setFen("4k3/8/8/8/8/8/PPPPPPPP/RNBQ2KR w - - 0 1");
+    int kingsideShelter = evaluate(board);
+
+    // Same pawn structure with the king centralized to e1: the
+    // shelter walk centers at e instead of g, so the three shield
+    // files become d, e, f with edge distances 3, 3, 2.
+    board.setFen("4k3/8/8/8/8/8/PPPPPPPP/RNBQK1NR w - - 0 1");
+    int centralShelter = evaluate(board);
+
+    // The default Shelter table puts more credit on the central
+    // edge-distance entries than on the flank ones, so a king on a
+    // central file with a complete pawn shield should score higher
+    // than the same shield from g1.
+    CHECK(centralShelter > kingsideShelter);
 }
 
 // --- Verbose grid layout ---

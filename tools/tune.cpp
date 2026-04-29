@@ -378,46 +378,40 @@ static std::vector<ParamRef> collectParams() {
     // role that contradicts the prior.
     addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
 
-    // --- Pawn shield (mg only). Like the storm terms, pawn shield is
-    // structurally a middlegame concept: it protects a castled king
-    // from middlegame attacks. In the endgame the king is active and
-    // often centralized, so the shield does not apply. The eg halves
-    // stay at their compile-time defaults (0) and are not tuned, the
-    // same pattern Tempo / CentralPawnBonus / storm terms already
-    // follow. Mg keeps the chain `[0] >= [1] >= 0` so the back-rank
-    // shield is always at least as valuable as the rank-3 shield.
-    out.push_back({"PawnShieldBonus[0].mg", &evalParams.PawnShieldBonus[0], true, [] {
-                       Bounds b{0, 1000000};
-                       b.lo = std::max(b.lo, mg_value(evalParams.PawnShieldBonus[1]));
-                       return b;
-                   }});
-    out.push_back({"PawnShieldBonus[1].mg", &evalParams.PawnShieldBonus[1], true, [] {
-                       Bounds b{0, 1000000};
-                       b.hi = std::min(b.hi, mg_value(evalParams.PawnShieldBonus[0]));
-                       return b;
-                   }});
-    for (int i = 0; i < 5; i++) {
-        // Consumed with `scores -= <Blocked|Unblocked>PawnStorm[idx]`, so
-        // magnitudes must stay non-negative to preserve the "enemy advance
-        // hurts us" prior.
-        out.push_back({"BlockedPawnStorm[" + std::to_string(i) + "].mg",
-                       &evalParams.BlockedPawnStorm[i], true, boundsNonNegative()});
-        out.push_back({"UnblockedPawnStorm[" + std::to_string(i) + "].mg",
-                       &evalParams.UnblockedPawnStorm[i], true, boundsNonNegative()});
+    // --- Shelter and storm grids (mg only). Shelter is structurally a
+    // middlegame concept and the eg halves stay at their compile-time
+    // zero defaults. The Shelter[d][0] entry is the semi-open file
+    // penalty (no own pawn on the shield file), so it is the only
+    // non-positive Shelter slot; ranks 1-6 stay non-negative because
+    // a pawn shield can only help. UnblockedStorm and BlockedStorm
+    // are subtracted at the call site, so magnitudes stay non-negative
+    // to preserve the prior that an enemy advance hurts us.
+    for (int d = 0; d < 4; d++) {
+        out.push_back({"Shelter[" + std::to_string(d) + "][0].mg",
+                       &evalParams.Shelter[d][0], true, boundsNonPositive()});
+        for (int r = 1; r < 7; r++) {
+            out.push_back({"Shelter[" + std::to_string(d) + "][" + std::to_string(r) + "].mg",
+                           &evalParams.Shelter[d][r], true, boundsNonNegative()});
+        }
+        for (int r = 1; r < 7; r++) {
+            out.push_back({"UnblockedStorm[" + std::to_string(d) + "][" + std::to_string(r) +
+                               "].mg",
+                           &evalParams.UnblockedStorm[d][r], true, boundsNonNegative()});
+        }
     }
-    // King-zone files: open file is at least as bad as semi-open; both
-    // are penalties (<= 0). Chain enforced so the tuner cannot end up
-    // with semi-open scoring worse than open.
-    out.push_back({"SemiOpenFileNearKing.mg", &evalParams.SemiOpenFileNearKing, true, [] {
-                       Bounds b{-1000000, 0};
-                       b.lo = std::max(b.lo, mg_value(evalParams.OpenFileNearKing));
-                       return b;
-                   }});
-    out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, [] {
-                       Bounds b{-1000000, 0};
-                       b.hi = std::min(b.hi, mg_value(evalParams.SemiOpenFileNearKing));
-                       return b;
-                   }});
+    for (int r = 1; r < 7; r++) {
+        // Blocked storm magnitude must stay <= the matching unblocked
+        // entry on the central edge_distance: a blocked rammer cannot
+        // be more dangerous than the same rammer without a blocker.
+        int rCapture = r;
+        out.push_back({"BlockedStorm[" + std::to_string(r) + "].mg", &evalParams.BlockedStorm[r],
+                       true, [rCapture] {
+                           Bounds b{0, 1000000};
+                           int unblocked = mg_value(evalParams.UnblockedStorm[3][rCapture]);
+                           b.hi = std::min(b.hi, unblocked);
+                           return b;
+                       }});
+    }
     addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, boundsNonPositive());
     // KingSafeSqPenalty: each slot must stay a penalty (<= 0), and the
     // chain is monotonically non-decreasing -- more safe king-move
@@ -1208,23 +1202,36 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KingProtector) << ", // KingProtector\n";
     std::cout << "    " << fmtScore(evalParams.BishopPair) << ", // BishopPair\n";
 
-    std::cout << "    {" << fmtScore(evalParams.PawnShieldBonus[0]) << ", "
-              << fmtScore(evalParams.PawnShieldBonus[1]) << "}, // PawnShieldBonus\n";
-    std::cout << "    {";
-    for (int i = 0; i < 5; i++) {
-        std::cout << fmtScore(evalParams.BlockedPawnStorm[i]);
-        if (i < 4) std::cout << ", ";
+    std::cout << "    {\n";
+    for (int d = 0; d < 4; d++) {
+        std::cout << "        {";
+        for (int r = 0; r < 7; r++) {
+            std::cout << fmtScore(evalParams.Shelter[d][r]);
+            if (r < 6) std::cout << ", ";
+        }
+        std::cout << "}";
+        if (d < 3) std::cout << ",";
+        std::cout << "\n";
     }
-    std::cout << "}, // BlockedPawnStorm\n";
-    std::cout << "    {";
-    for (int i = 0; i < 5; i++) {
-        std::cout << fmtScore(evalParams.UnblockedPawnStorm[i]);
-        if (i < 4) std::cout << ", ";
+    std::cout << "    }, // Shelter\n";
+    std::cout << "    {\n";
+    for (int d = 0; d < 4; d++) {
+        std::cout << "        {";
+        for (int r = 0; r < 7; r++) {
+            std::cout << fmtScore(evalParams.UnblockedStorm[d][r]);
+            if (r < 6) std::cout << ", ";
+        }
+        std::cout << "}";
+        if (d < 3) std::cout << ",";
+        std::cout << "\n";
     }
-    std::cout << "}, // UnblockedPawnStorm\n";
-    std::cout << "    " << fmtScore(evalParams.SemiOpenFileNearKing)
-              << ", // SemiOpenFileNearKing\n";
-    std::cout << "    " << fmtScore(evalParams.OpenFileNearKing) << ", // OpenFileNearKing\n";
+    std::cout << "    }, // UnblockedStorm\n";
+    std::cout << "    {";
+    for (int r = 0; r < 7; r++) {
+        std::cout << fmtScore(evalParams.BlockedStorm[r]);
+        if (r < 6) std::cout << ", ";
+    }
+    std::cout << "}, // BlockedStorm\n";
     std::cout << "    " << fmtScore(evalParams.UndefendedKingZoneSq)
               << ", // UndefendedKingZoneSq\n";
     std::cout << "    {";

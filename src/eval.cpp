@@ -675,94 +675,90 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         if (!kingBB) continue;
         int kingSq = lsb(kingBB);
         int kingFile = squareFile(kingSq);
-        int kingRank = squareRank(kingSq);
 
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
         Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[them];
 
-        int shieldFileMin = std::max(0, kingFile - 1);
-        int shieldFileMax = std::min(7, kingFile + 1);
-
-        // Pawn shield score for a hypothetical king on `kf`, summed over
-        // `kf` and its two adjacent files. Walks only the shield half of
-        // the term; storm and open-file penalties still fire at the
-        // actual king position because they reflect immediate danger,
-        // while shield is a latent safety signal the engine should
-        // associate with a reachable king location rather than only the
-        // current one.
-        auto shieldScoreAt = [&](int kf) -> Score {
+        // Classical shelter and storm: walk the three shield files
+        // centered on the king (clamped so the window stays on the
+        // board) and accumulate per file
+        //   Shelter[edge_distance][our_rank]
+        // and either
+        //   BlockedStorm[their_rank]            if our pawn frontally
+        //                                       blocks the rammer, or
+        //   UnblockedStorm[edge_distance][their_rank]
+        // otherwise. Rank 0 means "no pawn on file", which folds the
+        // semi-open or open file penalty into the Shelter[d][0] entry
+        // and contributes zero on the storm side.
+        auto shelterStormAt = [&](int kf) -> Score {
             Score result = 0;
-            int fMin = std::max(0, kf - 1);
-            int fMax = std::min(7, kf + 1);
-            for (int f = fMin; f <= fMax; f++) {
+            int center = std::max(1, std::min(6, kf));
+            for (int f = center - 1; f <= center + 1; f++) {
+                int d = std::min(f, 7 - f);
                 Bitboard fileMask = FileBB[f];
                 Bitboard ourPawnsOnFile = ourPawns & fileMask;
-                if (!ourPawnsOnFile) continue;
-                int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
-                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
-                if (relRank == 1)
-                    result += evalParams.PawnShieldBonus[0];
-                else if (relRank == 2)
-                    result += evalParams.PawnShieldBonus[1];
+                Bitboard theirPawnsOnFile = theirPawns & fileMask;
+                int ourRank = 0;
+                if (ourPawnsOnFile) {
+                    int sq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
+                    int rr = (us == White) ? squareRank(sq) : (7 - squareRank(sq));
+                    ourRank = std::min(rr, 6);
+                }
+                int theirRank = 0;
+                if (theirPawnsOnFile) {
+                    int sq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
+                    int rr = (us == White) ? squareRank(sq) : (7 - squareRank(sq));
+                    theirRank = std::min(rr, 6);
+                }
+                result += evalParams.Shelter[d][ourRank];
+                if (theirRank > 0) {
+                    bool blocked = (ourRank > 0) && (ourRank == theirRank - 1);
+                    if (blocked) {
+                        result -= evalParams.BlockedStorm[theirRank];
+                    } else {
+                        result -= evalParams.UnblockedStorm[d][theirRank];
+                    }
+                }
             }
             return result;
         };
 
-        // Use the best shield available between the king's current
-        // square and any castled square the rules still permit. A king
-        // that can castle kingside or queenside already has that
-        // shelter in reach, so the static eval should not reward
-        // actually playing the castle (the move ordering and king-to-
-        // corner PST are enough to pick it up), nor penalize the
-        // pre-castle king for having a central-file shield that is
-        // really a flank-file shield in disguise. This mirrors the
-        // shelter-at-current-or-castled-square convention that top
-        // classical evaluators use.
-        Score shield = shieldScoreAt(kingFile);
         bool canKingside = (us == White) ? board.castleWK : board.castleBK;
         bool canQueenside = (us == White) ? board.castleWQ : board.castleBQ;
-        if (canKingside) {
-            Score alt = shieldScoreAt(6);
-            if (mg_value(alt) > mg_value(shield)) shield = alt;
-        }
-        if (canQueenside) {
-            Score alt = shieldScoreAt(2);
-            if (mg_value(alt) > mg_value(shield)) shield = alt;
+        int castlingMask =
+            (canKingside ? 0x1 : 0) | (canQueenside ? 0x2 : 0);
+
+        // Cache the shelter and storm composite in the pawn hash. The
+        // table cannot key on king position alone because the same
+        // pawn structure with the king on a different file produces
+        // a different score, so the entry stamps both the king file
+        // and the castling mask. Cache misses on king or castling
+        // changes; cache hits on the same pawn structure with no king
+        // movement reuse the prior walk.
+        Score shield;
+        int cachedMg = 0;
+        int cachedEg = 0;
+        if (pawnHashTable.probeShelter(board.pawnKey, us, kingFile, castlingMask, cachedMg,
+                                       cachedEg)) {
+            shield = make_score(cachedMg, cachedEg);
+        } else {
+            shield = shelterStormAt(kingFile);
+            // Best of current and castled candidate squares: the king
+            // already in reach of a better shelter via castling should
+            // not be statically penalized for sitting on the central
+            // file pre-castle.
+            if (canKingside) {
+                Score alt = shelterStormAt(6);
+                if (mg_value(alt) > mg_value(shield)) shield = alt;
+            }
+            if (canQueenside) {
+                Score alt = shelterStormAt(2);
+                if (mg_value(alt) > mg_value(shield)) shield = alt;
+            }
+            pawnHashTable.storeShelter(board.pawnKey, us, kingFile, castlingMask,
+                                       mg_value(shield), eg_value(shield));
         }
         scores[us] += shield;
-
-        // Pawn storm and open file evaluation per shield file at the
-        // actual king position. These track danger, not latent safety,
-        // so the "best reachable square" trick above does not apply.
-        for (int f = shieldFileMin; f <= shieldFileMax; f++) {
-            Bitboard fileMask = FileBB[f];
-            Bitboard ourPawnsOnFile = ourPawns & fileMask;
-            Bitboard theirPawnsOnFile = theirPawns & fileMask;
-
-            // Pawn storm: find the most-advanced enemy pawn on this file.
-            // Classify it as blocked when one of our pawns sits directly
-            // in front of it from the attacker's pushing direction: a
-            // frontally blocked ram cannot open the file without a trade,
-            // so it deserves a much smaller penalty than an unblocked
-            // ram driving toward the shield.
-            if (theirPawnsOnFile) {
-                int stormSq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
-                int distance = std::abs(squareRank(stormSq) - kingRank);
-                int idx = std::max(0, 4 - std::min(4, distance));
-                int stopSq = (us == White) ? stormSq - 8 : stormSq + 8;
-                bool blocked = (stopSq >= 0 && stopSq < 64) && (ourPawns & squareBB(stopSq));
-                Score penalty =
-                    blocked ? evalParams.BlockedPawnStorm[idx] : evalParams.UnblockedPawnStorm[idx];
-                scores[us] -= penalty;
-            }
-
-            // Open and semi-open file penalties
-            if (!ourPawnsOnFile && !theirPawnsOnFile) {
-                scores[us] += evalParams.OpenFileNearKing;
-            } else if (!ourPawnsOnFile) {
-                scores[us] += evalParams.SemiOpenFileNearKing;
-            }
-        }
 
         // King zone attack evaluation. We accumulate both an integer
         // kingDanger score (fed to a quadratic mg / linear eg mapping) and

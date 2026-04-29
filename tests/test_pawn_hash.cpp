@@ -193,3 +193,57 @@ TEST_CASE("PawnKey: same pawns with different pieces yield same key", "[pawn_key
 
     CHECK(board1.pawnKey == board2.pawnKey);
 }
+
+// --- Shelter cache ---
+
+TEST_CASE("PawnHash: shelter probe matches stored entry exactly", "[pawn_hash]") {
+    PawnHashTable table(1);
+    table.store(0xCAFE, 0, 0, 0, 0);
+    table.storeShelter(0xCAFE, /*side=*/0, /*kingFile=*/4, /*castlingMask=*/3, 88, -7);
+
+    int mg = 0, eg = 0;
+    REQUIRE(table.probeShelter(0xCAFE, 0, 4, 3, mg, eg));
+    CHECK(mg == 88);
+    CHECK(eg == -7);
+}
+
+TEST_CASE("PawnHash: shelter probe misses on king file change", "[pawn_hash]") {
+    PawnHashTable table(1);
+    table.store(0xCAFE, 0, 0, 0, 0);
+    table.storeShelter(0xCAFE, 0, 4, 3, 88, -7);
+
+    int mg = 0, eg = 0;
+    CHECK_FALSE(table.probeShelter(0xCAFE, 0, 5, 3, mg, eg));
+}
+
+TEST_CASE("PawnHash: shelter probe misses on castling change", "[pawn_hash]") {
+    PawnHashTable table(1);
+    table.store(0xCAFE, 0, 0, 0, 0);
+    table.storeShelter(0xCAFE, 0, 4, 3, 88, -7);
+
+    int mg = 0, eg = 0;
+    CHECK_FALSE(table.probeShelter(0xCAFE, 0, 4, 0, mg, eg));
+}
+
+TEST_CASE("PawnHash: shelter probe misses on side change", "[pawn_hash]") {
+    PawnHashTable table(1);
+    table.store(0xCAFE, 0, 0, 0, 0);
+    table.storeShelter(0xCAFE, 0, 4, 3, 88, -7);
+
+    int mg = 0, eg = 0;
+    CHECK_FALSE(table.probeShelter(0xCAFE, 1, 4, 3, mg, eg));
+}
+
+TEST_CASE("PawnHash: shelter probe misses after pawn key change wipes the cache",
+          "[pawn_hash]") {
+    PawnHashTable table(1);
+    table.store(0xCAFE, 0, 0, 0, 0);
+    table.storeShelter(0xCAFE, 0, 4, 3, 88, -7);
+    // Different pawn key collides at the same index because the table
+    // is a single bucket; the new store invalidates the shelter.
+    table.store(0xBEEF, 1, 1, 0, 0);
+
+    int mg = 0, eg = 0;
+    CHECK_FALSE(table.probeShelter(0xCAFE, 0, 4, 3, mg, eg));
+    CHECK_FALSE(table.probeShelter(0xBEEF, 0, 4, 3, mg, eg));
+}
