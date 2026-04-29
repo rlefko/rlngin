@@ -234,8 +234,7 @@ TEST_CASE("PawnHash: shelter probe misses on side change", "[pawn_hash]") {
     CHECK_FALSE(table.probeShelter(0xCAFE, 1, 4, 3, mg, eg));
 }
 
-TEST_CASE("PawnHash: shelter probe misses after pawn key change wipes the cache",
-          "[pawn_hash]") {
+TEST_CASE("PawnHash: shelter probe misses after pawn key change wipes the cache", "[pawn_hash]") {
     PawnHashTable table(1);
     table.store(0xCAFE, 0, 0, 0, 0);
     table.storeShelter(0xCAFE, 0, 4, 3, 88, -7);

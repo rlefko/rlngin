@@ -451,8 +451,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         // an open board.
         Bitboard centerFiles = FileBB[3] | FileBB[4];
         Bitboard centerOurPawns = ourPawns & centerFiles;
-        Bitboard centerStops =
-            (c == White) ? (centerOurPawns << 8) : (centerOurPawns >> 8);
+        Bitboard centerStops = (c == White) ? (centerOurPawns << 8) : (centerOurPawns >> 8);
         int blockedCenterCount = popcount(centerStops & occ);
 
         // Minor behind pawn: a friendly knight or bishop sitting directly
@@ -506,8 +505,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
             int sameColorPawnCount = popcount(ourPawns & sameColorSquares);
             if (sameColorPawnCount > 0) {
                 scores[c] += evalParams.BadBishop;
-                scores[c] += evalParams.BishopPawns * sameColorPawnCount *
-                             (1 + blockedCenterCount);
+                scores[c] += evalParams.BishopPawns * sameColorPawnCount * (1 + blockedCenterCount);
             }
 
             // X-ray pawns: enemy pawns the bishop sees through its own
@@ -725,8 +723,7 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
 
         bool canKingside = (us == White) ? board.castleWK : board.castleBK;
         bool canQueenside = (us == White) ? board.castleWQ : board.castleBQ;
-        int castlingMask =
-            (canKingside ? 0x1 : 0) | (canQueenside ? 0x2 : 0);
+        int castlingMask = (canKingside ? 0x1 : 0) | (canQueenside ? 0x2 : 0);
 
         // Cache the shelter and storm composite in the pawn hash. The
         // table cannot key on king position alone because the same
@@ -755,8 +752,8 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
                 Score alt = shelterStormAt(2);
                 if (mg_value(alt) > mg_value(shield)) shield = alt;
             }
-            pawnHashTable.storeShelter(board.pawnKey, us, kingFile, castlingMask,
-                                       mg_value(shield), eg_value(shield));
+            pawnHashTable.storeShelter(board.pawnKey, us, kingFile, castlingMask, mg_value(shield),
+                                       eg_value(shield));
         }
         scores[us] += shield;
 
@@ -1257,13 +1254,11 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // signal that no other term has credited.
         Bitboard weak = theirNonPawnNonKing & ctx.allAttacks[us] &
                         (~ctx.allAttacks[them] | ctx.attackedBy2[us]);
-        Bitboard rooksAndQueensTheirs =
-            (board.byPiece[Rook] | board.byPiece[Queen]) & theirPieces;
+        Bitboard rooksAndQueensTheirs = (board.byPiece[Rook] | board.byPiece[Queen]) & theirPieces;
         Bitboard queensTheirs = board.byPiece[Queen] & theirPieces;
         Bitboard creditedElsewhere =
             ctx.pawnAttacks[us] |
-            ((ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop]) &
-             rooksAndQueensTheirs) |
+            ((ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop]) & rooksAndQueensTheirs) |
             (ctx.attackedBy[us][Rook] & queensTheirs);
         Bitboard hanging = weak & ~creditedElsewhere;
         scores[us] += evalParams.Hanging * popcount(hanging);

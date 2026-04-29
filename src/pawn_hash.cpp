@@ -51,8 +51,8 @@ bool PawnHashTable::probe(uint64_t key, int &mg, int &eg, uint64_t &whitePassers
     return false;
 }
 
-bool PawnHashTable::probeShelter(uint64_t key, int side, int kingFile, int castlingMask,
-                                 int &mg, int &eg) const {
+bool PawnHashTable::probeShelter(uint64_t key, int side, int kingFile, int castlingMask, int &mg,
+                                 int &eg) const {
     size_t i = index(key);
     const PawnHashEntry &e = table_[i];
     if (e.key != key) return false;
@@ -64,8 +64,8 @@ bool PawnHashTable::probeShelter(uint64_t key, int side, int kingFile, int castl
     return true;
 }
 
-void PawnHashTable::storeShelter(uint64_t key, int side, int kingFile, int castlingMask,
-                                 int mg, int eg) {
+void PawnHashTable::storeShelter(uint64_t key, int side, int kingFile, int castlingMask, int mg,
+                                 int eg) {
     size_t i = index(key);
     PawnHashEntry &e = table_[i];
     if (e.key != key) return;
