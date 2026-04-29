@@ -1525,6 +1525,26 @@ TEST_CASE("Eval: bishop x-ray pawn penalty fires on enemy pawns down the diagona
     CHECK(withXray < withoutXray);
 }
 
+// --- Half-board PST symmetry ---
+
+TEST_CASE("Eval: half board PSTs make non pawn placements file symmetric",
+          "[eval][pst][symmetry]") {
+    Board board;
+
+    // Knight on c3 (file 2) versus knight on f3 (file 5). The half-board
+    // PST folds file via min(file, 7 - file), so both squares share the
+    // same PST entry. The full eval differs only by other terms that
+    // depend on file (mobility, king ring, etc.), all of which match
+    // between c3 and f3 on an otherwise-empty board.
+    board.setFen("4k3/8/8/8/8/2N5/8/4K3 w - - 0 1");
+    int knightOnC3 = evaluate(board);
+
+    board.setFen("4k3/8/8/8/8/5N2/8/4K3 w - - 0 1");
+    int knightOnF3 = evaluate(board);
+
+    CHECK(knightOnC3 == knightOnF3);
+}
+
 // --- King mobility differential ---
 
 TEST_CASE("Eval: exposed king with no safe squares scores worse than sheltered",

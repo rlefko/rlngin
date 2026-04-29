@@ -241,11 +241,11 @@ static std::vector<ParamRef> collectParams() {
         }
     };
     addPST("PawnPST", evalParams.PawnPST, 8, 56);
-    addPST("KnightPST", evalParams.KnightPST, 0, 64);
-    addPST("BishopPST", evalParams.BishopPST, 0, 64);
-    addPST("RookPST", evalParams.RookPST, 0, 64);
-    addPST("QueenPST", evalParams.QueenPST, 0, 64);
-    addPST("KingPST", evalParams.KingPST, 0, 64);
+    addPST("KnightPST", evalParams.KnightPST, 0, 32);
+    addPST("BishopPST", evalParams.BishopPST, 0, 32);
+    addPST("RookPST", evalParams.RookPST, 0, 32);
+    addPST("QueenPST", evalParams.QueenPST, 0, 32);
+    addPST("KingPST", evalParams.KingPST, 0, 32);
 
     // --- Mobility bonuses (only Knight..Queen rows carry values).
     // Soft chess prior: more attacked mobility-area squares is at least
@@ -793,11 +793,11 @@ static void centerPSTGauge() {
     };
 
     centerWithMaterial(evalParams.PawnPST, 8, 56, evalParams.PieceScore[Pawn]);
-    centerWithMaterial(evalParams.KnightPST, 0, 64, evalParams.PieceScore[Knight]);
-    centerWithMaterial(evalParams.BishopPST, 0, 64, evalParams.PieceScore[Bishop]);
-    centerWithMaterial(evalParams.RookPST, 0, 64, evalParams.PieceScore[Rook]);
-    centerWithMaterial(evalParams.QueenPST, 0, 64, evalParams.PieceScore[Queen]);
-    centerNoMaterial(evalParams.KingPST, 0, 64);
+    centerWithMaterial(evalParams.KnightPST, 0, 32, evalParams.PieceScore[Knight]);
+    centerWithMaterial(evalParams.BishopPST, 0, 32, evalParams.PieceScore[Bishop]);
+    centerWithMaterial(evalParams.RookPST, 0, 32, evalParams.PieceScore[Rook]);
+    centerWithMaterial(evalParams.QueenPST, 0, 32, evalParams.PieceScore[Queen]);
+    centerNoMaterial(evalParams.KingPST, 0, 32);
 }
 
 // Hard validation step. Walks every ParamRef, prints any value outside
@@ -1087,7 +1087,7 @@ static void printArr8(const std::string &indent, Score arr[8]) {
     std::cout << "},\n";
 }
 
-static void printPST(const std::string &name, Score arr[64]) {
+static void printPST64(const std::string &name, const Score *arr) {
     std::cout << "    // " << name << "\n";
     std::cout << "    {\n";
     for (int row = 0; row < 8; row++) {
@@ -1096,6 +1096,21 @@ static void printPST(const std::string &name, Score arr[64]) {
             std::cout << fmtScore(arr[row * 8 + col]);
             if (row != 7 || col != 7) std::cout << ",";
             if (col < 7) std::cout << " ";
+        }
+        std::cout << "\n";
+    }
+    std::cout << "    },\n";
+}
+
+static void printPST32(const std::string &name, const Score *arr) {
+    std::cout << "    // " << name << " (half-board)\n";
+    std::cout << "    {\n";
+    for (int row = 0; row < 8; row++) {
+        std::cout << "        ";
+        for (int col = 0; col < 4; col++) {
+            std::cout << fmtScore(arr[row * 4 + col]);
+            if (row != 7 || col != 3) std::cout << ",";
+            if (col < 3) std::cout << " ";
         }
         std::cout << "\n";
     }
@@ -1143,12 +1158,12 @@ static void printCurrentValues() {
     }
     std::cout << "}, // PieceScore\n";
 
-    printPST("PawnPST", evalParams.PawnPST);
-    printPST("KnightPST", evalParams.KnightPST);
-    printPST("BishopPST", evalParams.BishopPST);
-    printPST("RookPST", evalParams.RookPST);
-    printPST("QueenPST", evalParams.QueenPST);
-    printPST("KingPST", evalParams.KingPST);
+    printPST64("PawnPST", evalParams.PawnPST);
+    printPST32("KnightPST", evalParams.KnightPST);
+    printPST32("BishopPST", evalParams.BishopPST);
+    printPST32("RookPST", evalParams.RookPST);
+    printPST32("QueenPST", evalParams.QueenPST);
+    printPST32("KingPST", evalParams.KingPST);
 
     // MobilityBonus
     std::cout << "    {\n";

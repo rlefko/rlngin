@@ -40,14 +40,20 @@ struct EvalParams {
     // carry zero because material for those slots is implicit.
     Score PieceScore[7];
 
-    // Piece-square tables stored in a1=0 order (rank 1 first, rank 8 last).
-    // Values are from White's perspective; Black mirrors via `sq ^ 56`.
+    // Piece-square tables. PawnPST keeps the full 64-square layout
+    // because pawn structure is asymmetric (e.g., the f and h pawns
+    // play very differently). Non-pawn PSTs are stored half-board
+    // with the file mirrored to the queenside (4 file buckets x 8
+    // ranks = 32 entries). Black mirrors via the rank flip plus the
+    // file fold, so a knight on c3 and a knight on f3 share the same
+    // tunable. PawnPST values are White-perspective; Black mirrors
+    // via `sq ^ 56`. Non-pawn PSTs index by `(rel_rank << 2) | min(file, 7 - file)`.
     Score PawnPST[64];
-    Score KnightPST[64];
-    Score BishopPST[64];
-    Score RookPST[64];
-    Score QueenPST[64];
-    Score KingPST[64];
+    Score KnightPST[32];
+    Score BishopPST[32];
+    Score RookPST[32];
+    Score QueenPST[32];
+    Score KingPST[32];
 
     // Mobility bonus by piece type and count of mobility-area squares
     // attacked. Pawn and King rows remain zero.

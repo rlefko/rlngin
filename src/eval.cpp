@@ -1345,12 +1345,23 @@ int evaluate(const Board &board) {
     int gamePhase = 0;
 
     // PST-only accumulation per square; piece material, bishop pair, and
-    // imbalance come from the cached material probe below.
+    // imbalance come from the cached material probe below. PawnPST is
+    // full-board (asymmetric structure), non-pawn PSTs are half-board
+    // (file mirrored to queenside) so a knight on c3 and a knight on
+    // f3 read the same tunable.
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
 
-        int idx = (p.color == White) ? sq : (sq ^ 56);
+        int idx;
+        if (p.type == Pawn) {
+            idx = (p.color == White) ? sq : (sq ^ 56);
+        } else {
+            int rrank = (p.color == White) ? squareRank(sq) : (7 - squareRank(sq));
+            int file = squareFile(sq);
+            int fIdx = std::min(file, 7 - file);
+            idx = (rrank << 2) | fIdx;
+        }
         scores[p.color] += PST[p.type][idx];
     }
 
@@ -1429,7 +1440,15 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
-        int idx = (p.color == White) ? sq : (sq ^ 56);
+        int idx;
+        if (p.type == Pawn) {
+            idx = (p.color == White) ? sq : (sq ^ 56);
+        } else {
+            int rrank = (p.color == White) ? squareRank(sq) : (7 - squareRank(sq));
+            int file = squareFile(sq);
+            int fIdx = std::min(file, 7 - file);
+            idx = (rrank << 2) | fIdx;
+        }
         pstScores[p.color] += PST[p.type][idx];
     }
     Score pstScore = pstScores[White] - pstScores[Black];
