@@ -1210,15 +1210,26 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
             ctx.attackedBy[us][King] & theirNonPawnNonKing & ~ctx.allAttacks[them];
         scores[us] += evalParams.ThreatByKing * popcount(kingVictims);
 
-        // evalParams.Hanging pieces: enemy non-pawn pieces undefended and reachable
-        // by a capture we would willingly make. "Willingly" means either
-        // we have a less valuable attacker on the square (pawn attacks
-        // qualify directly) or two or more pieces converging on it so the
-        // capture-recapture sequence still wins material. This keeps
-        // queen-attacks-undefended-rook and similar trade-losing scenarios
-        // from falsely firing the hanging bonus.
-        Bitboard undefended = theirNonPawnNonKing & ctx.allAttacks[us] & ~ctx.allAttacks[them];
-        Bitboard hanging = undefended & (ctx.attackedBy2[us] | ctx.pawnAttacks[us]);
+        // Hanging pieces: the conventional weak-piece set is enemy
+        // non-pawn / non-king pieces we attack that are either undefended
+        // or under-defended (we attack the square more times than they
+        // defend it). To avoid double crediting, we subtract any victim
+        // already paid out by a less-valuable attacker via ThreatBy*:
+        // pieces hit by our pawns (ThreatByPawn), rooks or queens hit by
+        // our minors (ThreatByMinor), and queens hit by our rooks
+        // (ThreatByRook). The remaining set is the "free" weak-piece
+        // signal that no other term has credited.
+        Bitboard weak = theirNonPawnNonKing & ctx.allAttacks[us] &
+                        (~ctx.allAttacks[them] | ctx.attackedBy2[us]);
+        Bitboard rooksAndQueensTheirs =
+            (board.byPiece[Rook] | board.byPiece[Queen]) & theirPieces;
+        Bitboard queensTheirs = board.byPiece[Queen] & theirPieces;
+        Bitboard creditedElsewhere =
+            ctx.pawnAttacks[us] |
+            ((ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop]) &
+             rooksAndQueensTheirs) |
+            (ctx.attackedBy[us][Rook] & queensTheirs);
+        Bitboard hanging = weak & ~creditedElsewhere;
         scores[us] += evalParams.Hanging * popcount(hanging);
 
         // Weak queen: enemy queen attacked by two or more of our pieces.

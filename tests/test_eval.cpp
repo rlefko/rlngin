@@ -1483,6 +1483,32 @@ TEST_CASE("Eval: rook xraying the enemy queen through a blocker scores a bonus",
     CHECK(xrayMg > idleMg);
 }
 
+// --- Hanging ---
+
+TEST_CASE("Eval: hanging fires on undefended piece attacked by a single high value attacker",
+          "[eval][hanging]") {
+    Board board;
+
+    // Black rook on a8 sits along the long a8-h1 diagonal that White's
+    // queen on h1 commands. The rook is undefended and the queen is
+    // higher value than the rook, so no ThreatBy block credits the
+    // attack. Under the conventional weak piece definition the
+    // Hanging bonus must still fire even with a single attacker.
+    board.setFen("r3k3/8/8/8/8/8/8/4K2Q w - - 0 1");
+    int withAttack = parseMg(bucketLine(board, "Threats"));
+
+    // Move the queen to d1 so it no longer reaches a8 on any line.
+    // The rook is still undefended but no longer weak, so Hanging
+    // cannot fire and the Threats bucket loses the bonus.
+    board.setFen("r3k3/8/8/8/8/8/8/3QK3 w - - 0 1");
+    int withoutAttack = parseMg(bucketLine(board, "Threats"));
+
+    // The Hanging weight is the dominant Threats delta between the
+    // two positions. The previous trigger required a multi attacker
+    // or a pawn capture and so missed this single attacker case.
+    CHECK(withAttack > withoutAttack);
+}
+
 // --- Restricted piece ---
 
 TEST_CASE("Eval: restricted piece credits shared attack squares", "[eval][restricted]") {
