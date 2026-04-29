@@ -1483,6 +1483,28 @@ TEST_CASE("Eval: rook xraying the enemy queen through a blocker scores a bonus",
     CHECK(xrayMg > idleMg);
 }
 
+// --- Rook on queen file ---
+
+TEST_CASE("Eval: rook sharing a file with the enemy queen earns a bonus",
+          "[eval][rook][queen-file]") {
+    Board board;
+
+    // White rook on h1 sharing the h file with black's queen on h8.
+    // The rook covers h2-h7 to the queen, so rook mobility is the
+    // same as in the disaligned variant below: only the queen file
+    // alignment changes.
+    board.setFen("4k2q/8/8/8/8/8/8/4K2R w - - 0 1");
+    int alignedMg = parseMg(bucketLine(board, "Pieces"));
+
+    // Same rook on h1 but the queen is now on a8. Rook attack count
+    // is the same (h2-h8 plus the rank), so mobility is identical
+    // and only the queen file alignment differs.
+    board.setFen("q3k3/8/8/8/8/8/8/4K2R w - - 0 1");
+    int offsetMg = parseMg(bucketLine(board, "Pieces"));
+
+    CHECK(alignedMg > offsetMg);
+}
+
 // --- Bishop x-ray pawns ---
 
 TEST_CASE("Eval: bishop x-ray pawn penalty fires on enemy pawns down the diagonal",

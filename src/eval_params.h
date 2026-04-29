@@ -60,6 +60,10 @@ struct EvalParams {
     // Rook file bonuses.
     Score RookOpenFileBonus;
     Score RookSemiOpenFileBonus;
+    // Bonus per friendly rook sharing a file with an enemy queen.
+    // Pure pressure pattern that is otherwise only credited via the
+    // generic mobility term.
+    Score RookOnQueenFile;
 
     // Minor-piece outposts and trapped-rook-by-own-king.
     Score KnightOutpostBonus;

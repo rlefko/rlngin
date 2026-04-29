@@ -550,6 +550,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
         bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
 
+        Bitboard enemyQueens = board.byPiece[Queen] & board.byColor[c ^ 1];
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
         while (rooks) {
             int sq = popLsb(rooks);
@@ -564,6 +565,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += evalParams.RookOpenFileBonus;
             } else if (noOurPawns) {
                 scores[c] += evalParams.RookSemiOpenFileBonus;
+            }
+
+            // Rook on queen file: a small flat pressure bonus per
+            // friendly rook sharing a file with an enemy queen.
+            if (fileMask & enemyQueens) {
+                scores[c] += evalParams.RookOnQueenFile;
             }
 
             // Rook on the seventh: either targets enemy pawns on the 7th

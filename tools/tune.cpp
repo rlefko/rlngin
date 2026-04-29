@@ -344,6 +344,7 @@ static std::vector<ParamRef> collectParams() {
                            return b;
                        }});
     }
+    addMgEgConstr("RookOnQueenFile", &evalParams.RookOnQueenFile, boundsNonNegative());
     addMgEgConstr("KnightOutpostBonus", &evalParams.KnightOutpostBonus, boundsNonNegative());
     addMgEgConstr("BishopOutpostBonus", &evalParams.BishopOutpostBonus, boundsNonNegative());
     out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
@@ -1191,6 +1192,7 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.RookOpenFileBonus) << ", // RookOpenFileBonus\n";
     std::cout << "    " << fmtScore(evalParams.RookSemiOpenFileBonus)
               << ", // RookSemiOpenFileBonus\n";
+    std::cout << "    " << fmtScore(evalParams.RookOnQueenFile) << ", // RookOnQueenFile\n";
     std::cout << "    " << fmtScore(evalParams.KnightOutpostBonus) << ", // KnightOutpostBonus\n";
     std::cout << "    " << fmtScore(evalParams.BishopOutpostBonus) << ", // BishopOutpostBonus\n";
     std::cout << "    " << fmtScore(evalParams.TrappedRookByKingPenalty)
