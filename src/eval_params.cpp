@@ -43,8 +43,8 @@
 //     `SafePawnPush`, slider-on-queen, restricted piece) >= 0 each
 //     half.
 //   - Pawn-structure penalties (isolated, doubled, backward, weak
-//     unopposed, doubled-isolated, blocked, pawn-island,
-//     bad-bishop) <= 0 each half.
+//     unopposed, doubled-isolated, blocked, pawn-island) <= 0 each
+//     half. Bishop penalties (BadBishop, BishopPawns) <= 0 each half.
 //   - BishopPair / MinorOnKingRing / RookOnKingRing >= 0 against
 //     universal chess priors.
 //   - `RookOpenFile >= RookSemiOpenFile >= 0` per phase, and
@@ -84,7 +84,8 @@ static const EvalParams kDefaultEvalParams = {
     {S(0, 0), S(0, 0), S(0, 0), S(24, 43), S(24, 73), S(188, 152), S(294, 500), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(38, 18), S(152, 18), S(152, 28), S(245, 28), S(0, 0)},
     S(0, 41), // RookOn7thBonus
-    S(-4, -14), // BadBishopPenalty
+    S(-2, -7), // BadBishop
+    S(-2, -7), // BishopPawns
     S(30, 0), // Tempo
     {S(0, 0), S(179, 312), S(956, 746), S(1011, 712), S(1496, 1169), S(2663, 2543), S(0, 0)}, // PieceScore
     // PawnPST

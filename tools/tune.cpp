@@ -219,7 +219,8 @@ static std::vector<ParamRef> collectParams() {
     // eval contribution, and stops a "Bonus"-named term from
     // representing a penalty.
     addMgEgConstr("RookOn7thBonus", &evalParams.RookOn7thBonus, boundsNonNegative());
-    addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, boundsNonPositive());
+    addMgEgConstr("BadBishop", &evalParams.BadBishop, boundsNonPositive());
+    addMgEgConstr("BishopPawns", &evalParams.BishopPawns, boundsNonPositive());
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
     // --- Material (skip None and King; both are structurally zero) ---
@@ -1148,7 +1149,8 @@ static void printCurrentValues() {
     printArr8("    ", evalParams.ConnectedPassersBonus);
 
     std::cout << "    " << fmtScore(evalParams.RookOn7thBonus) << ", // RookOn7thBonus\n";
-    std::cout << "    " << fmtScore(evalParams.BadBishopPenalty) << ", // BadBishopPenalty\n";
+    std::cout << "    " << fmtScore(evalParams.BadBishop) << ", // BadBishop\n";
+    std::cout << "    " << fmtScore(evalParams.BishopPawns) << ", // BishopPawns\n";
     std::cout << "    " << fmtScore(evalParams.Tempo) << ", // Tempo\n";
 
     // PieceScore

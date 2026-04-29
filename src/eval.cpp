@@ -444,6 +444,17 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard theirKingRing =
             theirKingOnly ? kingZoneBB(lsb(theirKingOnly), static_cast<Color>(c ^ 1)) : 0;
 
+        // Closed center signal: own pawns on the d or e file whose stop
+        // square is occupied by any piece. Used to scale the per same
+        // color pawn bishop penalty so a bad bishop trapped behind its
+        // own central pawns hurts more than the same configuration on
+        // an open board.
+        Bitboard centerFiles = FileBB[3] | FileBB[4];
+        Bitboard centerOurPawns = ourPawns & centerFiles;
+        Bitboard centerStops =
+            (c == White) ? (centerOurPawns << 8) : (centerOurPawns >> 8);
+        int blockedCenterCount = popcount(centerStops & occ);
+
         // Minor behind pawn: a friendly knight or bishop sitting directly
         // one rank behind a friendly pawn is shielded against frontal
         // attacks and cannot be easily chased by an enemy pawn on the
@@ -492,8 +503,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
 
             Bitboard sameColorSquares =
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
-            int blockingPawns = popcount(ourPawns & sameColorSquares);
-            scores[c] += evalParams.BadBishopPenalty * blockingPawns;
+            int sameColorPawnCount = popcount(ourPawns & sameColorSquares);
+            if (sameColorPawnCount > 0) {
+                scores[c] += evalParams.BadBishop;
+                scores[c] += evalParams.BishopPawns * sameColorPawnCount *
+                             (1 + blockedCenterCount);
+            }
 
             // Long diagonal sweep: the two central squares on this bishop's
             // long diagonal must both be covered by the bishop itself (from

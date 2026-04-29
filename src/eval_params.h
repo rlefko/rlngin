@@ -24,7 +24,14 @@ struct EvalParams {
     Score PassedSupportedBonus[8];
     Score ConnectedPassersBonus[8];
     Score RookOn7thBonus;
-    Score BadBishopPenalty;
+    // Bad bishop split into a flat baseline that fires when at least
+    // one own pawn sits on the bishop's color, and a per-pawn weight
+    // scaled by the number of own d/e file pawns whose stop square is
+    // occupied. Closed center positions are far worse for the bad
+    // bishop than the same pawn count on an open board, so the per
+    // pawn term needs to scale with the closure of the position.
+    Score BadBishop;
+    Score BishopPawns;
     Score Tempo;
 
     // --- Newly exposed for the broad-scope Texel tune. ---
