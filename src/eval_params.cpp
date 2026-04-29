@@ -202,25 +202,26 @@ static const EvalParams kDefaultEvalParams = {
     S(35, 11), // BishopPair
     // Shelter[edge_distance][pawn_rank], rank 0 = no own pawn (semi-open
     // file penalty); ranks 1-6 are relative own-pawn ranks. Mg only.
-    // Defaults reproduce the dominant peaks of the prior PawnShieldBonus
-    // and Semi/OpenFileNearKing terms while spreading edge-distance
-    // resolution that the legacy single-bucket shape lacked.
+    // Defaults apply the prior PawnShieldBonus values uniformly across
+    // edge distance because main's tune was file-agnostic. The tuner
+    // can re-spread the values across edge distance on the next pass.
     {
-        {S(-30, 0), S(75, 0), S(38, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
-        {S(-50, 0), S(96, 0), S(47, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
-        {S(-100, 0), S(115, 0), S(57, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
-        {S(-186, 0), S(128, 0), S(63, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(-35, 0), S(128, 0), S(63, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(-35, 0), S(128, 0), S(63, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(-35, 0), S(128, 0), S(63, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(-35, 0), S(128, 0), S(63, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
     },
     // UnblockedStorm[edge_distance][storm_rank], rank 0 = no enemy pawn
     // (structurally zero); ranks 1-6 are relative enemy-pawn ranks. Mg
     // only; subtracted at the call site so values stay non-negative.
-    // Defaults reproduce the prior UnblockedPawnStorm peak at the
-    // most-threatening rank (legacy distance bucket 2) and decay across
-    // less-threatening ranks and edge distances.
+    // Defaults match the prior UnblockedPawnStorm peak at distance bucket
+    // 2 (rank 2 from king's perspective) and 1 (rank 3); applied
+    // uniformly across edge distance because main's tune did not
+    // discriminate by file.
     {
-        {S(0, 0), S(0, 0), S(70, 0), S(25, 0), S(0, 0), S(0, 0), S(0, 0)},
-        {S(0, 0), S(0, 0), S(100, 0), S(35, 0), S(0, 0), S(0, 0), S(0, 0)},
-        {S(0, 0), S(0, 0), S(125, 0), S(45, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(0, 0), S(0, 0), S(142, 0), S(50, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(0, 0), S(0, 0), S(142, 0), S(50, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(0, 0), S(0, 0), S(142, 0), S(50, 0), S(0, 0), S(0, 0), S(0, 0)},
         {S(0, 0), S(0, 0), S(142, 0), S(50, 0), S(0, 0), S(0, 0), S(0, 0)},
     },
     // BlockedStorm[storm_rank]: file distance dimension collapses out
