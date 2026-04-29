@@ -38,7 +38,7 @@ TUNE_TARGET := $(BUILDDIR)/tune
 TUNE_SRC := tools/tune.cpp
 TUNE_OBJ := $(BUILDDIR)/tune.o
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa texel-selfplay texel-extract texel-tune
 
 build: $(TARGET)
 
@@ -129,4 +129,13 @@ spsa: build
 	    --fastchess ./fastchess \
 	    --openings $(OPENINGS_FILE) \
 	    --seed 1
+
+texel-selfplay: build
+	./scripts/texel_selfplay.sh
+
+texel-extract:
+	./scripts/texel_extract.sh
+
+texel-tune: $(TUNE_TARGET)
+	./scripts/texel_tune.sh
 
