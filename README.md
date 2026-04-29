@@ -90,6 +90,21 @@ Or run the script directly with a custom round count:
 
 Results are saved to `results/`.
 
+## Texel tuning
+
+Three-stage pipeline that produces the values shipped in
+`src/eval_params.cpp`:
+
+```bash
+make texel-selfplay   # generate the self-play PGN corpus
+make texel-extract    # filter and dedup labeled positions from the PGN
+make texel-tune       # run coordinate descent over EvalParams
+```
+
+Each stage writes its artifacts under `tuning/texel/` (gitignored).
+Run `./scripts/texel-watch.sh` in a second terminal during the
+self-play stage for a live dashboard of completed games.
+
 ## Cleaning
 
 ```bash

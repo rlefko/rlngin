@@ -18,3 +18,13 @@ tuning/spsa/theta.json
 tuning/spsa/live.json
 tuning/spsa/run.log
 tuning/spsa/auto-apply.log
+
+# Texel run artifacts: large self-play PGN, the labeled corpus, the
+# per-stage logs, and the archived final checkpoint. The compiled-in
+# defaults in src/eval_params.cpp are what ship in the apply commit.
+tuning/texel/games.pgn
+tuning/texel/positions.epd
+tuning/texel/selfplay.log
+tuning/texel/extract.log
+tuning/texel/tune.log
+tuning/texel/checkpoint.txt
