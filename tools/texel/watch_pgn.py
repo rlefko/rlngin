@@ -1,26 +1,24 @@
 #!/usr/bin/env python3
 """Live viewer for an in-progress fastchess PGN.
 
-Tails a PGN file that fastchess is appending to, parses each game as it
-lands, and prints a one-line summary plus a periodic running-stats line.
-The viewer is read-only on a sequentially appended file, so it adds no
+Tails a PGN file that fastchess is appending to, parses each game as
+it lands, and prints a one-line summary plus a periodic running-stats
+banner. Read-only on a sequentially appended file, so it adds no
 contention on the engine threads driving the match.
 
 Two modes:
 
-* Follow mode (default): block on the file, print every completed game
-  as it appears, and emit a stats banner every ``--banner-every`` games.
-  Stop with Ctrl-C.
-* One-shot mode (``--once``): print the most recent ``--tail`` games and
-  the stats banner, then exit. Suitable as the inner command for
-  ``watch -t -n <interval>``.
+* Follow (default): block on the file, print every completed game as
+  it appears, and emit the stats banner every ``--banner-every``
+  games. Stop with Ctrl-C.
+* One-shot (``--once``): print the most recent ``--tail-games``
+  games and the stats banner, then exit. Suitable as the inner
+  command for ``watch -t -n <interval>``.
 """
 from __future__ import annotations
 
 import argparse
-import io
 import os
-import re
 import sys
 import time
 from collections import deque
@@ -30,11 +28,6 @@ from typing import Optional
 import chess
 import chess.pgn
 
-
-# Each fastchess game block ends with one of the four PGN result tokens
-# followed by a blank line. We use that to decide when the buffer holds
-# at least one complete game ready to feed to ``chess.pgn.read_game``.
-GAME_BOUNDARY_RE = re.compile(r"(?:1-0|0-1|1/2-1/2|\*)\s*\n\s*\n")
 
 RESULT_LABEL = {
     "1-0": "1-0",
@@ -68,16 +61,14 @@ class GameSummary:
 class Stats:
     def __init__(self, target: int):
         self.target = target
-        self.start = time.monotonic()
         self.total = 0
         self.w_wins = 0
         self.draws = 0
         self.b_wins = 0
         self.unknown = 0
-        # Sliding window of (monotonic_time) of recent game completions
-        # so we can report a short-window rate that reflects current
-        # conditions rather than a full-match average.
-        self.recent = deque(maxlen=200)
+        # Sliding window of recent completion times so the rate
+        # reflects current conditions rather than a full-match average.
+        self.recent: deque[float] = deque(maxlen=200)
 
     def record(self, result: str) -> None:
         self.total += 1
@@ -140,89 +131,27 @@ def summarize_game(game: chess.pgn.Game, tail_moves: int) -> Optional[GameSummar
     return GameSummary(white, black, result, plies, tail_san, term)
 
 
-def consume_games(buffer: str):
-    """Parse every complete game from ``buffer`` and return the list of
-    games together with the unparsed tail. ``buffer`` is the raw PGN text
-    seen so far; the unparsed tail is whatever remains after the last
-    complete game and should be carried over to the next read."""
-    if not GAME_BOUNDARY_RE.search(buffer):
-        return [], buffer
-    games = []
-    stream = io.StringIO(buffer)
-    consumed = 0
-    while True:
-        # Only attempt another read if the unconsumed remainder still
-        # contains a result-token boundary; otherwise we'd block parsing
-        # an incomplete trailing game and lose state mid-stream.
-        if not GAME_BOUNDARY_RE.search(buffer, pos=consumed):
-            break
-        pos_before = stream.tell()
-        try:
-            game = chess.pgn.read_game(stream)
-        except Exception:
-            # Corrupt or partial entry: drop everything up to the next
-            # safe boundary so the tail keeps flowing rather than wedge.
-            m = GAME_BOUNDARY_RE.search(buffer, pos=consumed)
-            consumed = m.end() if m else len(buffer)
-            stream.seek(consumed)
-            continue
-        if game is None:
-            break
-        games.append(game)
-        consumed = stream.tell()
-        if consumed == pos_before:
-            break
-    return games, buffer[consumed:]
-
-
 def follow(path: str, target: int, tail_moves: int, banner_every: int,
-           poll_interval: float, from_start: bool, initial_tail: int) -> None:
+           poll_interval: float) -> None:
     stats = Stats(target)
     print(f"watching {path} (target={target})", file=sys.stderr)
-    # Wait for the file to exist; fastchess opens it lazily after the
-    # opening book is loaded so a freshly started match may briefly have
-    # no PGN file on disk.
     while not os.path.exists(path):
         time.sleep(poll_interval)
     with open(path, "r", encoding="utf-8", errors="replace") as f:
-        # Read whatever already exists so the viewer shows recent
-        # context immediately rather than waiting for the next game to
-        # land. Without this, attaching to a long-running match looks
-        # frozen until the next completion arrives.
-        existing = f.read()
-        games, buffer = consume_games(existing)
-        seen = []
-        for game in games:
-            summary = summarize_game(game, tail_moves)
-            if summary is None:
-                continue
-            stats.record(summary.result)
-            seen.append(summary)
-        if seen:
-            start = 0 if from_start else max(0, len(seen) - initial_tail)
-            print(stats.banner())
-            for offset, summary in enumerate(seen[start:], start=start + 1):
-                print(summary.line(offset))
-            sys.stdout.flush()
         try:
             while True:
-                chunk = f.read()
-                if chunk:
-                    buffer += chunk
-                    games, buffer = consume_games(buffer)
-                    for game in games:
-                        summary = summarize_game(game, tail_moves)
-                        if summary is None:
-                            continue
-                        stats.record(summary.result)
-                        print(summary.line(stats.total))
-                        if banner_every > 0 and stats.total % banner_every == 0:
-                            print(stats.banner())
-                            sys.stdout.flush()
-                        else:
-                            sys.stdout.flush()
-                else:
+                game = chess.pgn.read_game(f)
+                if game is None:
                     time.sleep(poll_interval)
+                    continue
+                summary = summarize_game(game, tail_moves)
+                if summary is None:
+                    continue
+                stats.record(summary.result)
+                print(summary.line(stats.total))
+                if banner_every > 0 and stats.total % banner_every == 0:
+                    print(stats.banner())
+                sys.stdout.flush()
         except KeyboardInterrupt:
             print("", file=sys.stderr)
             print(stats.banner(), file=sys.stderr)
@@ -232,17 +161,18 @@ def once(path: str, target: int, tail_moves: int, tail_games: int) -> None:
     if not os.path.exists(path):
         print(f"(no PGN yet at {path})")
         return
-    with open(path, "r", encoding="utf-8", errors="replace") as f:
-        buffer = f.read()
-    games, _ = consume_games(buffer)
     stats = Stats(target)
-    summaries = []
-    for game in games:
-        summary = summarize_game(game, tail_moves)
-        if summary is None:
-            continue
-        stats.record(summary.result)
-        summaries.append(summary)
+    summaries: list[GameSummary] = []
+    with open(path, "r", encoding="utf-8", errors="replace") as f:
+        while True:
+            game = chess.pgn.read_game(f)
+            if game is None:
+                break
+            summary = summarize_game(game, tail_moves)
+            if summary is None:
+                continue
+            stats.record(summary.result)
+            summaries.append(summary)
     if not summaries:
         print(f"(no games yet in {path})")
         return
@@ -267,13 +197,6 @@ def main() -> int:
                          " mode (default 25, set 0 to disable)")
     ap.add_argument("--poll-interval", type=float, default=1.0,
                     help="follow-mode poll interval seconds (default 1.0)")
-    ap.add_argument("--from-start", action="store_true",
-                    help="in follow mode, replay every game already in"
-                         " the file before tailing for new ones")
-    ap.add_argument("--initial-tail", type=int, default=15,
-                    help="in follow mode, how many already-completed"
-                         " games to print as context before tailing"
-                         " (default 15)")
     ap.add_argument("--once", action="store_true",
                     help="print recent games + stats once and exit"
                          " (suitable for 'watch -t -n')")
@@ -286,7 +209,7 @@ def main() -> int:
         once(args.path, args.target, args.tail_moves, args.tail_games)
     else:
         follow(args.path, args.target, args.tail_moves, args.banner_every,
-               args.poll_interval, args.from_start, args.initial_tail)
+               args.poll_interval)
     return 0
 
 
