@@ -6,14 +6,9 @@ set -euo pipefail
 #   threads:    parallel worker count (default: 6)
 #   max-passes: coordinate-descent passes (default: 30)
 #
-# Drives build/tune over the Texel corpus and archives the final
-# checkpoint into the per-run output directory. The tuner itself
-# hard-codes its in-flight checkpoint path to tuning/checkpoint.txt;
-# we copy it to $OUTPUT/checkpoint.txt at the end so this run's
-# artifacts do not collide with other tuning trees.
-#
-# Run under caffeinate so the laptop stays awake for the full tune:
-#   caffeinate -i ./scripts/texel_tune.sh
+# Drives build/tune over the Texel corpus and archives the tuner's
+# in-flight checkpoint (tuning/checkpoint.txt) into $OUTPUT at the end
+# so per-run artifacts do not collide.
 #
 # Environment variables:
 #   OUTPUT:                output directory (default: tuning/texel)
