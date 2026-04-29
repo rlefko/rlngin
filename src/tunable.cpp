@@ -295,16 +295,16 @@ std::vector<TunableSpec> buildRegistry() {
     // diagonals (own pieces transparent). Penalty-signed; the eg half
     // tends to dominate because long diagonals matter most when the
     // board is open. ---
-    out.push_back(
-        makeScoreHalfSpec("BishopXrayPawnsMg", &evalParams.BishopXrayPawns, true, -100, 0, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("BishopXrayPawnsMg", &evalParams.BishopXrayPawns, true, -100, 0,
+                                    4.0, 1.5));
     out.push_back(makeScoreHalfSpec("BishopXrayPawnsEg", &evalParams.BishopXrayPawns, false, -100,
                                     0, 4.0, 1.5));
 
     // --- Rook on queen file: bonus per friendly rook sharing a file
     // with an enemy queen. Bonus-signed; small magnitude because the
     // term overlaps generic rook mobility. ---
-    out.push_back(
-        makeScoreHalfSpec("RookOnQueenFileMg", &evalParams.RookOnQueenFile, true, 0, 100, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookOnQueenFileMg", &evalParams.RookOnQueenFile, true, 0, 100,
+                                    5.0, 2.0));
     out.push_back(makeScoreHalfSpec("RookOnQueenFileEg", &evalParams.RookOnQueenFile, false, 0, 100,
                                     5.0, 2.0));
 
