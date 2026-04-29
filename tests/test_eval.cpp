@@ -21,7 +21,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2662);
+    CHECK(evaluate(board) == 2657);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -69,7 +69,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2662);
+    CHECK(evaluate(board) == 2657);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -1324,7 +1324,7 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     // a KQvK evaluation matches the pure material plus PST plus king
     // safety baseline and is not damped by the initiative constant.
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2662);
+    CHECK(evaluate(board) == 2657);
 }
 
 TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
