@@ -510,6 +510,15 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                              (1 + blockedCenterCount);
             }
 
+            // X-ray pawns: enemy pawns the bishop sees through its own
+            // pieces. Re-cast the bishop attack with own pieces removed
+            // from the occupancy so the ray reaches every enemy pawn on
+            // the diagonal, even past a friendly knight or pawn that
+            // would be a blocker in the literal mobility sense.
+            Bitboard xrayAttacks = bishopAttacks(sq, occ & ~board.byColor[c]);
+            int xrayPawns = popcount(xrayAttacks & theirPawns);
+            scores[c] += evalParams.BishopXrayPawns * xrayPawns;
+
             // Long diagonal sweep: the two central squares on this bishop's
             // long diagonal must both be covered by the bishop itself (from
             // the bishop's own square or through its attack set). If either

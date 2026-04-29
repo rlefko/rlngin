@@ -200,6 +200,7 @@ static const EvalParams kDefaultEvalParams = {
     S(-11, -34), // PawnIslandPenalty
     {S(24, 0), S(20, 0)}, // CentralPawnBonus
     S(66, 25), // BishopLongDiagonalBonus
+    S(0, -4), // BishopXrayPawns
     S(0, 36), // InitiativePasser
     S(0, 53), // InitiativePawnCount
     S(0, 1), // InitiativeOutflank

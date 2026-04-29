@@ -195,6 +195,13 @@ struct EvalParams {
     // most once per bishop.
     Score BishopLongDiagonalBonus;
 
+    // Penalty per enemy pawn the bishop x-rays through its own pieces.
+    // The bishop's diagonal is mobility-dead in the direction of every
+    // such pawn even when the immediate squares are open, and our
+    // pieces between the bishop and the pawn are not blockers in the
+    // x-ray sense.
+    Score BishopXrayPawns;
+
     // Position-wide "initiative" scalar. Features are accumulated into a
     // non-negative magnitude, then signed by the side with the current
     // positional advantage, and folded into the total so the score bends

@@ -1483,6 +1483,26 @@ TEST_CASE("Eval: rook xraying the enemy queen through a blocker scores a bonus",
     CHECK(xrayMg > idleMg);
 }
 
+// --- Bishop x-ray pawns ---
+
+TEST_CASE("Eval: bishop x-ray pawn penalty fires on enemy pawns down the diagonal",
+          "[eval][bishop][xray]") {
+    Board board;
+
+    // White bishop on a1 with two black pawns on its long diagonal
+    // (c3 and e5). The x-ray reaches both pawns through any own pieces
+    // along the way and the BishopXrayPawns penalty should depress
+    // the Pieces bucket compared to the empty diagonal baseline.
+    board.setFen("4k3/8/8/4p3/8/2p5/8/B3K3 w - - 0 1");
+    int withXray = parseMg(bucketLine(board, "Pieces"));
+
+    // Same bishop with no enemy pawns on the long diagonal.
+    board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
+    int withoutXray = parseMg(bucketLine(board, "Pieces"));
+
+    CHECK(withXray < withoutXray);
+}
+
 // --- Hanging ---
 
 TEST_CASE("Eval: hanging fires on undefended piece attacked by a single high value attacker",

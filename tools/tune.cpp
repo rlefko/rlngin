@@ -564,6 +564,10 @@ static std::vector<ParamRef> collectParams() {
     // --- Bishop long diagonal sweep ---
     addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus, boundsNonNegative());
 
+    // --- Bishop x-ray pawns: penalty per enemy pawn on the bishop's
+    // diagonals (own pieces transparent). Both halves stay <= 0.
+    addMgEgConstr("BishopXrayPawns", &evalParams.BishopXrayPawns, boundsNonPositive());
+
     // --- Initiative system. All seven scalars carry mg=0 by construction
     // (see eval_params.h:206-208) and live entirely in the eg half. The
     // first six are positive features; InitiativeConstant is the
@@ -1263,6 +1267,7 @@ static void printCurrentValues() {
               << fmtScore(evalParams.CentralPawnBonus[1]) << "}, // CentralPawnBonus\n";
     std::cout << "    " << fmtScore(evalParams.BishopLongDiagonalBonus)
               << ", // BishopLongDiagonalBonus\n";
+    std::cout << "    " << fmtScore(evalParams.BishopXrayPawns) << ", // BishopXrayPawns\n";
     std::cout << "    " << fmtScore(evalParams.InitiativePasser) << ", // InitiativePasser\n";
     std::cout << "    " << fmtScore(evalParams.InitiativePawnCount)
               << ", // InitiativePawnCount\n";
