@@ -280,6 +280,14 @@ struct EvalParams {
     // in place are excluded so the bonus does not double count with
     // ThreatByPawn.
     Score ThreatByPawnPush;
+
+    // Penalty per friendly non-king non-queen piece that is under enemy
+    // attack and whose only friendly defender is the queen. Such pieces
+    // are vulnerable to overload and discovery patterns because the
+    // queen has to spend a tempo to recapture, which is strictly worse
+    // than a piece defended by a less-valuable defender. Applied as a
+    // negative score so the magnitude lives in the table itself.
+    Score WeakQueenDefender;
 };
 
 extern EvalParams evalParams;

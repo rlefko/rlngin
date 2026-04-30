@@ -1347,6 +1347,21 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
             pushSquareThreats += popcount(victims);
         }
         scores[us] += evalParams.ThreatByPawnPush * pushSquareThreats;
+
+        // Weak-piece-protected-only-by-queen: any friendly non-king /
+        // non-queen piece under enemy attack whose only defender is the
+        // queen. The queen's defense is tempo-fragile because every
+        // recapture trades down a major for a minor or pawn, so a piece
+        // that only the queen defends carries a structurally worse
+        // risk profile than one a less-valuable piece protects.
+        Bitboard ourPiecesNonKingNonQueen =
+            board.byColor[us] & ~board.byPiece[King] & ~board.byPiece[Queen];
+        Bitboard underAttack = ourPiecesNonKingNonQueen & ctx.allAttacks[them];
+        Bitboard nonQueenDefense = ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] |
+                                   ctx.attackedBy[us][Bishop] | ctx.attackedBy[us][Rook] |
+                                   ctx.attackedBy[us][King];
+        Bitboard onlyQueenDef = underAttack & ctx.attackedBy[us][Queen] & ~nonQueenDefense;
+        scores[us] += evalParams.WeakQueenDefender * popcount(onlyQueenDef);
     }
 }
 

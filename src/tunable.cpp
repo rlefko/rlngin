@@ -171,6 +171,10 @@ std::vector<TunableSpec> buildRegistry() {
                                     8.0, 3.0));
     out.push_back(makeScoreHalfSpec("ThreatByPawnPushEg", &evalParams.ThreatByPawnPush, false, 0,
                                     200, 8.0, 3.0));
+    out.push_back(makeScoreHalfSpec("WeakQueenDefenderMg", &evalParams.WeakQueenDefender, true, -200,
+                                    0, 6.0, 2.0));
+    out.push_back(makeScoreHalfSpec("WeakQueenDefenderEg", &evalParams.WeakQueenDefender, false,
+                                    -200, 0, 6.0, 2.0));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

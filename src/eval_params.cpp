@@ -232,6 +232,7 @@ static const EvalParams kDefaultEvalParams = {
     S(35, 1), // SliderOnQueenRook
     S(12, 1), // RestrictedPiece
     S(35, 20), // ThreatByPawnPush
+    S(-50, -10), // WeakQueenDefender
 };
 
 // clang-format on
