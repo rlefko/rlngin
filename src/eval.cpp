@@ -1258,8 +1258,17 @@ static int scaleFactor(const Board &board) {
         int theirKingSq = lsb(theirKingBB);
 
         int pawnSq = lsb(ourPawns);
-        int pushes = (us == White) ? (7 - squareRank(pawnSq)) : squareRank(pawnSq);
-        // The defender to move adds one tempo to the attacker's race.
+        int pawnRank = squareRank(pawnSq);
+        int pushes = (us == White) ? (7 - pawnRank) : pawnRank;
+        // Pawn at its starting rank can use the two-square initial push
+        // to save one tempo. Without this adjustment the recognizer
+        // over-claims fortress in positions where the attacker actually
+        // promotes ahead of the defender's race to the corner.
+        bool atInitialRank = (us == White) ? (pawnRank == 1) : (pawnRank == 6);
+        if (atInitialRank) pushes--;
+        // Defender to move gets one extra king step before the pawn race
+        // resolves, attacker to move gets none (defender plays K turns
+        // counting the post-promotion queen capture).
         if (board.sideToMove == them) pushes++;
         if (chebyshev(theirKingSq, promoSq) <= pushes) return 0;
     }
