@@ -14,8 +14,8 @@ set -euo pipefail
 #   OUTPUT:                output directory (default: tuning/texel)
 #   TUNE:                  path to the tuner binary (default: ./build/tune)
 #   FROM_CHECKPOINT:       resume from this checkpoint (default: unset)
-#   REFIT_K_EVERY:         pass cadence for K refits (default: 5)
-#   REFRESH_LEAVES_EVERY:  pass cadence for leaf recomputes (default: unset)
+#   REFIT_K_EVERY:         pass cadence for K refits (default: 4)
+#   REFRESH_LEAVES_EVERY:  pass cadence for leaf recomputes (default: 8)
 
 OUTPUT="${OUTPUT:-tuning/texel}"
 CORPUS="${1:-$OUTPUT/positions.epd}"
@@ -46,15 +46,14 @@ if [ -n "${FROM_CHECKPOINT:-}" ]; then
     fi
     ARGS+=(--from "$FROM_CHECKPOINT")
 fi
-ARGS+=(--refit-k-every "${REFIT_K_EVERY:-5}")
-if [ -n "${REFRESH_LEAVES_EVERY:-}" ]; then
-    ARGS+=(--refresh-leaves-every "$REFRESH_LEAVES_EVERY")
-fi
+ARGS+=(--refit-k-every "${REFIT_K_EVERY:-4}")
+ARGS+=(--refresh-leaves-every "${REFRESH_LEAVES_EVERY:-8}")
 
 echo "Texel tune: $CORPUS"
-echo "  threads:    $THREADS"
-echo "  max-passes: $MAX_PASSES"
-echo "  refit-K:    every ${REFIT_K_EVERY:-5} pass(es)"
+echo "  threads:        $THREADS"
+echo "  max-passes:     $MAX_PASSES"
+echo "  refit-K:        every ${REFIT_K_EVERY:-4} pass(es)"
+echo "  refresh-leaves: every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
 if [ -n "${FROM_CHECKPOINT:-}" ]; then
     echo "  resume:     $FROM_CHECKPOINT"
 fi
