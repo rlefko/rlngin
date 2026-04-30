@@ -34,8 +34,11 @@ set -euo pipefail
 #   FROM_CHECKPOINT:       passed through to texel_tune.sh
 #   REFIT_K_EVERY:         passed through to texel_tune.sh (default 4)
 #   REFRESH_LEAVES_EVERY:  passed through to texel_tune.sh (default 8)
-#   NEWTON_PASSES:         Newton-Raphson initial passes before CD;
+#   NEWTON_PASSES:         Newton-style initial passes before CD;
 #                          passed through to texel_tune.sh (default 10)
+#   USE_GAUSS_NEWTON:      1 for Gauss-Newton via cached features,
+#                          0 for diagonal Newton; passed through to
+#                          texel_tune.sh (default 1)
 #   SKIP_PLIES / TAIL_PLIES: passed through to texel_extract.sh
 
 ROUNDS="${1:-32000}"
@@ -65,6 +68,7 @@ echo "  concurrency:    $CONCURRENCY"
 echo "  tune-threads:   $TUNE_THREADS"
 echo "  tune-passes:    $TUNE_PASSES"
 echo "  newton-passes:  ${NEWTON_PASSES:-10}"
+echo "  gauss-newton:   ${USE_GAUSS_NEWTON:-1}"
 echo "  refit-K:        every ${REFIT_K_EVERY:-4} pass(es)"
 echo "  refresh-leaves: every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
 echo "  output:         $OUTPUT"
