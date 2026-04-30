@@ -1422,7 +1422,8 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
 }
 
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
-                 int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses) {
+                 int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses,
+                 bool useGaussNewton) {
     auto params = collectParams();
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
@@ -1433,18 +1434,73 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
 
-    // Optional Newton-Raphson initial phase. Estimates per-parameter
-    // first and second derivatives via central finite differences and
-    // takes a single batched Newton step per pass. Cheaper than the
-    // ladder (`2P + 3` loss evals vs `~8P`) and quadratically convergent
-    // near a smooth optimum, so a few passes typically absorb the
-    // available signal before the ladder picks up the residual. Stops
-    // early when two consecutive passes fail to clear the threaded
-    // noise threshold or when the relative improvement drops below
-    // 1e-6. K refit and leaf refresh follow the same cadences as the
-    // coordinate-descent loop below.
+    // Optional Newton-style initial phase. Two flavors share the same
+    // pass-count budget and the same K-refit / leaf-refresh cadences:
+    //
+    //   * Gauss-Newton (default when useGaussNewton is true) caches
+    //     per-position linearization features once, then every
+    //     iteration is one parallel pass to accumulate J^T J and
+    //     J^T r plus a Cholesky solve. Per iteration: roughly four
+    //     seconds plus three exact-loss evaluations for the line
+    //     search, versus ten minutes for the diagonal Newton path on
+    //     the same corpus.
+    //   * Diagonal Newton (useGaussNewton false) uses central finite
+    //     differences on the full loss to estimate per-parameter
+    //     first and second derivatives. No feature cache, no linear
+    //     algebra dependency, but per-pass cost is 2P + 3 loss
+    //     evaluations.
+    //
+    // Both paths stop early when two consecutive passes fail to clear
+    // the threaded-noise threshold or when the relative improvement
+    // drops below 1e-6. After Newton-style passes finish, the
+    // coordinate-descent ladder below picks up any residual.
     int globalPass = 0;
-    if (newtonPasses > 0) {
+    if (newtonPasses > 0 && useGaussNewton) {
+        std::cerr << "gauss-newton phase: up to " << newtonPasses << " passes\n";
+        CorpusFeatures cf = extractCorpusFeatures(positions, params, numThreads);
+        int stalled = 0;
+        for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
+            std::cerr << "gauss-newton pass " << globalPass << " starting (loss=" << bestLoss
+                      << ")\n";
+            double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss);
+            centerPSTGauge();
+            std::cerr << "gauss-newton pass " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-6) {
+                if (++stalled >= 2) {
+                    std::cerr << "gauss-newton convergence; switching to coordinate descent\n";
+                    pass++;
+                    globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after gauss-newton pass " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            }
+            if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after gauss-newton pass " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads);
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+                // Re-extract features against the new qsearch leaves.
+                // Without this the Newton step would optimize against
+                // stale linearizations.
+                cf = extractCorpusFeatures(positions, params, numThreads);
+            }
+        }
+    } else if (newtonPasses > 0) {
         std::cerr << "newton phase: up to " << newtonPasses << " passes\n";
         int stalled = 0;
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
@@ -1841,7 +1897,8 @@ int main(int argc, char **argv) {
     auto usage = [] {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
-        std::cerr << "            [--newton-passes N] <dataset> [threads=6] [maxPasses=30]\n";
+        std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
+        std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
     };
@@ -1891,7 +1948,8 @@ int main(int argc, char **argv) {
     std::string fromCheckpoint;
     int refitKEvery = 5;        // refit K every N completed passes; 0 disables
     int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
-    int newtonPasses = 0;       // run N Newton-Raphson passes before CD; 0 disables
+    int newtonPasses = 0;       // run N Newton-style passes before CD; 0 disables
+    bool useGaussNewton = true; // true: Gauss-Newton, false: diagonal Newton
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -1906,6 +1964,9 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--newton-passes" && argIdx + 1 < argc) {
             newtonPasses = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--gauss-newton" && argIdx + 1 < argc) {
+            useGaussNewton = std::atoi(argv[argIdx + 1]) != 0;
             argIdx += 2;
         } else {
             break;
@@ -1951,7 +2012,8 @@ int main(int argc, char **argv) {
     double K = findBestK(positions, numThreads);
     std::cerr << "K=" << K << "\n";
 
-    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses);
+    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
+         useGaussNewton);
     printCurrentValues();
     return 0;
 }
