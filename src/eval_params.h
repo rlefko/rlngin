@@ -288,6 +288,14 @@ struct EvalParams {
     // than a piece defended by a less-valuable defender. Applied as a
     // negative score so the magnitude lives in the table itself.
     Score WeakQueenDefender;
+
+    // Bonus per friendly knight that has at least two safe candidate
+    // squares from which it attacks the enemy queen. Even a single
+    // such square is a real threat in branch-on-recapture, but two or
+    // more candidates make the fork unrecoverable for the defender:
+    // they cannot guard every landing square at once and the knight
+    // wins the race for material on the next move.
+    Score KnightOnQueen;
 };
 
 extern EvalParams evalParams;

@@ -1362,6 +1362,29 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
                                    ctx.attackedBy[us][King];
         Bitboard onlyQueenDef = underAttack & ctx.attackedBy[us][Queen] & ~nonQueenDefense;
         scores[us] += evalParams.WeakQueenDefender * popcount(onlyQueenDef);
+
+        // Knight on queen: each friendly knight that has two or more
+        // safe candidate squares from which it would attack the enemy
+        // queen earns a bonus. "Safe" means the candidate square is not
+        // occupied by us and not attacked by an enemy pawn; the
+        // recapture geometry past that is captured implicitly by the
+        // KnightAttacks symmetry (a square hits the queen if and only
+        // if a knight on the queen would hit that square). Cap the
+        // candidate count at 2 because beyond that the additional
+        // squares add no signal: the fork is already unrecoverable.
+        if (enemyQueens) {
+            int queenSq = lsb(enemyQueens);
+            Bitboard forkSquares = KnightAttacks[queenSq];
+            Bitboard ourKnightsIter = board.byPiece[Knight] & board.byColor[us];
+            Bitboard safeForKnight = ~board.byColor[us] & ~ctx.pawnAttacks[them];
+            int knightForks = 0;
+            while (ourKnightsIter) {
+                int nsq = popLsb(ourKnightsIter);
+                Bitboard candidates = KnightAttacks[nsq] & forkSquares & safeForKnight;
+                if (popcount(candidates) >= 2) knightForks++;
+            }
+            scores[us] += evalParams.KnightOnQueen * knightForks;
+        }
     }
 }
 

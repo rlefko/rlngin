@@ -233,6 +233,7 @@ static const EvalParams kDefaultEvalParams = {
     S(12, 1), // RestrictedPiece
     S(35, 20), // ThreatByPawnPush
     S(-50, -10), // WeakQueenDefender
+    S(16, 12), // KnightOnQueen
 };
 
 // clang-format on
