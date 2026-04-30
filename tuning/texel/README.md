@@ -13,10 +13,13 @@ make texel-bg
 ```
 
 That kicks off self-play (32 000 game pairs at 100 000 nodes / move,
-concurrency 12), extracts qsearch leaves, and runs 30 coordinate-descent
-passes on 14 threads with K refit every 4 passes and leaf refresh every 8
-passes. Logs go to `tuning/texel/pipeline.log`; the live tuner checkpoint
-lands at `tuning/checkpoint.txt`.
+concurrency 12), extracts qsearch leaves, and runs the tuner on 14
+threads. The tuner does up to 10 Gauss-Newton initial passes (cheap,
+quadratically convergent, single Cholesky solve per pass) and then
+falls through to up to 30 coordinate-descent passes for the residual;
+K is refit every 4 passes and leaves are refreshed every 8 passes
+throughout. Logs go to `tuning/texel/pipeline.log`; the live tuner
+checkpoint lands at `tuning/checkpoint.txt`.
 
 When the run finishes, fold the tuned values into the source tree:
 
@@ -81,11 +84,80 @@ Lower-level settings live in environment variables:
 | `TAIL_PLIES` | `2` | extract |
 | `REFIT_K_EVERY` | `4` | tune |
 | `REFRESH_LEAVES_EVERY` | `8` | tune |
+| `NEWTON_PASSES` | `10` | tune (set `0` for legacy CD-only behavior) |
+| `USE_GAUSS_NEWTON` | `1` | tune (set `0` to fall back to diagonal Newton via finite differences) |
 | `FROM_CHECKPOINT` | unset | tune (resume) |
 | `WAIT_PID` | unset | pipeline (block until external PID exits before starting) |
 | `FORCE` | `0` | pipeline (set `1` to redo every stage) |
 | `POLL_SECS` | `30` | pipeline (PID polling cadence) |
 | `CHECKPOINT` | `tuning/checkpoint.txt` | dump, apply |
+
+## Tuner phases
+
+The tuner runs in two phases by default:
+
+1. **Gauss-Newton initial phase** (up to `NEWTON_PASSES`, default 10).
+   The driver extracts a per-position sparse linearization feature
+   vector once over the corpus by perturbing each parameter and
+   recording its post-taper effect on the eval, then every iteration
+   is a single parallel pass that accumulates the normal equations
+   `J^T J` (778x778) and `J^T r` (778), followed by a Cholesky solve
+   with a small ridge (`1e-3 * trace(J^T J) / P`) for numerical
+   safety. The Newton update is applied with backtracking at scales
+   `[1.0, 0.5, 0.25]`; per-parameter steps are clipped to +/-32 cp
+   for robustness. The phase exits when two consecutive iterations
+   fail to clear the threaded-noise threshold (`bestLoss * 1e-7`).
+   Set `USE_GAUSS_NEWTON=0` to fall back to **diagonal Newton** (per-
+   parameter central finite differences on the loss, no feature
+   cache); both flavors share the same `NEWTON_PASSES` budget and
+   the same K refit / leaf refresh cadences.
+2. **Coordinate descent fallback** (up to `TUNE_PASSES`, default 30).
+   The classical Texel ladder `[8, 4, 2, 1]` per scalar, accept-only
+   on strict improvement, with the same K refit and leaf refresh
+   cadences and a tighter (`1e-8`) deterministic finalizer at the
+   end.
+
+Cost comparison per pass on the 5.4M-position corpus, 14 threads:
+
+| Method | Per-pass cost | Notes |
+|---|---|---|
+| Coordinate descent ladder | ~40 minutes | `~8P` exact loss evals |
+| Diagonal Newton | ~10 minutes | `2P + 3` exact loss evals |
+| Gauss-Newton | ~4 seconds | Single corpus pass plus Cholesky solve, plus 1-3 exact loss evals for line search; one-time `~5 minute` feature extraction at start and after each leaf refresh |
+
+Gauss-Newton's quadratic convergence near a smooth optimum tends to
+absorb most of the available signal in a handful of iterations.
+Coordinate descent then picks up the residual that does not project
+cleanly onto a diagonal-plus-correlation Hessian. Set
+`NEWTON_PASSES=0` to reproduce the legacy CD-only behavior bit-for-bit.
+
+```mermaid
+flowchart TD
+    A[Load corpus] --> B[Precompute qsearch leaves]
+    B --> C[Find K]
+    C --> D{NEWTON_PASSES > 0?}
+    D -->|No| Q[Coordinate descent ladder]
+    D -->|Yes| E{USE_GAUSS_NEWTON?}
+    E -->|Yes| F[Extract per-position features]
+    F --> G[Predict eval per position]
+    G --> H[Accumulate JtJ and Jtr in parallel]
+    H --> I[Cholesky solve with ridge]
+    I --> J[Apply step with backtracking line search]
+    J --> K{Improved?}
+    K -->|Yes| L{Refresh cadence?}
+    K -->|No, twice| Q
+    L -->|Refit K| M[findBestK]
+    L -->|Refresh leaves| N[Recompute leaves and re-extract features]
+    L -->|Continue| G
+    M --> G
+    N --> G
+    E -->|No| O[Diagonal Newton via central differences]
+    O --> P{Improved?}
+    P -->|Yes| O
+    P -->|No, twice| Q
+    Q --> R[Tight-threshold finalizer]
+    R --> S[Done]
+```
 
 ## Pipeline behavior
 

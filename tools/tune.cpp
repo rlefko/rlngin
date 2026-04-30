@@ -922,8 +922,508 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
     std::cerr << "checkpoint written to " << outPath << "\n";
 }
 
+// Sparse feature representation. Each position carries a list of
+// non-zero per-parameter linearization coefficients. uint16 fits the
+// 778-parameter index space; int16 fits every post-taper finite-
+// difference delta we have observed (max magnitudes for piece-score
+// and material params with all queens of the side present land
+// comfortably under 32K).
+struct FeatureEntry {
+    uint16_t paramIdx;
+    int16_t coef;
+};
+using FeatureVector = std::vector<FeatureEntry>;
+
+// Per-corpus feature cache. baseline[i] is the white-POV eval of
+// position i at theta_0. rows[i] is the sparse vector of (paramIdx,
+// coef) pairs such that
+//   eval(theta, position_i) ≈ baseline[i] + sum_j (theta_j - theta0[j]) * rows[i][j].coef
+// The approximation is exact for parameters the eval is linear in
+// (PSTs, material, mobility, threats, pawn structure, most rook /
+// bishop terms) and a first-order Taylor expansion at theta_0 for
+// the king-safety quadratic. Re-extracting after each leaf refresh
+// keeps drift bounded.
+struct CorpusFeatures {
+    std::vector<int> baseline;
+    std::vector<FeatureVector> rows;
+    std::vector<int> theta0;
+};
+
+// Extract per-position linearization features for the entire corpus.
+// One serial outer loop over parameters with a parallel inner loop
+// over positions. Per parameter we perturb theta_j by +1 (or -1 if
+// the upper neighbor is infeasible), evaluate every position on
+// `numThreads` threads, and append the non-zero deltas to the
+// per-position sparse feature vector. Each parameter's perturbation
+// is restored before moving on to the next, so the global evalParams
+// is unchanged when extraction returns.
+//
+// Cost: roughly (P / 1) * (N / numThreads) microseconds. For the
+// 778-parameter / 5.4M-position corpus on 14 threads, ~5 minutes.
+// Memory: 5.4M * avg ~100 active params * 4 bytes = ~2 GB plus the
+// 22 MB baseline vector.
+static CorpusFeatures extractCorpusFeatures(std::vector<LabeledPosition> &positions,
+                                            std::vector<ParamRef> &params, int numThreads) {
+    const size_t N = positions.size();
+    const size_t P = params.size();
+
+    CorpusFeatures cf;
+    cf.baseline.assign(N, 0);
+    cf.rows.assign(N, FeatureVector{});
+    cf.theta0.resize(P);
+    for (size_t j = 0; j < P; j++)
+        cf.theta0[j] = params[j].read();
+
+    auto runOverPositions = [&](auto &&fn) {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([start, end, &positions, fn]() {
+                for (size_t i = start; i < end; i++) {
+                    Board board = positions[i].board;
+                    int raw = evaluate(board);
+                    if (board.sideToMove == Black) raw = -raw;
+                    fn(i, raw);
+                }
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    };
+
+    std::cerr << "extracting features for " << N << " positions across " << P
+              << " parameters on " << numThreads << " threads\n";
+
+    runOverPositions([&](size_t i, int raw) { cf.baseline[i] = raw; });
+
+    std::vector<int> delta(N, 0);
+    const size_t reportEvery = std::max<size_t>(1, P / 20);
+    const int int16Min = std::numeric_limits<int16_t>::min();
+    const int int16Max = std::numeric_limits<int16_t>::max();
+
+    for (size_t j = 0; j < P; j++) {
+        auto &p = params[j];
+        int orig = cf.theta0[j];
+        int sign = 0;
+        if (p.allow(orig + 1)) {
+            sign = 1;
+            p.write(orig + 1);
+        } else if (p.allow(orig - 1)) {
+            sign = -1;
+            p.write(orig - 1);
+        } else {
+            // Pinned parameter contributes no linearization feature.
+            continue;
+        }
+
+        runOverPositions([&, sign](size_t i, int raw) {
+            // sign = +1 means feature = raw - baseline.
+            // sign = -1 means feature = baseline - raw (preserves
+            // the d(eval) / d(theta) sign so the Newton step is
+            // independent of which neighbor we sampled).
+            delta[i] = sign > 0 ? (raw - cf.baseline[i]) : (cf.baseline[i] - raw);
+        });
+
+        p.write(orig);
+
+        // Append non-zero entries in parallel by sharding the row
+        // index range across threads. Each thread only writes to its
+        // own slice of cf.rows so there is no contention.
+        std::vector<std::thread> appenders;
+        appenders.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            appenders.emplace_back([start, end, &delta, &cf, j, int16Min, int16Max]() {
+                for (size_t i = start; i < end; i++) {
+                    int d = delta[i];
+                    if (d == 0) continue;
+                    if (d > int16Max) d = int16Max;
+                    if (d < int16Min) d = int16Min;
+                    cf.rows[i].push_back({static_cast<uint16_t>(j), static_cast<int16_t>(d)});
+                }
+            });
+        }
+        for (auto &th : appenders)
+            th.join();
+
+        if ((j + 1) % reportEvery == 0 || j + 1 == P)
+            std::cerr << "  feature extract: " << (j + 1) << "/" << P << " parameters\n";
+    }
+
+    // Lightweight self-check: at theta_0 the prediction collapses to
+    // the baseline, so re-evaluating a sample of positions and
+    // comparing should mismatch nowhere. A non-zero count points at a
+    // non-deterministic eval (e.g., a forgotten thread_local hash
+    // race) before the first GN iteration.
+    size_t checkCount = 0, mismatchCount = 0;
+    size_t step = std::max<size_t>(1, N / 1000);
+    for (size_t i = 0; i < N; i += step) {
+        Board board = positions[i].board;
+        int raw = evaluate(board);
+        if (board.sideToMove == Black) raw = -raw;
+        if (raw != cf.baseline[i]) mismatchCount++;
+        checkCount++;
+    }
+    std::cerr << "feature extraction done: " << mismatchCount << "/" << checkCount
+              << " baseline mismatches\n";
+
+    return cf;
+}
+
+// In-place Cholesky decomposition of a symmetric positive-definite
+// matrix A (row-major n x n) with an optional ridge lambda added to
+// the diagonal for numerical safety. The lower triangle of A is
+// overwritten with the Cholesky factor L; the upper triangle is
+// untouched. Returns false on a non-positive pivot, which the caller
+// treats as "step rejected" and falls back to the next phase.
+static bool choleskyDecompose(std::vector<double> &A, size_t n, double lambda) {
+    if (lambda > 0.0) {
+        for (size_t i = 0; i < n; i++)
+            A[i * n + i] += lambda;
+    }
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j <= i; j++) {
+            double sum = A[i * n + j];
+            for (size_t k = 0; k < j; k++)
+                sum -= A[i * n + k] * A[j * n + k];
+            if (i == j) {
+                if (sum <= 0.0) return false;
+                A[i * n + i] = std::sqrt(sum);
+            } else {
+                A[i * n + j] = sum / A[j * n + j];
+            }
+        }
+    }
+    return true;
+}
+
+// Solve L * L^T * x = b in place using the lower-triangular L
+// produced by choleskyDecompose. The right-hand-side b is
+// overwritten with the solution x. Cost is O(n^2).
+static void choleskySolve(const std::vector<double> &A, std::vector<double> &b, size_t n) {
+    // Forward solve L * y = b. y reuses b's storage.
+    for (size_t i = 0; i < n; i++) {
+        double sum = b[i];
+        for (size_t j = 0; j < i; j++)
+            sum -= A[i * n + j] * b[j];
+        b[i] = sum / A[i * n + i];
+    }
+    // Back solve L^T * x = y. x reuses b's storage.
+    for (size_t i = n; i-- > 0;) {
+        double sum = b[i];
+        for (size_t j = i + 1; j < n; j++)
+            sum -= A[j * n + i] * b[j];
+        b[i] = sum / A[i * n + i];
+    }
+}
+
+// Convenience wrapper: decompose and solve with a single ridge.
+// Returns true iff the system was solved (i.e., A + lambda*I was
+// positive definite). On false, b is untouched.
+static bool choleskySolveSymmetric(std::vector<double> &A, std::vector<double> &b, size_t n,
+                                   double lambda) {
+    if (!choleskyDecompose(A, n, lambda)) return false;
+    choleskySolve(A, b, n);
+    return true;
+}
+
+// Loss evaluated against the cached corpus features instead of the
+// engine. Exact for parameters the eval is linear in (the dominant
+// majority) and a first-order Taylor approximation for the king-
+// safety quadratic. Used inside the Gauss-Newton line search to avoid
+// repeated engine evaluations of the same corpus.
+static double computeLossFromFeatures(const std::vector<LabeledPosition> &positions,
+                                      const CorpusFeatures &cf, const std::vector<int> &theta,
+                                      double K, int numThreads) {
+    const size_t N = positions.size();
+    const size_t P = theta.size();
+
+    std::vector<int> deltaTheta(P);
+    for (size_t j = 0; j < P; j++)
+        deltaTheta[j] = theta[j] - cf.theta0[j];
+
+    std::vector<double> partial(numThreads, 0.0);
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++) {
+        size_t start = (N * t) / numThreads;
+        size_t end = (N * (t + 1)) / numThreads;
+        threads.emplace_back([&, start, end, t]() {
+            double sum = 0.0;
+            for (size_t i = start; i < end; i++) {
+                int64_t eval = cf.baseline[i];
+                for (const auto &fe : cf.rows[i])
+                    eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                double pred = sigmoid(static_cast<double>(eval), K);
+                double err = pred - positions[i].result;
+                sum += err * err;
+            }
+            partial[t] = sum;
+        });
+    }
+    for (auto &th : threads)
+        th.join();
+    double total = 0.0;
+    for (double p : partial)
+        total += p;
+    return total / static_cast<double>(N);
+}
+
+// One full Gauss-Newton iteration over the parameter vector. With
+// pre-extracted features the iteration becomes:
+//
+//   1. Predict eval per position from cached baseline and features.
+//   2. Compute residual r_i = sigmoid(K * eval_i) - target_i.
+//   3. Accumulate J^T J = K^2 * sum sigmoid'^2 * f_i f_i^T and
+//      J^T r = K * sum sigmoid' * r_i * f_i in parallel over the
+//      corpus.
+//   4. Solve (J^T J + lambda * I) * x = J^T r with Cholesky. The
+//      ridge lambda = 1e-3 * trace(J^T J) / P keeps the solver
+//      stable when the Hessian is rank-deficient or near-singular
+//      under tightly correlated parameters.
+//   5. Clip per-parameter steps to +/-32 cp for robustness against
+//      pathological corner moves the linearization gets wrong.
+//   6. Backtracking line search at scales [1.0, 0.5, 0.25] using the
+//      exact engine loss; accept the first scale that beats the
+//      threaded-noise threshold.
+//
+// Returns the relative loss decrease. Updates bestLoss in place when
+// an improvement is accepted; restores the parameter vector
+// otherwise.
+static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
+                              const CorpusFeatures &cf, std::vector<ParamRef> &params, double K,
+                              int numThreads, double &bestLoss) {
+    const size_t N = positions.size();
+    const size_t P = params.size();
+
+    constexpr int maxStepPerParam = 32;
+
+    const double L0 = bestLoss;
+    const double acceptThreshold = L0 * 1e-7;
+
+    std::vector<int> theta(P);
+    for (size_t j = 0; j < P; j++)
+        theta[j] = params[j].read();
+    std::vector<int> deltaTheta(P);
+    for (size_t j = 0; j < P; j++)
+        deltaTheta[j] = theta[j] - cf.theta0[j];
+
+    // Per-thread accumulators. P * P doubles per thread; for P=778
+    // that is about 4.8 MB per thread, comfortably under any cache
+    // line budget but also small enough to merge serially in <10 ms.
+    std::vector<std::vector<double>> threadJtJ(numThreads, std::vector<double>(P * P, 0.0));
+    std::vector<std::vector<double>> threadJtr(numThreads, std::vector<double>(P, 0.0));
+
+    {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([&, start, end, t]() {
+                auto &JtJ = threadJtJ[t];
+                auto &Jtr = threadJtr[t];
+                for (size_t i = start; i < end; i++) {
+                    int64_t eval = cf.baseline[i];
+                    const auto &row = cf.rows[i];
+                    for (const auto &fe : row)
+                        eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                    double pred = sigmoid(static_cast<double>(eval), K);
+                    double residual = pred - positions[i].result;
+                    double sigprime = pred * (1.0 - pred);
+                    double weightR = K * sigprime * residual;
+                    double weightH = K * K * sigprime * sigprime;
+                    const size_t M = row.size();
+                    for (size_t a = 0; a < M; a++) {
+                        int idxA = row[a].paramIdx;
+                        double cA = static_cast<double>(row[a].coef);
+                        Jtr[idxA] += weightR * cA;
+                        double rowScale = weightH * cA;
+                        for (size_t b = 0; b < a; b++) {
+                            int idxB = row[b].paramIdx;
+                            double cB = static_cast<double>(row[b].coef);
+                            double v = rowScale * cB;
+                            JtJ[idxA * P + idxB] += v;
+                            JtJ[idxB * P + idxA] += v;
+                        }
+                        JtJ[idxA * P + idxA] += rowScale * cA;
+                    }
+                }
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    }
+
+    // Merge thread accumulators.
+    std::vector<double> JtJ(P * P, 0.0);
+    std::vector<double> Jtr(P, 0.0);
+    for (int t = 0; t < numThreads; t++) {
+        const auto &tj = threadJtJ[t];
+        const auto &tr = threadJtr[t];
+        for (size_t k = 0; k < P * P; k++)
+            JtJ[k] += tj[k];
+        for (size_t j = 0; j < P; j++)
+            Jtr[j] += tr[j];
+    }
+
+    // Ridge regularization sized to the average diagonal so the
+    // ridge does not dominate strong parameters or vanish on weak
+    // ones.
+    double diagSum = 0.0;
+    for (size_t j = 0; j < P; j++)
+        diagSum += JtJ[j * P + j];
+    double avgDiag = diagSum / static_cast<double>(P);
+    double ridge = 1e-3 * avgDiag;
+    if (ridge < 1e-12) ridge = 1e-12;
+
+    std::vector<double> step = Jtr;
+    if (!choleskySolveSymmetric(JtJ, step, P, ridge)) {
+        std::cerr << "  gauss-newton: Cholesky failed (non-positive pivot); skipping\n";
+        return 0.0;
+    }
+
+    // step now contains x in (J^T J + lambda I) x = J^T r. The
+    // Newton update is theta -= x with backtracking. clampToBounds
+    // keeps the step inside the constraint region.
+    auto applyScaled = [&](double scale) {
+        for (size_t j = 0; j < P; j++) {
+            double s = -scale * step[j];
+            if (s > maxStepPerParam) s = static_cast<double>(maxStepPerParam);
+            if (s < -maxStepPerParam) s = static_cast<double>(-maxStepPerParam);
+            int newVal = theta[j] + static_cast<int>(std::round(s));
+            params[j].write(params[j].clampToBounds(newVal));
+        }
+    };
+    auto restore = [&]() {
+        for (size_t j = 0; j < P; j++)
+            params[j].write(theta[j]);
+    };
+
+    static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
+    for (double scale : backtrackScales) {
+        applyScaled(scale);
+        double L = computeLoss(positions, K, numThreads);
+        if (L0 - L > acceptThreshold) {
+            bestLoss = L;
+            std::cerr << "  gauss-newton accepted scale=" << scale << " loss=" << L << "\n";
+            return (L0 - L) / L0;
+        }
+    }
+
+    restore();
+    return 0.0;
+}
+
+// One Newton-Raphson pass over the parameter vector. Estimates per-
+// parameter first and second derivatives of the loss via central finite
+// differences (delta = 1 cp, the natural integer unit of these scalars),
+// builds a batched Newton step, and accepts the largest backtracking
+// scale whose loss is below the pre-pass baseline by more than the
+// threaded-noise threshold the coordinate-descent loop already uses.
+//
+// On accept the loop moves the entire parameter vector at once, so a
+// converged Newton phase can collapse what would be many coordinate-
+// descent passes into a single sweep. On reject the loop restores the
+// pre-pass vector and reports zero improvement; the caller treats two
+// consecutive zero-improvement passes as the signal to fall back to the
+// coordinate-descent ladder.
+//
+// Returns the relative loss decrease (`(L0 - Lnew) / L0`). Updates
+// `bestLoss` in place when an improvement is accepted.
+static double newtonPass(std::vector<LabeledPosition> &positions,
+                         std::vector<ParamRef> &params, double K, int numThreads,
+                         double &bestLoss) {
+    constexpr int delta = 1;             // finite-difference step size
+    constexpr int maxStep = 16;          // per-parameter clip
+    constexpr double minHessian = 1e-12; // floor for Newton division
+
+    const double L0 = bestLoss;
+    const double acceptThreshold = L0 * 1e-7; // matches the threaded CD threshold
+
+    std::vector<int> theta(params.size());
+    for (size_t i = 0; i < params.size(); i++)
+        theta[i] = params[i].read();
+
+    std::vector<double> dtheta(params.size(), 0.0);
+
+    for (size_t i = 0; i < params.size(); i++) {
+        auto &p = params[i];
+        int orig = theta[i];
+        bool canPlus = p.allow(orig + delta);
+        bool canMinus = p.allow(orig - delta);
+        if (!canPlus && !canMinus) continue;
+
+        double Lp = L0;
+        double Lm = L0;
+        if (canPlus) {
+            p.write(orig + delta);
+            Lp = computeLoss(positions, K, numThreads);
+        }
+        if (canMinus) {
+            p.write(orig - delta);
+            Lm = computeLoss(positions, K, numThreads);
+        }
+        p.write(orig); // restore for the next parameter and the line search
+
+        double g, h;
+        if (canPlus && canMinus) {
+            g = (Lp - Lm) / (2.0 * delta);
+            h = (Lp - 2.0 * L0 + Lm) / (delta * delta);
+        } else if (canPlus) {
+            g = (Lp - L0) / delta;
+            h = minHessian;
+        } else {
+            g = (L0 - Lm) / delta;
+            h = minHessian;
+        }
+
+        double step;
+        if (h > minHessian) {
+            step = -g / h;
+        } else {
+            // Flat or concave: gradient-descent fallback, capped at one
+            // cp so a noisy region cannot launch the parameter.
+            step = (g > 0.0 ? -1.0 : 1.0);
+        }
+        if (step > maxStep) step = maxStep;
+        if (step < -maxStep) step = -maxStep;
+        dtheta[i] = step;
+    }
+
+    auto applyScaled = [&](double scale) {
+        for (size_t i = 0; i < params.size(); i++) {
+            int newVal = theta[i] + static_cast<int>(std::round(dtheta[i] * scale));
+            params[i].write(params[i].clampToBounds(newVal));
+        }
+    };
+
+    auto restore = [&]() {
+        for (size_t i = 0; i < params.size(); i++)
+            params[i].write(theta[i]);
+    };
+
+    static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
+    for (double scale : backtrackScales) {
+        applyScaled(scale);
+        double L = computeLoss(positions, K, numThreads);
+        if (L0 - L > acceptThreshold) {
+            bestLoss = L;
+            std::cerr << "  newton accepted scale=" << scale << " loss=" << L << "\n";
+            return (L0 - L) / L0;
+        }
+    }
+
+    restore();
+    return 0.0;
+}
+
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
-                 int maxPasses, int refitKEvery, int refreshLeavesEvery) {
+                 int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses,
+                 bool useGaussNewton) {
     auto params = collectParams();
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
@@ -933,6 +1433,112 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
 
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
+
+    // Optional Newton-style initial phase. Two flavors share the same
+    // pass-count budget and the same K-refit / leaf-refresh cadences:
+    //
+    //   * Gauss-Newton (default when useGaussNewton is true) caches
+    //     per-position linearization features once, then every
+    //     iteration is one parallel pass to accumulate J^T J and
+    //     J^T r plus a Cholesky solve. Per iteration: roughly four
+    //     seconds plus three exact-loss evaluations for the line
+    //     search, versus ten minutes for the diagonal Newton path on
+    //     the same corpus.
+    //   * Diagonal Newton (useGaussNewton false) uses central finite
+    //     differences on the full loss to estimate per-parameter
+    //     first and second derivatives. No feature cache, no linear
+    //     algebra dependency, but per-pass cost is 2P + 3 loss
+    //     evaluations.
+    //
+    // Both paths stop early when two consecutive passes fail to clear
+    // the threaded-noise threshold or when the relative improvement
+    // drops below 1e-6. After Newton-style passes finish, the
+    // coordinate-descent ladder below picks up any residual.
+    int globalPass = 0;
+    if (newtonPasses > 0 && useGaussNewton) {
+        std::cerr << "gauss-newton phase: up to " << newtonPasses << " passes\n";
+        CorpusFeatures cf = extractCorpusFeatures(positions, params, numThreads);
+        int stalled = 0;
+        for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
+            std::cerr << "gauss-newton pass " << globalPass << " starting (loss=" << bestLoss
+                      << ")\n";
+            double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss);
+            centerPSTGauge();
+            std::cerr << "gauss-newton pass " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-6) {
+                if (++stalled >= 2) {
+                    std::cerr << "gauss-newton convergence; switching to coordinate descent\n";
+                    pass++;
+                    globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after gauss-newton pass " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            }
+            if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after gauss-newton pass " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads);
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+                // Re-extract features against the new qsearch leaves.
+                // Without this the Newton step would optimize against
+                // stale linearizations.
+                cf = extractCorpusFeatures(positions, params, numThreads);
+            }
+        }
+    } else if (newtonPasses > 0) {
+        std::cerr << "newton phase: up to " << newtonPasses << " passes\n";
+        int stalled = 0;
+        for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
+            std::cerr << "newton pass " << globalPass << " starting (loss=" << bestLoss << ")\n";
+            double rel = newtonPass(positions, params, K, numThreads, bestLoss);
+            centerPSTGauge();
+            std::cerr << "newton pass " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-6) {
+                if (++stalled >= 2) {
+                    std::cerr << "newton convergence; switching to coordinate descent\n";
+                    pass++; globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after newton pass " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            }
+            if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after newton pass " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads);
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+            }
+        }
+    }
 
     // Texel's Tuning Method with a step ladder. The strict CPW pseudocode
     // tries `+1` then `-1` per scalar; we generalize to a descending
@@ -1000,7 +1606,6 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         return improved;
     };
 
-    int globalPass = 0;
     for (int pass = 0; pass < maxPasses; pass++, globalPass++) {
         bool improved = runPass(globalPass, numThreads, relThresholdThreaded);
         // Canonicalize PST/material gauge so the per-term values stay
@@ -1292,6 +1897,7 @@ int main(int argc, char **argv) {
     auto usage = [] {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
+        std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
@@ -1342,6 +1948,8 @@ int main(int argc, char **argv) {
     std::string fromCheckpoint;
     int refitKEvery = 5;        // refit K every N completed passes; 0 disables
     int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
+    int newtonPasses = 0;       // run N Newton-style passes before CD; 0 disables
+    bool useGaussNewton = true; // true: Gauss-Newton, false: diagonal Newton
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -1353,6 +1961,12 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--refresh-leaves-every" && argIdx + 1 < argc) {
             refreshLeavesEvery = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--newton-passes" && argIdx + 1 < argc) {
+            newtonPasses = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--gauss-newton" && argIdx + 1 < argc) {
+            useGaussNewton = std::atoi(argv[argIdx + 1]) != 0;
             argIdx += 2;
         } else {
             break;
@@ -1398,7 +2012,8 @@ int main(int argc, char **argv) {
     double K = findBestK(positions, numThreads);
     std::cerr << "K=" << K << "\n";
 
-    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery);
+    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
+         useGaussNewton);
     printCurrentValues();
     return 0;
 }
