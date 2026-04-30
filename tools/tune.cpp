@@ -1073,6 +1073,63 @@ static CorpusFeatures extractCorpusFeatures(std::vector<LabeledPosition> &positi
     return cf;
 }
 
+// In-place Cholesky decomposition of a symmetric positive-definite
+// matrix A (row-major n x n) with an optional ridge lambda added to
+// the diagonal for numerical safety. The lower triangle of A is
+// overwritten with the Cholesky factor L; the upper triangle is
+// untouched. Returns false on a non-positive pivot, which the caller
+// treats as "step rejected" and falls back to the next phase.
+static bool choleskyDecompose(std::vector<double> &A, size_t n, double lambda) {
+    if (lambda > 0.0) {
+        for (size_t i = 0; i < n; i++)
+            A[i * n + i] += lambda;
+    }
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j <= i; j++) {
+            double sum = A[i * n + j];
+            for (size_t k = 0; k < j; k++)
+                sum -= A[i * n + k] * A[j * n + k];
+            if (i == j) {
+                if (sum <= 0.0) return false;
+                A[i * n + i] = std::sqrt(sum);
+            } else {
+                A[i * n + j] = sum / A[j * n + j];
+            }
+        }
+    }
+    return true;
+}
+
+// Solve L * L^T * x = b in place using the lower-triangular L
+// produced by choleskyDecompose. The right-hand-side b is
+// overwritten with the solution x. Cost is O(n^2).
+static void choleskySolve(const std::vector<double> &A, std::vector<double> &b, size_t n) {
+    // Forward solve L * y = b. y reuses b's storage.
+    for (size_t i = 0; i < n; i++) {
+        double sum = b[i];
+        for (size_t j = 0; j < i; j++)
+            sum -= A[i * n + j] * b[j];
+        b[i] = sum / A[i * n + i];
+    }
+    // Back solve L^T * x = y. x reuses b's storage.
+    for (size_t i = n; i-- > 0;) {
+        double sum = b[i];
+        for (size_t j = i + 1; j < n; j++)
+            sum -= A[j * n + i] * b[j];
+        b[i] = sum / A[i * n + i];
+    }
+}
+
+// Convenience wrapper: decompose and solve with a single ridge.
+// Returns true iff the system was solved (i.e., A + lambda*I was
+// positive definite). On false, b is untouched.
+static bool choleskySolveSymmetric(std::vector<double> &A, std::vector<double> &b, size_t n,
+                                   double lambda) {
+    if (!choleskyDecompose(A, n, lambda)) return false;
+    choleskySolve(A, b, n);
+    return true;
+}
+
 // One Newton-Raphson pass over the parameter vector. Estimates per-
 // parameter first and second derivatives of the loss via central finite
 // differences (delta = 1 cp, the natural integer unit of these scalars),
