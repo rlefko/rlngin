@@ -103,7 +103,9 @@ format:
 format-check:
 	@find src tests -name '*.cpp' -o -name '*.h' | grep -v catch2 | xargs clang-format --dry-run --Werror
 
-fetch-fastchess:
+fetch-fastchess: ./fastchess
+
+./fastchess:
 	@echo "Building fastchess from source..."
 	@rm -rf /tmp/fastchess-src
 	@git clone --depth 1 "$(FASTCHESS_REPO)" /tmp/fastchess-src
@@ -123,10 +125,10 @@ $(OPENINGS_FILE):
 	@rm -f $(OPENINGS_DIR)/openings.zip
 	@echo "Opening book saved to $(OPENINGS_FILE)"
 
-selfplay: build
+selfplay: build ./fastchess $(OPENINGS_FILE)
 	./scripts/selfplay.sh
 
-spsa: build
+spsa: build ./fastchess $(OPENINGS_FILE)
 	@mkdir -p tuning/spsa
 	python3 tools/spsa/spsa.py \
 	    --iterations 300 \
@@ -138,7 +140,7 @@ spsa: build
 	    --openings $(OPENINGS_FILE) \
 	    --seed 1
 
-texel-selfplay: build
+texel-selfplay: build ./fastchess $(OPENINGS_FILE)
 	./scripts/texel_selfplay.sh
 
 texel-extract:
@@ -153,12 +155,12 @@ texel-tune: $(TUNE_TARGET)
 # skip when their output exists; pass FORCE=1 to redo from scratch.
 # Override any setting on the command line, e.g.:
 #   make texel-bg ROUNDS=10000 LIMIT=1+0.08 TUNE_PASSES=50
-texel: $(TARGET) $(TUNE_TARGET)
+texel: $(TARGET) $(TUNE_TARGET) ./fastchess $(OPENINGS_FILE)
 	./scripts/texel_pipeline.sh $(ROUNDS) $(LIMIT) $(CONCURRENCY) $(TUNE_THREADS) $(TUNE_PASSES)
 
 # Same as `texel` but launched detached. Survives a closed shell. Writes
 # tuning/texel/pipeline.pid for status / stop targets.
-texel-bg: $(TARGET) $(TUNE_TARGET)
+texel-bg: $(TARGET) $(TUNE_TARGET) ./fastchess $(OPENINGS_FILE)
 	@./scripts/texel_bg.sh $(ROUNDS) $(LIMIT) $(CONCURRENCY) $(TUNE_THREADS) $(TUNE_PASSES)
 
 # Stop the running pipeline and every descendant (self-play, extract,
