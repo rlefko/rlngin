@@ -886,16 +886,15 @@ TEST_CASE("Search: evacuates a knight under pawn attack at shallow depth", "[sea
     Board board;
     // White knight on d5 is attacked by the black pawn on e6. White has
     // plenty of quiet alternatives that do not save the knight; the
-    // correct reply is any knight move off d5. The threat-aware move
-    // ordering should surface the knight escape early; depth 5 is the
-    // first iteration with enough plies for the search to see the
-    // ramifications on both sides of the move. Lazy eval is gated off
-    // in this phase so the residual eg signals (pawnless-flank and the
-    // king-pawn-distance penalty) inform the captured-knight branch
-    // through the full evaluator rather than a bounded preview.
-    board.setFen("4k3/8/4p3/3N4/8/8/R7/4K3 w - - 0 1");
+    // correct reply is any knight move off d5. The black king sits on
+    // h8 so no white pinning move (eg Re2 pinning the e6 pawn against
+    // an e-file king) is available -- saving the knight is genuinely
+    // forced. The threat-aware move ordering should surface the
+    // knight escape at the first iteration that sees the recapture in
+    // qsearch.
+    board.setFen("7k/8/4p3/3N4/8/8/R7/4K3 w - - 0 1");
 
-    Move best = findBestMove(board, 5);
+    Move best = findBestMove(board, 3);
     CHECK(best.from == stringToSquare("d5"));
 }
 
