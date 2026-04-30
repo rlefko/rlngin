@@ -281,12 +281,15 @@ struct EvalParams {
     // ThreatByPawn.
     Score ThreatByPawnPush;
 
-    // Penalty per friendly non-king non-queen piece that is under enemy
-    // attack and whose only friendly defender is the queen. Such pieces
-    // are vulnerable to overload and discovery patterns because the
-    // queen has to spend a tempo to recapture, which is strictly worse
-    // than a piece defended by a less-valuable defender. Applied as a
-    // negative score so the magnitude lives in the table itself.
+    // Penalty per friendly minor or rook that is under enemy attack
+    // and whose only friendly defender is the queen. Such pieces are
+    // vulnerable to overload and discovery patterns because the queen
+    // has to spend a tempo to recapture, which is strictly worse than
+    // a piece defended by a less-valuable defender. Pawns and the
+    // queen herself are excluded so the term only fires on the minor
+    // / rook material patterns where the discovery loss is
+    // significant. Applied as a negative score so the magnitude lives
+    // in the table itself.
     Score WeakQueenDefender;
 
     // Bonus per friendly knight that has at least two safe candidate
