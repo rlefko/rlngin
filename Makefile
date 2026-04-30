@@ -38,7 +38,7 @@ TUNE_TARGET := $(BUILDDIR)/tune
 TUNE_SRC := tools/tune.cpp
 TUNE_OBJ := $(BUILDDIR)/tune.o
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa texel-selfplay texel-extract texel-tune
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa texel-selfplay texel-extract texel-tune texel
 
 build: $(TARGET)
 
@@ -138,4 +138,13 @@ texel-extract:
 
 texel-tune: $(TUNE_TARGET)
 	./scripts/texel_tune.sh
+
+# Full Texel pipeline: self-play -> extract -> tune. Defaults match the
+# overnight schedule (32k pairs, nodes=100000, concurrency 12, 14 tune
+# threads, 30 passes, refit-K every 4, refresh-leaves every 8). Stages
+# skip when their output exists; pass FORCE=1 to redo from scratch.
+# Launch detached with:
+#   nohup make texel > tuning/texel/pipeline.log 2>&1 & disown
+texel: $(TARGET) $(TUNE_TARGET)
+	./scripts/texel_pipeline.sh
 
