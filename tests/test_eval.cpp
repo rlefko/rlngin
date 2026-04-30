@@ -45,12 +45,14 @@ TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]
 TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     Board board;
 
-    // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
-    // (isolated penalty, passed bonus) collapse into this expected score.
-    // The KingPawnDistEg term subtracts a chebyshev-distance penalty for
-    // the king sitting four squares from the pawn.
-    board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 168);
+    // Pawn on a2 with the black king on h8 so the defender is outside
+    // the pawn's square and the KPK rook-file fortress recognizer does
+    // not fire. Pure-endgame material with PST plus pawn-structure
+    // terms (isolated penalty, passed bonus) collapse into this
+    // expected score; the KingPawnDistEg term subtracts a chebyshev-
+    // distance penalty for the king sitting four squares from the pawn.
+    board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 248);
 
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
@@ -498,9 +500,11 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // winning king-and-pawn endings downward. The eval must match the
     // baseline (same score as before the weak-unopposed term existed),
     // adjusted for the king-pawn-distance signal that now subtracts a
-    // chebyshev-distance penalty between the king and its pawn.
-    board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 168);
+    // chebyshev-distance penalty between the king and its pawn. Black
+    // king sits on h8 to keep the position outside the KPK rook-file
+    // fortress envelope.
+    board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 248);
 
     // Textbook K + P vs K with an outside passed pawn: white is winning
     // and the score should not be dragged down by treating the "no
@@ -1696,6 +1700,67 @@ TEST_CASE("Eval: shelter score depends on king's edge distance", "[eval][shelter
     // central file with a complete pawn shield should score higher
     // than the same shield from g1.
     CHECK(centralShelter > kingsideShelter);
+}
+
+// --- Specialized endgame recognizers ---
+
+TEST_CASE("Eval: KPK rook-file fortress scores as a draw", "[eval][endgame]") {
+    Board board;
+
+    // White K + a-file pawn vs Black K. Defender king inside the
+    // pawn's square: classical fortress draw because the king reaches
+    // the promotion corner before the pawn promotes.
+    board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 0);
+
+    // Same shape on the h file: still a draw.
+    board.setFen("4k3/8/8/8/8/8/7P/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 0);
+
+    // Defender king out of the square (h8 with the a-file pawn): the
+    // recognizer must not fire and the eval should reflect a real
+    // material advantage for white.
+    board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) > 100);
+}
+
+TEST_CASE("Eval: KQKP fortress is recognized", "[eval][endgame]") {
+    Board board;
+
+    // Black king blockading the promotion square for a black a-pawn
+    // one push from queening. White king on g7 is too far to drive
+    // the black king out before the queen-vs-pawn race resolves: a
+    // textbook KQKP fortress. The recognizer scales the eg half to
+    // zero, so this fortress shape must score strictly worse for the
+    // attacker than the same material with the attacker king close
+    // enough to win.
+    board.setFen("8/6K1/8/8/8/8/p7/k1Q5 w - - 0 1");
+    int fortress = evaluate(board);
+
+    // Same material with the white king on c3: the black king cannot
+    // hold the corner against an approaching white king + queen, so
+    // the position is winning and the recognizer must not fire.
+    board.setFen("8/8/8/8/8/2K5/p7/k1Q5 w - - 0 1");
+    int winning = evaluate(board);
+
+    CHECK(winning > fortress);
+}
+
+TEST_CASE("Eval: KBNK pushes the weak king toward the matching corner", "[eval][endgame]") {
+    Board board;
+
+    // White K + dark-squared bishop on c1 + knight vs Black K. With a
+    // dark-square bishop the right corners are a1 and h8. Black king
+    // on a1 is already in the right corner, so the eval should favour
+    // White more than when the king is on h1 (wrong corner of the
+    // light colour).
+    board.setFen("8/8/8/8/8/8/4K3/k1B1N3 w - - 0 1");
+    int rightCorner = evaluate(board);
+
+    board.setFen("8/8/8/8/8/8/4K3/2B1N2k w - - 0 1");
+    int wrongCorner = evaluate(board);
+
+    CHECK(rightCorner > wrongCorner);
 }
 
 // --- Verbose grid layout ---
