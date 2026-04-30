@@ -1026,7 +1026,7 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
 }
 
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
-                 int maxPasses, int refitKEvery, int refreshLeavesEvery) {
+                 int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses) {
     auto params = collectParams();
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
@@ -1036,6 +1036,57 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
 
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
+
+    // Optional Newton-Raphson initial phase. Estimates per-parameter
+    // first and second derivatives via central finite differences and
+    // takes a single batched Newton step per pass. Cheaper than the
+    // ladder (`2P + 3` loss evals vs `~8P`) and quadratically convergent
+    // near a smooth optimum, so a few passes typically absorb the
+    // available signal before the ladder picks up the residual. Stops
+    // early when two consecutive passes fail to clear the threaded
+    // noise threshold or when the relative improvement drops below
+    // 1e-6. K refit and leaf refresh follow the same cadences as the
+    // coordinate-descent loop below.
+    int globalPass = 0;
+    if (newtonPasses > 0) {
+        std::cerr << "newton phase: up to " << newtonPasses << " passes\n";
+        int stalled = 0;
+        for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
+            std::cerr << "newton pass " << globalPass << " starting (loss=" << bestLoss << ")\n";
+            double rel = newtonPass(positions, params, K, numThreads, bestLoss);
+            centerPSTGauge();
+            std::cerr << "newton pass " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-6) {
+                if (++stalled >= 2) {
+                    std::cerr << "newton convergence; switching to coordinate descent\n";
+                    pass++; globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after newton pass " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            }
+            if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after newton pass " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads);
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+            }
+        }
+    }
 
     // Texel's Tuning Method with a step ladder. The strict CPW pseudocode
     // tries `+1` then `-1` per scalar; we generalize to a descending
@@ -1103,7 +1154,6 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         return improved;
     };
 
-    int globalPass = 0;
     for (int pass = 0; pass < maxPasses; pass++, globalPass++) {
         bool improved = runPass(globalPass, numThreads, relThresholdThreaded);
         // Canonicalize PST/material gauge so the per-term values stay
@@ -1395,7 +1445,7 @@ int main(int argc, char **argv) {
     auto usage = [] {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
-        std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
+        std::cerr << "            [--newton-passes N] <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
     };
@@ -1445,6 +1495,7 @@ int main(int argc, char **argv) {
     std::string fromCheckpoint;
     int refitKEvery = 5;        // refit K every N completed passes; 0 disables
     int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
+    int newtonPasses = 0;       // run N Newton-Raphson passes before CD; 0 disables
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -1456,6 +1507,9 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--refresh-leaves-every" && argIdx + 1 < argc) {
             refreshLeavesEvery = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--newton-passes" && argIdx + 1 < argc) {
+            newtonPasses = std::atoi(argv[argIdx + 1]);
             argIdx += 2;
         } else {
             break;
@@ -1501,7 +1555,7 @@ int main(int argc, char **argv) {
     double K = findBestK(positions, numThreads);
     std::cerr << "K=" << K << "\n";
 
-    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery);
+    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses);
     printCurrentValues();
     return 0;
 }
