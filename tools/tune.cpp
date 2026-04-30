@@ -1130,6 +1130,194 @@ static bool choleskySolveSymmetric(std::vector<double> &A, std::vector<double> &
     return true;
 }
 
+// Loss evaluated against the cached corpus features instead of the
+// engine. Exact for parameters the eval is linear in (the dominant
+// majority) and a first-order Taylor approximation for the king-
+// safety quadratic. Used inside the Gauss-Newton line search to avoid
+// repeated engine evaluations of the same corpus.
+static double computeLossFromFeatures(const std::vector<LabeledPosition> &positions,
+                                      const CorpusFeatures &cf, const std::vector<int> &theta,
+                                      double K, int numThreads) {
+    const size_t N = positions.size();
+    const size_t P = theta.size();
+
+    std::vector<int> deltaTheta(P);
+    for (size_t j = 0; j < P; j++)
+        deltaTheta[j] = theta[j] - cf.theta0[j];
+
+    std::vector<double> partial(numThreads, 0.0);
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++) {
+        size_t start = (N * t) / numThreads;
+        size_t end = (N * (t + 1)) / numThreads;
+        threads.emplace_back([&, start, end, t]() {
+            double sum = 0.0;
+            for (size_t i = start; i < end; i++) {
+                int64_t eval = cf.baseline[i];
+                for (const auto &fe : cf.rows[i])
+                    eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                double pred = sigmoid(static_cast<double>(eval), K);
+                double err = pred - positions[i].result;
+                sum += err * err;
+            }
+            partial[t] = sum;
+        });
+    }
+    for (auto &th : threads)
+        th.join();
+    double total = 0.0;
+    for (double p : partial)
+        total += p;
+    return total / static_cast<double>(N);
+}
+
+// One full Gauss-Newton iteration over the parameter vector. With
+// pre-extracted features the iteration becomes:
+//
+//   1. Predict eval per position from cached baseline and features.
+//   2. Compute residual r_i = sigmoid(K * eval_i) - target_i.
+//   3. Accumulate J^T J = K^2 * sum sigmoid'^2 * f_i f_i^T and
+//      J^T r = K * sum sigmoid' * r_i * f_i in parallel over the
+//      corpus.
+//   4. Solve (J^T J + lambda * I) * x = J^T r with Cholesky. The
+//      ridge lambda = 1e-3 * trace(J^T J) / P keeps the solver
+//      stable when the Hessian is rank-deficient or near-singular
+//      under tightly correlated parameters.
+//   5. Clip per-parameter steps to +/-32 cp for robustness against
+//      pathological corner moves the linearization gets wrong.
+//   6. Backtracking line search at scales [1.0, 0.5, 0.25] using the
+//      exact engine loss; accept the first scale that beats the
+//      threaded-noise threshold.
+//
+// Returns the relative loss decrease. Updates bestLoss in place when
+// an improvement is accepted; restores the parameter vector
+// otherwise.
+static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
+                              const CorpusFeatures &cf, std::vector<ParamRef> &params, double K,
+                              int numThreads, double &bestLoss) {
+    const size_t N = positions.size();
+    const size_t P = params.size();
+
+    constexpr int maxStepPerParam = 32;
+
+    const double L0 = bestLoss;
+    const double acceptThreshold = L0 * 1e-7;
+
+    std::vector<int> theta(P);
+    for (size_t j = 0; j < P; j++)
+        theta[j] = params[j].read();
+    std::vector<int> deltaTheta(P);
+    for (size_t j = 0; j < P; j++)
+        deltaTheta[j] = theta[j] - cf.theta0[j];
+
+    // Per-thread accumulators. P * P doubles per thread; for P=778
+    // that is about 4.8 MB per thread, comfortably under any cache
+    // line budget but also small enough to merge serially in <10 ms.
+    std::vector<std::vector<double>> threadJtJ(numThreads, std::vector<double>(P * P, 0.0));
+    std::vector<std::vector<double>> threadJtr(numThreads, std::vector<double>(P, 0.0));
+
+    {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([&, start, end, t]() {
+                auto &JtJ = threadJtJ[t];
+                auto &Jtr = threadJtr[t];
+                for (size_t i = start; i < end; i++) {
+                    int64_t eval = cf.baseline[i];
+                    const auto &row = cf.rows[i];
+                    for (const auto &fe : row)
+                        eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                    double pred = sigmoid(static_cast<double>(eval), K);
+                    double residual = pred - positions[i].result;
+                    double sigprime = pred * (1.0 - pred);
+                    double weightR = K * sigprime * residual;
+                    double weightH = K * K * sigprime * sigprime;
+                    const size_t M = row.size();
+                    for (size_t a = 0; a < M; a++) {
+                        int idxA = row[a].paramIdx;
+                        double cA = static_cast<double>(row[a].coef);
+                        Jtr[idxA] += weightR * cA;
+                        double rowScale = weightH * cA;
+                        for (size_t b = 0; b < a; b++) {
+                            int idxB = row[b].paramIdx;
+                            double cB = static_cast<double>(row[b].coef);
+                            double v = rowScale * cB;
+                            JtJ[idxA * P + idxB] += v;
+                            JtJ[idxB * P + idxA] += v;
+                        }
+                        JtJ[idxA * P + idxA] += rowScale * cA;
+                    }
+                }
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    }
+
+    // Merge thread accumulators.
+    std::vector<double> JtJ(P * P, 0.0);
+    std::vector<double> Jtr(P, 0.0);
+    for (int t = 0; t < numThreads; t++) {
+        const auto &tj = threadJtJ[t];
+        const auto &tr = threadJtr[t];
+        for (size_t k = 0; k < P * P; k++)
+            JtJ[k] += tj[k];
+        for (size_t j = 0; j < P; j++)
+            Jtr[j] += tr[j];
+    }
+
+    // Ridge regularization sized to the average diagonal so the
+    // ridge does not dominate strong parameters or vanish on weak
+    // ones.
+    double diagSum = 0.0;
+    for (size_t j = 0; j < P; j++)
+        diagSum += JtJ[j * P + j];
+    double avgDiag = diagSum / static_cast<double>(P);
+    double ridge = 1e-3 * avgDiag;
+    if (ridge < 1e-12) ridge = 1e-12;
+
+    std::vector<double> step = Jtr;
+    if (!choleskySolveSymmetric(JtJ, step, P, ridge)) {
+        std::cerr << "  gauss-newton: Cholesky failed (non-positive pivot); skipping\n";
+        return 0.0;
+    }
+
+    // step now contains x in (J^T J + lambda I) x = J^T r. The
+    // Newton update is theta -= x with backtracking. clampToBounds
+    // keeps the step inside the constraint region.
+    auto applyScaled = [&](double scale) {
+        for (size_t j = 0; j < P; j++) {
+            double s = -scale * step[j];
+            if (s > maxStepPerParam) s = static_cast<double>(maxStepPerParam);
+            if (s < -maxStepPerParam) s = static_cast<double>(-maxStepPerParam);
+            int newVal = theta[j] + static_cast<int>(std::round(s));
+            params[j].write(params[j].clampToBounds(newVal));
+        }
+    };
+    auto restore = [&]() {
+        for (size_t j = 0; j < P; j++)
+            params[j].write(theta[j]);
+    };
+
+    static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
+    for (double scale : backtrackScales) {
+        applyScaled(scale);
+        double L = computeLoss(positions, K, numThreads);
+        if (L0 - L > acceptThreshold) {
+            bestLoss = L;
+            std::cerr << "  gauss-newton accepted scale=" << scale << " loss=" << L << "\n";
+            return (L0 - L) / L0;
+        }
+    }
+
+    restore();
+    return 0.0;
+}
+
 // One Newton-Raphson pass over the parameter vector. Estimates per-
 // parameter first and second derivatives of the loss via central finite
 // differences (delta = 1 cp, the natural integer unit of these scalars),
