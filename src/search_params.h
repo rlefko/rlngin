@@ -81,6 +81,16 @@ struct SearchParams {
     // sub-unit perturbations would never cross a reduction boundary.
     int LmrThreatEscape;
     int LmrThreatWalkIn;
+
+    // Lazy eval cutoff margin in internal units (one pawn = 228). When
+    // the cheap material + PST + tempo prelude lands far enough past
+    // alpha or beta that the residual positional terms cannot plausibly
+    // pull the score back across, evaluate() bails early and returns the
+    // bounded prelude. The margin is the conservative envelope of how
+    // much the residual half can move the eval, so picking it too low
+    // bleeds Elo and picking it too high disables the cutoff. Tunable
+    // via UCI / SPSA.
+    int LazyMargin;
 };
 
 extern SearchParams searchParams;

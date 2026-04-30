@@ -155,6 +155,15 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeIntSpec("LmrThreatEscape", &searchParams.LmrThreatEscape, 0, 2, 0.5, 0.25));
     out.push_back(makeIntSpec("LmrThreatWalkIn", &searchParams.LmrThreatWalkIn, 0, 2, 0.5, 0.25));
 
+    // --- Lazy eval cutoff margin (internal units; 228 = one pawn). ---
+    // Bounds spaced wide so SPSA can explore both an aggressive cutoff
+    // (smaller margin = more bails, more nodes saved per call but
+    // higher risk of returning a value the full eval would have moved
+    // back across) and a conservative cutoff. The lower bound is set
+    // above the typical positional swing so a too-aggressive value is
+    // not even reachable.
+    out.push_back(makeIntSpec("LazyMargin", &searchParams.LazyMargin, 400, 1500, 30.0, 10.0));
+
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
     out.push_back(

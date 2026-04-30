@@ -223,7 +223,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
 
-    if (ply >= MAX_PLY) return evaluate(board);
+    if (ply >= MAX_PLY) return evaluate(board, alpha, beta);
 
     state.pvLength[ply] = ply;
 
@@ -250,7 +250,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     int standPat = -INF_SCORE;
     int bestScore = -INF_SCORE;
     if (!inCheck) {
-        rawStandPat = (ttHit && ttEntry.eval != TT_NO_EVAL) ? ttEntry.eval : evaluate(board);
+        rawStandPat = (ttHit && ttEntry.eval != TT_NO_EVAL) ? ttEntry.eval : evaluate(board, alpha, beta);
         // Read-only correction: qsearch consumes the corrected eval for its
         // stand-pat and delta pruning decisions but does not update the table,
         // since qsearch returns are the signal the correction is tracking.
@@ -492,7 +492,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     state.pvLength[ply] = ply;
     state.searchKeys[ply] = board.key;
 
-    if (ply >= MAX_PLY - 1) return evaluate(board);
+    if (ply >= MAX_PLY - 1) return evaluate(board, alpha, beta);
 
     if (state.nodes % 1024 == 0) checkTime(state);
     if (state.stopped) return 0;
@@ -551,7 +551,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     } else if (ttHit && ttEntry.eval != TT_NO_EVAL) {
         staticEval = ttEntry.eval;
     } else {
-        staticEval = evaluate(board);
+        staticEval = evaluate(board, alpha, beta);
     }
     // Correction history folded onto the raw static eval. The raw value is
     // still what we store in TT; the corrected value is what every eval-gated

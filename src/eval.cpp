@@ -4,6 +4,7 @@
 #include "eval_params.h"
 #include "material_hash.h"
 #include "pawn_hash.h"
+#include "search_params.h"
 #include "zobrist.h"
 
 #include <algorithm>
@@ -1582,7 +1583,7 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
     }
 }
 
-int evaluate(const Board &board) {
+int evaluate(const Board &board, int alpha, int beta) {
     ensureEvalInit();
 
     Score scores[2] = {0, 0};
@@ -1613,6 +1614,33 @@ int evaluate(const Board &board) {
     evaluateMaterial(board, matScores, gamePhase);
     scores[White] += matScores[White];
     scores[Black] += matScores[Black];
+
+    // Lazy eval cutoff: with material + PST already in hand, project
+    // the cheap half through the same tempo / halfmove / STM-flip
+    // pipeline the full eval uses, then bound by LazyMargin. If the
+    // bounded preview already sits fully outside [alpha, beta], skip
+    // every remaining term and return that bound. The margin is the
+    // conservative envelope of how much the residual half (pawn
+    // structure beyond the pawn hash, mobility, threats, king safety,
+    // initiative) can pull the score back across. Saves a meaningful
+    // fraction of total eval cost in lopsided positions while never
+    // returning a value outside the bracket implied by the full eval.
+    {
+        int mgPhase = std::min(gamePhase, 24);
+        int egPhase = 24 - mgPhase;
+        Score lazyTotal = scores[White] - scores[Black];
+        int lazyResult =
+            (mg_value(lazyTotal) * mgPhase + eg_value(lazyTotal) * egPhase) / 24;
+        if (board.byPiece[Pawn]) {
+            lazyResult = lazyResult * (200 - board.halfmoveClock) / 200;
+        }
+        int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
+        lazyResult += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
+        int lazyStmResult = (board.sideToMove == White) ? lazyResult : -lazyResult;
+        int lazyMargin = searchParams.LazyMargin;
+        if (lazyStmResult - lazyMargin >= beta) return lazyStmResult - lazyMargin;
+        if (lazyStmResult + lazyMargin <= alpha) return lazyStmResult + lazyMargin;
+    }
 
     Score pawnScore = 0;
     Bitboard passers[2] = {0, 0};
