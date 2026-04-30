@@ -24,7 +24,14 @@ struct EvalParams {
     Score PassedSupportedBonus[8];
     Score ConnectedPassersBonus[8];
     Score RookOn7thBonus;
-    Score BadBishopPenalty;
+    // Bad bishop split into a flat baseline that fires when at least
+    // one own pawn sits on the bishop's color, and a per-pawn weight
+    // scaled by the number of own d/e file pawns whose stop square is
+    // occupied. Closed center positions are far worse for the bad
+    // bishop than the same pawn count on an open board, so the per
+    // pawn term needs to scale with the closure of the position.
+    Score BadBishop;
+    Score BishopPawns;
     Score Tempo;
 
     // --- Newly exposed for the broad-scope Texel tune. ---
@@ -33,14 +40,20 @@ struct EvalParams {
     // carry zero because material for those slots is implicit.
     Score PieceScore[7];
 
-    // Piece-square tables stored in a1=0 order (rank 1 first, rank 8 last).
-    // Values are from White's perspective; Black mirrors via `sq ^ 56`.
+    // Piece-square tables. PawnPST keeps the full 64-square layout
+    // because pawn structure is asymmetric (e.g., the f and h pawns
+    // play very differently). Non-pawn PSTs are stored half-board
+    // with the file mirrored to the queenside (4 file buckets x 8
+    // ranks = 32 entries). Black mirrors via the rank flip plus the
+    // file fold, so a knight on c3 and a knight on f3 share the same
+    // tunable. PawnPST values are White-perspective; Black mirrors
+    // via `sq ^ 56`. Non-pawn PSTs index by `(rel_rank << 2) | min(file, 7 - file)`.
     Score PawnPST[64];
-    Score KnightPST[64];
-    Score BishopPST[64];
-    Score RookPST[64];
-    Score QueenPST[64];
-    Score KingPST[64];
+    Score KnightPST[32];
+    Score BishopPST[32];
+    Score RookPST[32];
+    Score QueenPST[32];
+    Score KingPST[32];
 
     // Mobility bonus by piece type and count of mobility-area squares
     // attacked. Pawn and King rows remain zero.
@@ -53,6 +66,10 @@ struct EvalParams {
     // Rook file bonuses.
     Score RookOpenFileBonus;
     Score RookSemiOpenFileBonus;
+    // Bonus per friendly rook sharing a file with an enemy queen.
+    // Pure pressure pattern that is otherwise only credited via the
+    // generic mobility term.
+    Score RookOnQueenFile;
 
     // Minor-piece outposts and trapped-rook-by-own-king.
     Score KnightOutpostBonus;
@@ -95,18 +112,29 @@ struct EvalParams {
 
     // King-safety scalar tables (structural divisors for the king-danger
     // quadratic remain static const inside eval.cpp).
-    Score PawnShieldBonus[2];
-    // Pawn storm penalty indexed by distance bucket (0..4 where bucket 4
-    // is closest). Split into blocked and unblocked variants because a
-    // storm pawn frontally blocked by a friendly shield pawn cannot open
-    // lines without a trade, so its effective penalty is much smaller
-    // than an unblocked ram on the same file.
-    Score BlockedPawnStorm[5];
-    Score UnblockedPawnStorm[5];
-    Score SemiOpenFileNearKing;
-    Score OpenFileNearKing;
+    //
+    // Classical shelter and storm grids indexed by [edge_distance][rank]
+    // where edge_distance is min(file, 7 - file) of the shield file
+    // (0 = a/h files, 3 = d/e files) and rank is the relative rank of
+    // the most advanced pawn on that file from our side's perspective.
+    // Rank 0 stands for "no pawn on file": the Shelter[d][0] entry is
+    // the semi-open file penalty, the storm entries on rank 0 are
+    // structurally zero because there is no enemy pawn to advance.
+    Score Shelter[4][7];
+    Score UnblockedStorm[4][7];
+    // Blocked storm: enemy pawn frontally blocked by our pawn one rank
+    // ahead. The threat is greatly reduced because the rammer cannot
+    // open the file without a trade, so the table is one dimensional
+    // in pawn rank only (the file distance signal is dominated by the
+    // blocker geometry).
+    Score BlockedStorm[7];
     Score UndefendedKingZoneSq;
-    Score KingSafeSqPenalty[9];
+    // Linear king-mobility factor folded into the king-danger
+    // accumulator. Each square the king can step to that is not
+    // attacked by the enemy reduces the danger score by this much.
+    // Replaces the saturating 9-bucket KingSafeSqPenalty curve: the
+    // classical signal is a count, not a discrete bucket table.
+    Score KingMobilityFactor;
 
     // Per-attacker weights contributed to the king-danger accumulator for
     // every enemy piece of the given type whose attack set intersects our
@@ -188,6 +216,13 @@ struct EvalParams {
     // most once per bishop.
     Score BishopLongDiagonalBonus;
 
+    // Penalty per enemy pawn the bishop x-rays through its own pieces.
+    // The bishop's diagonal is mobility-dead in the direction of every
+    // such pawn even when the immediate squares are open, and our
+    // pieces between the bishop and the pawn are not blockers in the
+    // x-ray sense.
+    Score BishopXrayPawns;
+
     // Position-wide "initiative" scalar. Features are accumulated into a
     // non-negative magnitude, then signed by the side with the current
     // positional advantage, and folded into the total so the score bends
@@ -198,7 +233,9 @@ struct EvalParams {
     //   Passer      -- per passed pawn on either side
     //   PawnCount   -- per pawn on the board (tiny weight, grows with pawns)
     //   Outflank    -- popcount(kingside pawns) * popcount(queenside pawns)
-    //   Tension     -- enemy pawns under our pawn attacks plus mirror
+    //   Tension     -- enemy pawns under our pawn attacks plus mirror; only
+    //                  the MG half is consumed because the conventional
+    //                  initiative system has no EG analogue for tension.
     //   Infiltrate  -- per king that has crossed into enemy territory
     //   PureBase    -- flat when no non-pawn non-king material remains
     //   Constant    -- baseline shift (typically negative)

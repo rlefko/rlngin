@@ -444,6 +444,16 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         Bitboard theirKingRing =
             theirKingOnly ? kingZoneBB(lsb(theirKingOnly), static_cast<Color>(c ^ 1)) : 0;
 
+        // Closed center signal: own pawns on the d or e file whose stop
+        // square is occupied by any piece. Used to scale the per same
+        // color pawn bishop penalty so a bad bishop trapped behind its
+        // own central pawns hurts more than the same configuration on
+        // an open board.
+        Bitboard centerFiles = FileBB[3] | FileBB[4];
+        Bitboard centerOurPawns = ourPawns & centerFiles;
+        Bitboard centerStops = (c == White) ? (centerOurPawns << 8) : (centerOurPawns >> 8);
+        int blockedCenterCount = popcount(centerStops & occ);
+
         // Minor behind pawn: a friendly knight or bishop sitting directly
         // one rank behind a friendly pawn is shielded against frontal
         // attacks and cannot be easily chased by an enemy pawn on the
@@ -492,8 +502,20 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
 
             Bitboard sameColorSquares =
                 (squareBB(sq) & LightSquaresBB) ? LightSquaresBB : DarkSquaresBB;
-            int blockingPawns = popcount(ourPawns & sameColorSquares);
-            scores[c] += evalParams.BadBishopPenalty * blockingPawns;
+            int sameColorPawnCount = popcount(ourPawns & sameColorSquares);
+            if (sameColorPawnCount > 0) {
+                scores[c] += evalParams.BadBishop;
+                scores[c] += evalParams.BishopPawns * sameColorPawnCount * (1 + blockedCenterCount);
+            }
+
+            // X-ray pawns: enemy pawns the bishop sees through its own
+            // pieces. Re-cast the bishop attack with own pieces removed
+            // from the occupancy so the ray reaches every enemy pawn on
+            // the diagonal, even past a friendly knight or pawn that
+            // would be a blocker in the literal mobility sense.
+            Bitboard xrayAttacks = bishopAttacks(sq, occ & ~board.byColor[c]);
+            int xrayPawns = popcount(xrayAttacks & theirPawns);
+            scores[c] += evalParams.BishopXrayPawns * xrayPawns;
 
             // Long diagonal sweep: the two central squares on this bishop's
             // long diagonal must both be covered by the bishop itself (from
@@ -526,6 +548,7 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
         bool lostShortCastle = (c == White) ? !board.castleWK : !board.castleBK;
         bool lostLongCastle = (c == White) ? !board.castleWQ : !board.castleBQ;
 
+        Bitboard enemyQueens = board.byPiece[Queen] & board.byColor[c ^ 1];
         Bitboard rooks = board.byPiece[Rook] & board.byColor[c];
         while (rooks) {
             int sq = popLsb(rooks);
@@ -540,6 +563,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 scores[c] += evalParams.RookOpenFileBonus;
             } else if (noOurPawns) {
                 scores[c] += evalParams.RookSemiOpenFileBonus;
+            }
+
+            // Rook on queen file: a small flat pressure bonus per
+            // friendly rook sharing a file with an enemy queen.
+            if (fileMask & enemyQueens) {
+                scores[c] += evalParams.RookOnQueenFile;
             }
 
             // Rook on the seventh: either targets enemy pawns on the 7th
@@ -569,7 +598,12 @@ static void evaluatePieces(const Board &board, const EvalContext &ctx, Score sco
                 }
             }
 
-            if (theirKingRing && (rAtk & theirKingRing)) {
+            // Rook on king ring fires only when the same rook also sits on
+            // a (semi-)open file. The classical formulation tracks the
+            // pressure that distinct lift-and-attack pattern carries, not
+            // the generic multi-attacker count that the king-danger
+            // accumulator already credits.
+            if (noOurPawns && theirKingRing && (rAtk & theirKingRing)) {
                 scores[c] += evalParams.RookOnKingRing;
             }
         }
@@ -639,94 +673,89 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         if (!kingBB) continue;
         int kingSq = lsb(kingBB);
         int kingFile = squareFile(kingSq);
-        int kingRank = squareRank(kingSq);
 
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
         Bitboard theirPawns = board.byPiece[Pawn] & board.byColor[them];
 
-        int shieldFileMin = std::max(0, kingFile - 1);
-        int shieldFileMax = std::min(7, kingFile + 1);
-
-        // Pawn shield score for a hypothetical king on `kf`, summed over
-        // `kf` and its two adjacent files. Walks only the shield half of
-        // the term; storm and open-file penalties still fire at the
-        // actual king position because they reflect immediate danger,
-        // while shield is a latent safety signal the engine should
-        // associate with a reachable king location rather than only the
-        // current one.
-        auto shieldScoreAt = [&](int kf) -> Score {
+        // Classical shelter and storm: walk the three shield files
+        // centered on the king (clamped so the window stays on the
+        // board) and accumulate per file
+        //   Shelter[edge_distance][our_rank]
+        // and either
+        //   BlockedStorm[their_rank]            if our pawn frontally
+        //                                       blocks the rammer, or
+        //   UnblockedStorm[edge_distance][their_rank]
+        // otherwise. Rank 0 means "no pawn on file", which folds the
+        // semi-open or open file penalty into the Shelter[d][0] entry
+        // and contributes zero on the storm side.
+        auto shelterStormAt = [&](int kf) -> Score {
             Score result = 0;
-            int fMin = std::max(0, kf - 1);
-            int fMax = std::min(7, kf + 1);
-            for (int f = fMin; f <= fMax; f++) {
+            int center = std::max(1, std::min(6, kf));
+            for (int f = center - 1; f <= center + 1; f++) {
+                int d = std::min(f, 7 - f);
                 Bitboard fileMask = FileBB[f];
                 Bitboard ourPawnsOnFile = ourPawns & fileMask;
-                if (!ourPawnsOnFile) continue;
-                int pawnSq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
-                int relRank = (us == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
-                if (relRank == 1)
-                    result += evalParams.PawnShieldBonus[0];
-                else if (relRank == 2)
-                    result += evalParams.PawnShieldBonus[1];
+                Bitboard theirPawnsOnFile = theirPawns & fileMask;
+                int ourRank = 0;
+                if (ourPawnsOnFile) {
+                    int sq = (us == White) ? lsb(ourPawnsOnFile) : msb(ourPawnsOnFile);
+                    int rr = (us == White) ? squareRank(sq) : (7 - squareRank(sq));
+                    ourRank = std::min(rr, 6);
+                }
+                int theirRank = 0;
+                if (theirPawnsOnFile) {
+                    int sq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
+                    int rr = (us == White) ? squareRank(sq) : (7 - squareRank(sq));
+                    theirRank = std::min(rr, 6);
+                }
+                result += evalParams.Shelter[d][ourRank];
+                if (theirRank > 0) {
+                    bool blocked = (ourRank > 0) && (ourRank == theirRank - 1);
+                    if (blocked) {
+                        result -= evalParams.BlockedStorm[theirRank];
+                    } else {
+                        result -= evalParams.UnblockedStorm[d][theirRank];
+                    }
+                }
             }
             return result;
         };
 
-        // Use the best shield available between the king's current
-        // square and any castled square the rules still permit. A king
-        // that can castle kingside or queenside already has that
-        // shelter in reach, so the static eval should not reward
-        // actually playing the castle (the move ordering and king-to-
-        // corner PST are enough to pick it up), nor penalize the
-        // pre-castle king for having a central-file shield that is
-        // really a flank-file shield in disguise. This mirrors the
-        // shelter-at-current-or-castled-square convention that top
-        // classical evaluators use.
-        Score shield = shieldScoreAt(kingFile);
         bool canKingside = (us == White) ? board.castleWK : board.castleBK;
         bool canQueenside = (us == White) ? board.castleWQ : board.castleBQ;
-        if (canKingside) {
-            Score alt = shieldScoreAt(6);
-            if (mg_value(alt) > mg_value(shield)) shield = alt;
-        }
-        if (canQueenside) {
-            Score alt = shieldScoreAt(2);
-            if (mg_value(alt) > mg_value(shield)) shield = alt;
+        int castlingMask = (canKingside ? 0x1 : 0) | (canQueenside ? 0x2 : 0);
+
+        // Cache the shelter and storm composite in the pawn hash. The
+        // table cannot key on king position alone because the same
+        // pawn structure with the king on a different file produces
+        // a different score, so the entry stamps both the king file
+        // and the castling mask. Cache misses on king or castling
+        // changes; cache hits on the same pawn structure with no king
+        // movement reuse the prior walk.
+        Score shield;
+        int cachedMg = 0;
+        int cachedEg = 0;
+        if (pawnHashTable.probeShelter(board.pawnKey, us, kingFile, castlingMask, cachedMg,
+                                       cachedEg)) {
+            shield = make_score(cachedMg, cachedEg);
+        } else {
+            shield = shelterStormAt(kingFile);
+            // Best of current and castled candidate squares: the king
+            // already in reach of a better shelter via castling should
+            // not be statically penalized for sitting on the central
+            // file pre-castle.
+            if (canKingside) {
+                Score alt = shelterStormAt(6);
+                if (mg_value(alt) > mg_value(shield)) shield = alt;
+            }
+            if (canQueenside) {
+                Score alt = shelterStormAt(2);
+                if (mg_value(alt) > mg_value(shield)) shield = alt;
+            }
+            pawnHashTable.storeShelter(board.pawnKey, us, kingFile, castlingMask, mg_value(shield),
+                                       eg_value(shield));
         }
         scores[us] += shield;
-
-        // Pawn storm and open file evaluation per shield file at the
-        // actual king position. These track danger, not latent safety,
-        // so the "best reachable square" trick above does not apply.
-        for (int f = shieldFileMin; f <= shieldFileMax; f++) {
-            Bitboard fileMask = FileBB[f];
-            Bitboard ourPawnsOnFile = ourPawns & fileMask;
-            Bitboard theirPawnsOnFile = theirPawns & fileMask;
-
-            // Pawn storm: find the most-advanced enemy pawn on this file.
-            // Classify it as blocked when one of our pawns sits directly
-            // in front of it from the attacker's pushing direction: a
-            // frontally blocked ram cannot open the file without a trade,
-            // so it deserves a much smaller penalty than an unblocked
-            // ram driving toward the shield.
-            if (theirPawnsOnFile) {
-                int stormSq = (us == White) ? lsb(theirPawnsOnFile) : msb(theirPawnsOnFile);
-                int distance = std::abs(squareRank(stormSq) - kingRank);
-                int idx = std::max(0, 4 - std::min(4, distance));
-                int stopSq = (us == White) ? stormSq - 8 : stormSq + 8;
-                bool blocked = (stopSq >= 0 && stopSq < 64) && (ourPawns & squareBB(stopSq));
-                Score penalty =
-                    blocked ? evalParams.BlockedPawnStorm[idx] : evalParams.UnblockedPawnStorm[idx];
-                scores[us] -= penalty;
-            }
-
-            // Open and semi-open file penalties
-            if (!ourPawnsOnFile && !theirPawnsOnFile) {
-                scores[us] += evalParams.OpenFileNearKing;
-            } else if (!ourPawnsOnFile) {
-                scores[us] += evalParams.SemiOpenFileNearKing;
-            }
-        }
 
         // King zone attack evaluation. We accumulate both an integer
         // kingDanger score (fed to a quadratic mg / linear eg mapping) and
@@ -822,6 +851,17 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             kingDangerEg -= eg_value(evalParams.KingNoQueenDiscount);
         }
 
+        // King mobility differential: every safe square the king can
+        // step to (not occupied by us, not attacked by them) reduces
+        // the king-danger accumulator by KingMobilityFactor on each
+        // half. Folded in before the clamp so a boxed-in king pays
+        // the full quadratic while a king with escape squares pays
+        // only the residual.
+        Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
+        int safeKingMoves = popcount(kingMoves & ~enemyAttacks);
+        kingDangerMg -= safeKingMoves * mg_value(evalParams.KingMobilityFactor);
+        kingDangerEg -= safeKingMoves * eg_value(evalParams.KingMobilityFactor);
+
         // Only penalize when at least 2 pieces attack the zone: a single
         // piece rarely creates a real mating threat on its own. Clamp
         // kingDanger to a non-negative bounded range before feeding the
@@ -835,13 +875,6 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             int mgPen = kingDangerMg * kingDangerMg / KingDangerDivMg;
             int egPen = kingDangerEg / KingDangerDivEg;
             scores[us] -= S(mgPen, egPen);
-
-            // Gate the safe-square penalty on the same multi-attacker
-            // condition so a king boxed in by its own pawns is not scored
-            // as if it were under attack.
-            Bitboard kingMoves = KingAttacks[kingSq] & ~board.byColor[us];
-            int safeCount = std::min(popcount(kingMoves & ~enemyAttacks), 8);
-            scores[us] += evalParams.KingSafeSqPenalty[safeCount];
         }
     }
 }
@@ -1038,7 +1071,6 @@ static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
     int egMag = eg_value(evalParams.InitiativePasser) * passerCount +
                 eg_value(evalParams.InitiativePawnCount) * pawnCount +
                 eg_value(evalParams.InitiativeOutflank) * outflank +
-                eg_value(evalParams.InitiativeTension) * tension +
                 eg_value(evalParams.InitiativeInfiltrate) * infiltrated +
                 eg_value(evalParams.InitiativePureBase) * (onlyPawns ? 1 : 0) +
                 eg_value(evalParams.InitiativeConstant);
@@ -1211,15 +1243,25 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
             ctx.attackedBy[us][King] & theirNonPawnNonKing & ~ctx.allAttacks[them];
         scores[us] += evalParams.ThreatByKing * popcount(kingVictims);
 
-        // evalParams.Hanging pieces: enemy non-pawn pieces undefended and reachable
-        // by a capture we would willingly make. "Willingly" means either
-        // we have a less valuable attacker on the square (pawn attacks
-        // qualify directly) or two or more pieces converging on it so the
-        // capture-recapture sequence still wins material. This keeps
-        // queen-attacks-undefended-rook and similar trade-losing scenarios
-        // from falsely firing the hanging bonus.
-        Bitboard undefended = theirNonPawnNonKing & ctx.allAttacks[us] & ~ctx.allAttacks[them];
-        Bitboard hanging = undefended & (ctx.attackedBy2[us] | ctx.pawnAttacks[us]);
+        // Hanging pieces: the conventional weak-piece set is enemy
+        // non-pawn / non-king pieces we attack that are either
+        // undefended or under-defended (we attack with two or more
+        // pieces while the defender does not match the count).
+        // To avoid double crediting, we subtract any victim already
+        // paid out by a less-valuable attacker via ThreatBy*: pieces
+        // hit by our pawns (ThreatByPawn), rooks or queens hit by
+        // our minors (ThreatByMinor), and queens hit by our rooks
+        // (ThreatByRook). The remaining set is the "free" weak-piece
+        // signal that no other term has credited.
+        Bitboard weak = theirNonPawnNonKing & ctx.allAttacks[us] &
+                        (~ctx.allAttacks[them] | (ctx.attackedBy2[us] & ~ctx.attackedBy2[them]));
+        Bitboard rooksAndQueensTheirs = (board.byPiece[Rook] | board.byPiece[Queen]) & theirPieces;
+        Bitboard queensTheirs = board.byPiece[Queen] & theirPieces;
+        Bitboard creditedElsewhere =
+            ctx.pawnAttacks[us] |
+            ((ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop]) & rooksAndQueensTheirs) |
+            (ctx.attackedBy[us][Rook] & queensTheirs);
+        Bitboard hanging = weak & ~creditedElsewhere;
         scores[us] += evalParams.Hanging * popcount(hanging);
 
         // Weak queen: enemy queen attacked by two or more of our pieces.
@@ -1299,12 +1341,23 @@ int evaluate(const Board &board) {
     int gamePhase = 0;
 
     // PST-only accumulation per square; piece material, bishop pair, and
-    // imbalance come from the cached material probe below.
+    // imbalance come from the cached material probe below. PawnPST is
+    // full-board (asymmetric structure), non-pawn PSTs are half-board
+    // (file mirrored to queenside) so a knight on c3 and a knight on
+    // f3 read the same tunable.
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
 
-        int idx = (p.color == White) ? sq : (sq ^ 56);
+        int idx;
+        if (p.type == Pawn) {
+            idx = (p.color == White) ? sq : (sq ^ 56);
+        } else {
+            int rrank = (p.color == White) ? squareRank(sq) : (7 - squareRank(sq));
+            int file = squareFile(sq);
+            int fIdx = std::min(file, 7 - file);
+            idx = (rrank << 2) | fIdx;
+        }
         scores[p.color] += PST[p.type][idx];
     }
 
@@ -1383,7 +1436,15 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     for (int sq = 0; sq < 64; sq++) {
         Piece p = board.squares[sq];
         if (p.type == None) continue;
-        int idx = (p.color == White) ? sq : (sq ^ 56);
+        int idx;
+        if (p.type == Pawn) {
+            idx = (p.color == White) ? sq : (sq ^ 56);
+        } else {
+            int rrank = (p.color == White) ? squareRank(sq) : (7 - squareRank(sq));
+            int file = squareFile(sq);
+            int fIdx = std::min(file, 7 - file);
+            idx = (rrank << 2) | fIdx;
+        }
         pstScores[p.color] += PST[p.type][idx];
     }
     Score pstScore = pstScores[White] - pstScores[Black];

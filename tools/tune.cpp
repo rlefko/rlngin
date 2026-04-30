@@ -219,7 +219,8 @@ static std::vector<ParamRef> collectParams() {
     // eval contribution, and stops a "Bonus"-named term from
     // representing a penalty.
     addMgEgConstr("RookOn7thBonus", &evalParams.RookOn7thBonus, boundsNonNegative());
-    addMgEgConstr("BadBishopPenalty", &evalParams.BadBishopPenalty, boundsNonPositive());
+    addMgEgConstr("BadBishop", &evalParams.BadBishop, boundsNonPositive());
+    addMgEgConstr("BishopPawns", &evalParams.BishopPawns, boundsNonPositive());
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
     // --- Material (skip None and King; both are structurally zero) ---
@@ -229,17 +230,22 @@ static std::vector<ParamRef> collectParams() {
     // --- Piece-square tables. Each PST has 64 squares; skip the back/
     // front ranks of the pawn PST because they are always zero. King
     // PST squares stay tunable because the king appears on them.
+    // Stopgap range cap at +/-300 prevents corner squares from drifting
+    // into implausible magnitudes during long Texel runs.
     auto addPST = [&](const std::string &name, Score *arr, int start, int end) {
         for (int sq = start; sq < end; sq++) {
-            addMgEg(name + "[" + std::to_string(sq) + "]", &arr[sq]);
+            out.push_back({name + "[" + std::to_string(sq) + "].mg", &arr[sq], true,
+                           boundsRange(-300, 300)});
+            out.push_back({name + "[" + std::to_string(sq) + "].eg", &arr[sq], false,
+                           boundsRange(-300, 300)});
         }
     };
     addPST("PawnPST", evalParams.PawnPST, 8, 56);
-    addPST("KnightPST", evalParams.KnightPST, 0, 64);
-    addPST("BishopPST", evalParams.BishopPST, 0, 64);
-    addPST("RookPST", evalParams.RookPST, 0, 64);
-    addPST("QueenPST", evalParams.QueenPST, 0, 64);
-    addPST("KingPST", evalParams.KingPST, 0, 64);
+    addPST("KnightPST", evalParams.KnightPST, 0, 32);
+    addPST("BishopPST", evalParams.BishopPST, 0, 32);
+    addPST("RookPST", evalParams.RookPST, 0, 32);
+    addPST("QueenPST", evalParams.QueenPST, 0, 32);
+    addPST("KingPST", evalParams.KingPST, 0, 32);
 
     // --- Mobility bonuses (only Knight..Queen rows carry values).
     // Soft chess prior: more attacked mobility-area squares is at least
@@ -343,6 +349,7 @@ static std::vector<ParamRef> collectParams() {
                            return b;
                        }});
     }
+    addMgEgConstr("RookOnQueenFile", &evalParams.RookOnQueenFile, boundsNonNegative());
     addMgEgConstr("KnightOutpostBonus", &evalParams.KnightOutpostBonus, boundsNonNegative());
     addMgEgConstr("BishopOutpostBonus", &evalParams.BishopOutpostBonus, boundsNonNegative());
     out.push_back({"TrappedRookByKingPenalty.mg", &evalParams.TrappedRookByKingPenalty, true,
@@ -376,81 +383,49 @@ static std::vector<ParamRef> collectParams() {
     // role that contradicts the prior.
     addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
 
-    // --- Pawn shield (mg only). Like the storm terms, pawn shield is
-    // structurally a middlegame concept: it protects a castled king
-    // from middlegame attacks. In the endgame the king is active and
-    // often centralized, so the shield does not apply. The eg halves
-    // stay at their compile-time defaults (0) and are not tuned, the
-    // same pattern Tempo / CentralPawnBonus / storm terms already
-    // follow. Mg keeps the chain `[0] >= [1] >= 0` so the back-rank
-    // shield is always at least as valuable as the rank-3 shield.
-    out.push_back({"PawnShieldBonus[0].mg", &evalParams.PawnShieldBonus[0], true, [] {
-                       Bounds b{0, 1000000};
-                       b.lo = std::max(b.lo, mg_value(evalParams.PawnShieldBonus[1]));
-                       return b;
-                   }});
-    out.push_back({"PawnShieldBonus[1].mg", &evalParams.PawnShieldBonus[1], true, [] {
-                       Bounds b{0, 1000000};
-                       b.hi = std::min(b.hi, mg_value(evalParams.PawnShieldBonus[0]));
-                       return b;
-                   }});
-    for (int i = 0; i < 5; i++) {
-        // Consumed with `scores -= <Blocked|Unblocked>PawnStorm[idx]`, so
-        // magnitudes must stay non-negative to preserve the "enemy advance
-        // hurts us" prior.
-        out.push_back({"BlockedPawnStorm[" + std::to_string(i) + "].mg",
-                       &evalParams.BlockedPawnStorm[i], true, boundsNonNegative()});
-        out.push_back({"UnblockedPawnStorm[" + std::to_string(i) + "].mg",
-                       &evalParams.UnblockedPawnStorm[i], true, boundsNonNegative()});
+    // --- Shelter and storm grids (mg only). Shelter is structurally a
+    // middlegame concept and the eg halves stay at their compile-time
+    // zero defaults. The Shelter[d][0] entry is the semi-open file
+    // penalty (no own pawn on the shield file), so it is the only
+    // non-positive Shelter slot; ranks 1-6 stay non-negative because
+    // a pawn shield can only help. UnblockedStorm and BlockedStorm
+    // are subtracted at the call site, so magnitudes stay non-negative
+    // to preserve the prior that an enemy advance hurts us.
+    for (int d = 0; d < 4; d++) {
+        out.push_back({"Shelter[" + std::to_string(d) + "][0].mg",
+                       &evalParams.Shelter[d][0], true, boundsNonPositive()});
+        for (int r = 1; r < 7; r++) {
+            out.push_back({"Shelter[" + std::to_string(d) + "][" + std::to_string(r) + "].mg",
+                           &evalParams.Shelter[d][r], true, boundsNonNegative()});
+        }
+        for (int r = 1; r < 7; r++) {
+            out.push_back({"UnblockedStorm[" + std::to_string(d) + "][" + std::to_string(r) +
+                               "].mg",
+                           &evalParams.UnblockedStorm[d][r], true, boundsNonNegative()});
+        }
     }
-    // King-zone files: open file is at least as bad as semi-open; both
-    // are penalties (<= 0). Chain enforced so the tuner cannot end up
-    // with semi-open scoring worse than open.
-    out.push_back({"SemiOpenFileNearKing.mg", &evalParams.SemiOpenFileNearKing, true, [] {
-                       Bounds b{-1000000, 0};
-                       b.lo = std::max(b.lo, mg_value(evalParams.OpenFileNearKing));
-                       return b;
-                   }});
-    out.push_back({"OpenFileNearKing.mg", &evalParams.OpenFileNearKing, true, [] {
-                       Bounds b{-1000000, 0};
-                       b.hi = std::min(b.hi, mg_value(evalParams.SemiOpenFileNearKing));
-                       return b;
-                   }});
+    for (int r = 1; r < 7; r++) {
+        // Blocked storm: subtracted at the call site, so the magnitude
+        // stays non-negative. Left otherwise free of cross-field chain
+        // priors because main's legacy BlockedPawnStorm registration
+        // had no such coupling and the tuner must be free to refit
+        // both halves of the storm on the new shape independently.
+        out.push_back({"BlockedStorm[" + std::to_string(r) + "].mg", &evalParams.BlockedStorm[r],
+                       true, boundsNonNegative()});
+    }
     addMgEgConstr("UndefendedKingZoneSq", &evalParams.UndefendedKingZoneSq, boundsNonPositive());
-    // KingSafeSqPenalty: each slot must stay a penalty (<= 0), and the
-    // chain is monotonically non-decreasing -- more safe king-move
-    // squares can never score lower than fewer. Predicate closes over
-    // the index so it can consult the live neighboring Score values.
-    for (int i = 0; i < 9; i++) {
-        auto mgChain = [i] {
-            Bounds b{-1000000, 0}; // every slot is a penalty (<= 0)
-            if (i > 0)
-                b.lo = std::max(b.lo, mg_value(evalParams.KingSafeSqPenalty[i - 1]));
-            if (i < 8)
-                b.hi = std::min(b.hi, mg_value(evalParams.KingSafeSqPenalty[i + 1]));
-            return b;
-        };
-        auto egChain = [i] {
-            Bounds b{-1000000, 0};
-            if (i > 0)
-                b.lo = std::max(b.lo, eg_value(evalParams.KingSafeSqPenalty[i - 1]));
-            if (i < 8)
-                b.hi = std::min(b.hi, eg_value(evalParams.KingSafeSqPenalty[i + 1]));
-            return b;
-        };
-        out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].mg",
-                       &evalParams.KingSafeSqPenalty[i], true, mgChain});
-        out.push_back({"KingSafeSqPenalty[" + std::to_string(i) + "].eg",
-                       &evalParams.KingSafeSqPenalty[i], false, egChain});
-    }
+    // KingMobilityFactor: linear weight subtracted from the king-danger
+    // accumulator per safe king move. Subtracted at the call site so
+    // both halves stay non-negative.
+    addMgEgConstr("KingMobilityFactor", &evalParams.KingMobilityFactor, boundsNonNegative());
 
     // --- King-danger accumulator weights. Each per-attacker weight
     // feeds the quadratic king-danger term, so all are non-negative.
     // Cross-field piece ordering: queen attack is at least as dangerous
-    // as rook, and rook is at least as dangerous as either minor. Same
-    // ordering for safe-checks. Without these chains the tuner has been
-    // pushing queen weight below rook on this corpus, which the chess
-    // prior does not allow.
+    // as rook, and rook is at least as dangerous as a knight. Bishops
+    // are released from the chain because they deliver pressure through
+    // a different geometric pattern; the prior that bishop weight must
+    // sit below rook conflated supporting attackers with mainline ones.
     auto kingAttackBounds = [](Score *self, Score *atLeast, Score *atMost, bool isMg) {
         return [self, atLeast, atMost, isMg] {
             Bounds b{0, 1000000};
@@ -463,27 +438,26 @@ static std::vector<ParamRef> collectParams() {
         };
     };
     for (bool isMg : {true, false}) {
-        // Knight and Bishop: bounded above by Rook (sibling minor floor
-        // stays unconstrained so the two minors can rebalance freely).
+        // Knight: bounded above by Rook (preserves the heavier-attacker
+        // ordering for the only non-bishop minor).
         out.push_back({isMg ? "KingAttackByKnight.mg" : "KingAttackByKnight.eg",
                        &evalParams.KingAttackByKnight, isMg,
                        kingAttackBounds(&evalParams.KingAttackByKnight, nullptr,
                                         &evalParams.KingAttackByRook, isMg)});
+        // Bishop: free of the rook chain. Tuner can place bishop above
+        // or below rook based on its own signal.
         out.push_back({isMg ? "KingAttackByBishop.mg" : "KingAttackByBishop.eg",
-                       &evalParams.KingAttackByBishop, isMg,
-                       kingAttackBounds(&evalParams.KingAttackByBishop, nullptr,
-                                        &evalParams.KingAttackByRook, isMg)});
-        // Rook: at least max(Knight, Bishop), at most Queen.
+                       &evalParams.KingAttackByBishop, isMg, boundsNonNegative()});
+        // Rook: at least Knight, at most Queen. Bishop is no longer a
+        // floor on rook because the chain prior was wrong.
         out.push_back({isMg ? "KingAttackByRook.mg" : "KingAttackByRook.eg",
                        &evalParams.KingAttackByRook, isMg, [isMg] {
                            Bounds b{0, 1000000};
                            int knight = isMg ? mg_value(evalParams.KingAttackByKnight)
                                              : eg_value(evalParams.KingAttackByKnight);
-                           int bishop = isMg ? mg_value(evalParams.KingAttackByBishop)
-                                             : eg_value(evalParams.KingAttackByBishop);
                            int queen = isMg ? mg_value(evalParams.KingAttackByQueen)
                                             : eg_value(evalParams.KingAttackByQueen);
-                           b.lo = std::max({b.lo, knight, bishop});
+                           b.lo = std::max(b.lo, knight);
                            b.hi = std::min(b.hi, queen);
                            return b;
                        }});
@@ -493,9 +467,11 @@ static std::vector<ParamRef> collectParams() {
                        kingAttackBounds(&evalParams.KingAttackByQueen,
                                         &evalParams.KingAttackByRook, nullptr, isMg)});
     }
-    // KingSafeCheck: same ordering by piece weight. Knight and Bishop
-    // capped above by Rook; Rook between max(minors) and Queen; Queen
-    // bounded below by Rook.
+    // KingSafeCheck: Knight stays capped above by Rook; Bishop is free
+    // of the rook prior because bishop checks travel through diagonals
+    // that the rook cannot deliver and vice versa. Rook stays bounded
+    // by Knight below and Queen above; Queen stays bounded below by
+    // Rook.
     for (bool isMg : {true, false}) {
         out.push_back({"KingSafeCheck[2]." + std::string(isMg ? "mg" : "eg"),
                        &evalParams.KingSafeCheck[2], isMg, [isMg] {
@@ -506,23 +482,15 @@ static std::vector<ParamRef> collectParams() {
                            return b;
                        }});
         out.push_back({"KingSafeCheck[3]." + std::string(isMg ? "mg" : "eg"),
-                       &evalParams.KingSafeCheck[3], isMg, [isMg] {
-                           Bounds b{0, 1000000};
-                           int rook = isMg ? mg_value(evalParams.KingSafeCheck[4])
-                                           : eg_value(evalParams.KingSafeCheck[4]);
-                           b.hi = std::min(b.hi, rook);
-                           return b;
-                       }});
+                       &evalParams.KingSafeCheck[3], isMg, boundsNonNegative()});
         out.push_back({"KingSafeCheck[4]." + std::string(isMg ? "mg" : "eg"),
                        &evalParams.KingSafeCheck[4], isMg, [isMg] {
                            Bounds b{0, 1000000};
                            int knight = isMg ? mg_value(evalParams.KingSafeCheck[2])
                                              : eg_value(evalParams.KingSafeCheck[2]);
-                           int bishop = isMg ? mg_value(evalParams.KingSafeCheck[3])
-                                             : eg_value(evalParams.KingSafeCheck[3]);
                            int queen = isMg ? mg_value(evalParams.KingSafeCheck[5])
                                             : eg_value(evalParams.KingSafeCheck[5]);
-                           b.lo = std::max({b.lo, knight, bishop});
+                           b.lo = std::max(b.lo, knight);
                            b.hi = std::min(b.hi, queen);
                            return b;
                        }});
@@ -570,6 +538,10 @@ static std::vector<ParamRef> collectParams() {
     // --- Bishop long diagonal sweep ---
     addMgEgConstr("BishopLongDiagonalBonus", &evalParams.BishopLongDiagonalBonus, boundsNonNegative());
 
+    // --- Bishop x-ray pawns: penalty per enemy pawn on the bishop's
+    // diagonals (own pieces transparent). Both halves stay <= 0.
+    addMgEgConstr("BishopXrayPawns", &evalParams.BishopXrayPawns, boundsNonPositive());
+
     // --- Initiative system. All seven scalars carry mg=0 by construction
     // (see eval_params.h:206-208) and live entirely in the eg half. The
     // first six are positive features; InitiativeConstant is the
@@ -579,7 +551,6 @@ static std::vector<ParamRef> collectParams() {
                    boundsNonNegative()});
     out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false,
                    boundsNonNegative()});
-    out.push_back({"InitiativeTension.eg", &evalParams.InitiativeTension, false, boundsNonNegative()});
     out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
                    boundsNonNegative()});
     // InitiativePureBase fires only in pure-pawn endgames; it is a
@@ -818,11 +789,11 @@ static void centerPSTGauge() {
     };
 
     centerWithMaterial(evalParams.PawnPST, 8, 56, evalParams.PieceScore[Pawn]);
-    centerWithMaterial(evalParams.KnightPST, 0, 64, evalParams.PieceScore[Knight]);
-    centerWithMaterial(evalParams.BishopPST, 0, 64, evalParams.PieceScore[Bishop]);
-    centerWithMaterial(evalParams.RookPST, 0, 64, evalParams.PieceScore[Rook]);
-    centerWithMaterial(evalParams.QueenPST, 0, 64, evalParams.PieceScore[Queen]);
-    centerNoMaterial(evalParams.KingPST, 0, 64);
+    centerWithMaterial(evalParams.KnightPST, 0, 32, evalParams.PieceScore[Knight]);
+    centerWithMaterial(evalParams.BishopPST, 0, 32, evalParams.PieceScore[Bishop]);
+    centerWithMaterial(evalParams.RookPST, 0, 32, evalParams.PieceScore[Rook]);
+    centerWithMaterial(evalParams.QueenPST, 0, 32, evalParams.PieceScore[Queen]);
+    centerNoMaterial(evalParams.KingPST, 0, 32);
 }
 
 // Hard validation step. Walks every ParamRef, prints any value outside
@@ -951,8 +922,508 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
     std::cerr << "checkpoint written to " << outPath << "\n";
 }
 
+// Sparse feature representation. Each position carries a list of
+// non-zero per-parameter linearization coefficients. uint16 fits the
+// 778-parameter index space; int16 fits every post-taper finite-
+// difference delta we have observed (max magnitudes for piece-score
+// and material params with all queens of the side present land
+// comfortably under 32K).
+struct FeatureEntry {
+    uint16_t paramIdx;
+    int16_t coef;
+};
+using FeatureVector = std::vector<FeatureEntry>;
+
+// Per-corpus feature cache. baseline[i] is the white-POV eval of
+// position i at theta_0. rows[i] is the sparse vector of (paramIdx,
+// coef) pairs such that
+//   eval(theta, position_i) ≈ baseline[i] + sum_j (theta_j - theta0[j]) * rows[i][j].coef
+// The approximation is exact for parameters the eval is linear in
+// (PSTs, material, mobility, threats, pawn structure, most rook /
+// bishop terms) and a first-order Taylor expansion at theta_0 for
+// the king-safety quadratic. Re-extracting after each leaf refresh
+// keeps drift bounded.
+struct CorpusFeatures {
+    std::vector<int> baseline;
+    std::vector<FeatureVector> rows;
+    std::vector<int> theta0;
+};
+
+// Extract per-position linearization features for the entire corpus.
+// One serial outer loop over parameters with a parallel inner loop
+// over positions. Per parameter we perturb theta_j by +1 (or -1 if
+// the upper neighbor is infeasible), evaluate every position on
+// `numThreads` threads, and append the non-zero deltas to the
+// per-position sparse feature vector. Each parameter's perturbation
+// is restored before moving on to the next, so the global evalParams
+// is unchanged when extraction returns.
+//
+// Cost: roughly (P / 1) * (N / numThreads) microseconds. For the
+// 778-parameter / 5.4M-position corpus on 14 threads, ~5 minutes.
+// Memory: 5.4M * avg ~100 active params * 4 bytes = ~2 GB plus the
+// 22 MB baseline vector.
+static CorpusFeatures extractCorpusFeatures(std::vector<LabeledPosition> &positions,
+                                            std::vector<ParamRef> &params, int numThreads) {
+    const size_t N = positions.size();
+    const size_t P = params.size();
+
+    CorpusFeatures cf;
+    cf.baseline.assign(N, 0);
+    cf.rows.assign(N, FeatureVector{});
+    cf.theta0.resize(P);
+    for (size_t j = 0; j < P; j++)
+        cf.theta0[j] = params[j].read();
+
+    auto runOverPositions = [&](auto &&fn) {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([start, end, &positions, fn]() {
+                for (size_t i = start; i < end; i++) {
+                    Board board = positions[i].board;
+                    int raw = evaluate(board);
+                    if (board.sideToMove == Black) raw = -raw;
+                    fn(i, raw);
+                }
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    };
+
+    std::cerr << "extracting features for " << N << " positions across " << P
+              << " parameters on " << numThreads << " threads\n";
+
+    runOverPositions([&](size_t i, int raw) { cf.baseline[i] = raw; });
+
+    std::vector<int> delta(N, 0);
+    const size_t reportEvery = std::max<size_t>(1, P / 20);
+    const int int16Min = std::numeric_limits<int16_t>::min();
+    const int int16Max = std::numeric_limits<int16_t>::max();
+
+    for (size_t j = 0; j < P; j++) {
+        auto &p = params[j];
+        int orig = cf.theta0[j];
+        int sign = 0;
+        if (p.allow(orig + 1)) {
+            sign = 1;
+            p.write(orig + 1);
+        } else if (p.allow(orig - 1)) {
+            sign = -1;
+            p.write(orig - 1);
+        } else {
+            // Pinned parameter contributes no linearization feature.
+            continue;
+        }
+
+        runOverPositions([&, sign](size_t i, int raw) {
+            // sign = +1 means feature = raw - baseline.
+            // sign = -1 means feature = baseline - raw (preserves
+            // the d(eval) / d(theta) sign so the Newton step is
+            // independent of which neighbor we sampled).
+            delta[i] = sign > 0 ? (raw - cf.baseline[i]) : (cf.baseline[i] - raw);
+        });
+
+        p.write(orig);
+
+        // Append non-zero entries in parallel by sharding the row
+        // index range across threads. Each thread only writes to its
+        // own slice of cf.rows so there is no contention.
+        std::vector<std::thread> appenders;
+        appenders.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            appenders.emplace_back([start, end, &delta, &cf, j, int16Min, int16Max]() {
+                for (size_t i = start; i < end; i++) {
+                    int d = delta[i];
+                    if (d == 0) continue;
+                    if (d > int16Max) d = int16Max;
+                    if (d < int16Min) d = int16Min;
+                    cf.rows[i].push_back({static_cast<uint16_t>(j), static_cast<int16_t>(d)});
+                }
+            });
+        }
+        for (auto &th : appenders)
+            th.join();
+
+        if ((j + 1) % reportEvery == 0 || j + 1 == P)
+            std::cerr << "  feature extract: " << (j + 1) << "/" << P << " parameters\n";
+    }
+
+    // Lightweight self-check: at theta_0 the prediction collapses to
+    // the baseline, so re-evaluating a sample of positions and
+    // comparing should mismatch nowhere. A non-zero count points at a
+    // non-deterministic eval (e.g., a forgotten thread_local hash
+    // race) before the first GN iteration.
+    size_t checkCount = 0, mismatchCount = 0;
+    size_t step = std::max<size_t>(1, N / 1000);
+    for (size_t i = 0; i < N; i += step) {
+        Board board = positions[i].board;
+        int raw = evaluate(board);
+        if (board.sideToMove == Black) raw = -raw;
+        if (raw != cf.baseline[i]) mismatchCount++;
+        checkCount++;
+    }
+    std::cerr << "feature extraction done: " << mismatchCount << "/" << checkCount
+              << " baseline mismatches\n";
+
+    return cf;
+}
+
+// In-place Cholesky decomposition of a symmetric positive-definite
+// matrix A (row-major n x n) with an optional ridge lambda added to
+// the diagonal for numerical safety. The lower triangle of A is
+// overwritten with the Cholesky factor L; the upper triangle is
+// untouched. Returns false on a non-positive pivot, which the caller
+// treats as "step rejected" and falls back to the next phase.
+static bool choleskyDecompose(std::vector<double> &A, size_t n, double lambda) {
+    if (lambda > 0.0) {
+        for (size_t i = 0; i < n; i++)
+            A[i * n + i] += lambda;
+    }
+    for (size_t i = 0; i < n; i++) {
+        for (size_t j = 0; j <= i; j++) {
+            double sum = A[i * n + j];
+            for (size_t k = 0; k < j; k++)
+                sum -= A[i * n + k] * A[j * n + k];
+            if (i == j) {
+                if (sum <= 0.0) return false;
+                A[i * n + i] = std::sqrt(sum);
+            } else {
+                A[i * n + j] = sum / A[j * n + j];
+            }
+        }
+    }
+    return true;
+}
+
+// Solve L * L^T * x = b in place using the lower-triangular L
+// produced by choleskyDecompose. The right-hand-side b is
+// overwritten with the solution x. Cost is O(n^2).
+static void choleskySolve(const std::vector<double> &A, std::vector<double> &b, size_t n) {
+    // Forward solve L * y = b. y reuses b's storage.
+    for (size_t i = 0; i < n; i++) {
+        double sum = b[i];
+        for (size_t j = 0; j < i; j++)
+            sum -= A[i * n + j] * b[j];
+        b[i] = sum / A[i * n + i];
+    }
+    // Back solve L^T * x = y. x reuses b's storage.
+    for (size_t i = n; i-- > 0;) {
+        double sum = b[i];
+        for (size_t j = i + 1; j < n; j++)
+            sum -= A[j * n + i] * b[j];
+        b[i] = sum / A[i * n + i];
+    }
+}
+
+// Convenience wrapper: decompose and solve with a single ridge.
+// Returns true iff the system was solved (i.e., A + lambda*I was
+// positive definite). On false, b is untouched.
+static bool choleskySolveSymmetric(std::vector<double> &A, std::vector<double> &b, size_t n,
+                                   double lambda) {
+    if (!choleskyDecompose(A, n, lambda)) return false;
+    choleskySolve(A, b, n);
+    return true;
+}
+
+// Loss evaluated against the cached corpus features instead of the
+// engine. Exact for parameters the eval is linear in (the dominant
+// majority) and a first-order Taylor approximation for the king-
+// safety quadratic. Used inside the Gauss-Newton line search to avoid
+// repeated engine evaluations of the same corpus.
+static double computeLossFromFeatures(const std::vector<LabeledPosition> &positions,
+                                      const CorpusFeatures &cf, const std::vector<int> &theta,
+                                      double K, int numThreads) {
+    const size_t N = positions.size();
+    const size_t P = theta.size();
+
+    std::vector<int> deltaTheta(P);
+    for (size_t j = 0; j < P; j++)
+        deltaTheta[j] = theta[j] - cf.theta0[j];
+
+    std::vector<double> partial(numThreads, 0.0);
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++) {
+        size_t start = (N * t) / numThreads;
+        size_t end = (N * (t + 1)) / numThreads;
+        threads.emplace_back([&, start, end, t]() {
+            double sum = 0.0;
+            for (size_t i = start; i < end; i++) {
+                int64_t eval = cf.baseline[i];
+                for (const auto &fe : cf.rows[i])
+                    eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                double pred = sigmoid(static_cast<double>(eval), K);
+                double err = pred - positions[i].result;
+                sum += err * err;
+            }
+            partial[t] = sum;
+        });
+    }
+    for (auto &th : threads)
+        th.join();
+    double total = 0.0;
+    for (double p : partial)
+        total += p;
+    return total / static_cast<double>(N);
+}
+
+// One full Gauss-Newton iteration over the parameter vector. With
+// pre-extracted features the iteration becomes:
+//
+//   1. Predict eval per position from cached baseline and features.
+//   2. Compute residual r_i = sigmoid(K * eval_i) - target_i.
+//   3. Accumulate J^T J = K^2 * sum sigmoid'^2 * f_i f_i^T and
+//      J^T r = K * sum sigmoid' * r_i * f_i in parallel over the
+//      corpus.
+//   4. Solve (J^T J + lambda * I) * x = J^T r with Cholesky. The
+//      ridge lambda = 1e-3 * trace(J^T J) / P keeps the solver
+//      stable when the Hessian is rank-deficient or near-singular
+//      under tightly correlated parameters.
+//   5. Clip per-parameter steps to +/-32 cp for robustness against
+//      pathological corner moves the linearization gets wrong.
+//   6. Backtracking line search at scales [1.0, 0.5, 0.25] using the
+//      exact engine loss; accept the first scale that beats the
+//      threaded-noise threshold.
+//
+// Returns the relative loss decrease. Updates bestLoss in place when
+// an improvement is accepted; restores the parameter vector
+// otherwise.
+static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
+                              const CorpusFeatures &cf, std::vector<ParamRef> &params, double K,
+                              int numThreads, double &bestLoss) {
+    const size_t N = positions.size();
+    const size_t P = params.size();
+
+    constexpr int maxStepPerParam = 32;
+
+    const double L0 = bestLoss;
+    const double acceptThreshold = L0 * 1e-7;
+
+    std::vector<int> theta(P);
+    for (size_t j = 0; j < P; j++)
+        theta[j] = params[j].read();
+    std::vector<int> deltaTheta(P);
+    for (size_t j = 0; j < P; j++)
+        deltaTheta[j] = theta[j] - cf.theta0[j];
+
+    // Per-thread accumulators. P * P doubles per thread; for P=778
+    // that is about 4.8 MB per thread, comfortably under any cache
+    // line budget but also small enough to merge serially in <10 ms.
+    std::vector<std::vector<double>> threadJtJ(numThreads, std::vector<double>(P * P, 0.0));
+    std::vector<std::vector<double>> threadJtr(numThreads, std::vector<double>(P, 0.0));
+
+    {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([&, start, end, t]() {
+                auto &JtJ = threadJtJ[t];
+                auto &Jtr = threadJtr[t];
+                for (size_t i = start; i < end; i++) {
+                    int64_t eval = cf.baseline[i];
+                    const auto &row = cf.rows[i];
+                    for (const auto &fe : row)
+                        eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                    double pred = sigmoid(static_cast<double>(eval), K);
+                    double residual = pred - positions[i].result;
+                    double sigprime = pred * (1.0 - pred);
+                    double weightR = K * sigprime * residual;
+                    double weightH = K * K * sigprime * sigprime;
+                    const size_t M = row.size();
+                    for (size_t a = 0; a < M; a++) {
+                        int idxA = row[a].paramIdx;
+                        double cA = static_cast<double>(row[a].coef);
+                        Jtr[idxA] += weightR * cA;
+                        double rowScale = weightH * cA;
+                        for (size_t b = 0; b < a; b++) {
+                            int idxB = row[b].paramIdx;
+                            double cB = static_cast<double>(row[b].coef);
+                            double v = rowScale * cB;
+                            JtJ[idxA * P + idxB] += v;
+                            JtJ[idxB * P + idxA] += v;
+                        }
+                        JtJ[idxA * P + idxA] += rowScale * cA;
+                    }
+                }
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    }
+
+    // Merge thread accumulators.
+    std::vector<double> JtJ(P * P, 0.0);
+    std::vector<double> Jtr(P, 0.0);
+    for (int t = 0; t < numThreads; t++) {
+        const auto &tj = threadJtJ[t];
+        const auto &tr = threadJtr[t];
+        for (size_t k = 0; k < P * P; k++)
+            JtJ[k] += tj[k];
+        for (size_t j = 0; j < P; j++)
+            Jtr[j] += tr[j];
+    }
+
+    // Ridge regularization sized to the average diagonal so the
+    // ridge does not dominate strong parameters or vanish on weak
+    // ones.
+    double diagSum = 0.0;
+    for (size_t j = 0; j < P; j++)
+        diagSum += JtJ[j * P + j];
+    double avgDiag = diagSum / static_cast<double>(P);
+    double ridge = 1e-3 * avgDiag;
+    if (ridge < 1e-12) ridge = 1e-12;
+
+    std::vector<double> step = Jtr;
+    if (!choleskySolveSymmetric(JtJ, step, P, ridge)) {
+        std::cerr << "  gauss-newton: Cholesky failed (non-positive pivot); skipping\n";
+        return 0.0;
+    }
+
+    // step now contains x in (J^T J + lambda I) x = J^T r. The
+    // Newton update is theta -= x with backtracking. clampToBounds
+    // keeps the step inside the constraint region.
+    auto applyScaled = [&](double scale) {
+        for (size_t j = 0; j < P; j++) {
+            double s = -scale * step[j];
+            if (s > maxStepPerParam) s = static_cast<double>(maxStepPerParam);
+            if (s < -maxStepPerParam) s = static_cast<double>(-maxStepPerParam);
+            int newVal = theta[j] + static_cast<int>(std::round(s));
+            params[j].write(params[j].clampToBounds(newVal));
+        }
+    };
+    auto restore = [&]() {
+        for (size_t j = 0; j < P; j++)
+            params[j].write(theta[j]);
+    };
+
+    static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
+    for (double scale : backtrackScales) {
+        applyScaled(scale);
+        double L = computeLoss(positions, K, numThreads);
+        if (L0 - L > acceptThreshold) {
+            bestLoss = L;
+            std::cerr << "  gauss-newton accepted scale=" << scale << " loss=" << L << "\n";
+            return (L0 - L) / L0;
+        }
+    }
+
+    restore();
+    return 0.0;
+}
+
+// One Newton-Raphson pass over the parameter vector. Estimates per-
+// parameter first and second derivatives of the loss via central finite
+// differences (delta = 1 cp, the natural integer unit of these scalars),
+// builds a batched Newton step, and accepts the largest backtracking
+// scale whose loss is below the pre-pass baseline by more than the
+// threaded-noise threshold the coordinate-descent loop already uses.
+//
+// On accept the loop moves the entire parameter vector at once, so a
+// converged Newton phase can collapse what would be many coordinate-
+// descent passes into a single sweep. On reject the loop restores the
+// pre-pass vector and reports zero improvement; the caller treats two
+// consecutive zero-improvement passes as the signal to fall back to the
+// coordinate-descent ladder.
+//
+// Returns the relative loss decrease (`(L0 - Lnew) / L0`). Updates
+// `bestLoss` in place when an improvement is accepted.
+static double newtonPass(std::vector<LabeledPosition> &positions,
+                         std::vector<ParamRef> &params, double K, int numThreads,
+                         double &bestLoss) {
+    constexpr int delta = 1;             // finite-difference step size
+    constexpr int maxStep = 16;          // per-parameter clip
+    constexpr double minHessian = 1e-12; // floor for Newton division
+
+    const double L0 = bestLoss;
+    const double acceptThreshold = L0 * 1e-7; // matches the threaded CD threshold
+
+    std::vector<int> theta(params.size());
+    for (size_t i = 0; i < params.size(); i++)
+        theta[i] = params[i].read();
+
+    std::vector<double> dtheta(params.size(), 0.0);
+
+    for (size_t i = 0; i < params.size(); i++) {
+        auto &p = params[i];
+        int orig = theta[i];
+        bool canPlus = p.allow(orig + delta);
+        bool canMinus = p.allow(orig - delta);
+        if (!canPlus && !canMinus) continue;
+
+        double Lp = L0;
+        double Lm = L0;
+        if (canPlus) {
+            p.write(orig + delta);
+            Lp = computeLoss(positions, K, numThreads);
+        }
+        if (canMinus) {
+            p.write(orig - delta);
+            Lm = computeLoss(positions, K, numThreads);
+        }
+        p.write(orig); // restore for the next parameter and the line search
+
+        double g, h;
+        if (canPlus && canMinus) {
+            g = (Lp - Lm) / (2.0 * delta);
+            h = (Lp - 2.0 * L0 + Lm) / (delta * delta);
+        } else if (canPlus) {
+            g = (Lp - L0) / delta;
+            h = minHessian;
+        } else {
+            g = (L0 - Lm) / delta;
+            h = minHessian;
+        }
+
+        double step;
+        if (h > minHessian) {
+            step = -g / h;
+        } else {
+            // Flat or concave: gradient-descent fallback, capped at one
+            // cp so a noisy region cannot launch the parameter.
+            step = (g > 0.0 ? -1.0 : 1.0);
+        }
+        if (step > maxStep) step = maxStep;
+        if (step < -maxStep) step = -maxStep;
+        dtheta[i] = step;
+    }
+
+    auto applyScaled = [&](double scale) {
+        for (size_t i = 0; i < params.size(); i++) {
+            int newVal = theta[i] + static_cast<int>(std::round(dtheta[i] * scale));
+            params[i].write(params[i].clampToBounds(newVal));
+        }
+    };
+
+    auto restore = [&]() {
+        for (size_t i = 0; i < params.size(); i++)
+            params[i].write(theta[i]);
+    };
+
+    static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
+    for (double scale : backtrackScales) {
+        applyScaled(scale);
+        double L = computeLoss(positions, K, numThreads);
+        if (L0 - L > acceptThreshold) {
+            bestLoss = L;
+            std::cerr << "  newton accepted scale=" << scale << " loss=" << L << "\n";
+            return (L0 - L) / L0;
+        }
+    }
+
+    restore();
+    return 0.0;
+}
+
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
-                 int maxPasses, int refitKEvery, int refreshLeavesEvery) {
+                 int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses,
+                 bool useGaussNewton) {
     auto params = collectParams();
     std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
               << " positions with " << numThreads << " threads, K=" << K << "\n";
@@ -962,6 +1433,112 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
 
     double bestLoss = computeLoss(positions, K, numThreads);
     std::cerr << "initial loss: " << bestLoss << "\n";
+
+    // Optional Newton-style initial phase. Two flavors share the same
+    // pass-count budget and the same K-refit / leaf-refresh cadences:
+    //
+    //   * Gauss-Newton (default when useGaussNewton is true) caches
+    //     per-position linearization features once, then every
+    //     iteration is one parallel pass to accumulate J^T J and
+    //     J^T r plus a Cholesky solve. Per iteration: roughly four
+    //     seconds plus three exact-loss evaluations for the line
+    //     search, versus ten minutes for the diagonal Newton path on
+    //     the same corpus.
+    //   * Diagonal Newton (useGaussNewton false) uses central finite
+    //     differences on the full loss to estimate per-parameter
+    //     first and second derivatives. No feature cache, no linear
+    //     algebra dependency, but per-pass cost is 2P + 3 loss
+    //     evaluations.
+    //
+    // Both paths stop early when two consecutive passes fail to clear
+    // the threaded-noise threshold or when the relative improvement
+    // drops below 1e-6. After Newton-style passes finish, the
+    // coordinate-descent ladder below picks up any residual.
+    int globalPass = 0;
+    if (newtonPasses > 0 && useGaussNewton) {
+        std::cerr << "gauss-newton phase: up to " << newtonPasses << " passes\n";
+        CorpusFeatures cf = extractCorpusFeatures(positions, params, numThreads);
+        int stalled = 0;
+        for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
+            std::cerr << "gauss-newton pass " << globalPass << " starting (loss=" << bestLoss
+                      << ")\n";
+            double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss);
+            centerPSTGauge();
+            std::cerr << "gauss-newton pass " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-6) {
+                if (++stalled >= 2) {
+                    std::cerr << "gauss-newton convergence; switching to coordinate descent\n";
+                    pass++;
+                    globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after gauss-newton pass " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            }
+            if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after gauss-newton pass " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads);
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+                // Re-extract features against the new qsearch leaves.
+                // Without this the Newton step would optimize against
+                // stale linearizations.
+                cf = extractCorpusFeatures(positions, params, numThreads);
+            }
+        }
+    } else if (newtonPasses > 0) {
+        std::cerr << "newton phase: up to " << newtonPasses << " passes\n";
+        int stalled = 0;
+        for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
+            std::cerr << "newton pass " << globalPass << " starting (loss=" << bestLoss << ")\n";
+            double rel = newtonPass(positions, params, K, numThreads, bestLoss);
+            centerPSTGauge();
+            std::cerr << "newton pass " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-6) {
+                if (++stalled >= 2) {
+                    std::cerr << "newton convergence; switching to coordinate descent\n";
+                    pass++; globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after newton pass " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            }
+            if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after newton pass " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads);
+                double oldK = K;
+                K = findBestK(positions, numThreads);
+                bestLoss = computeLoss(positions, K, numThreads);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+            }
+        }
+    }
 
     // Texel's Tuning Method with a step ladder. The strict CPW pseudocode
     // tries `+1` then `-1` per scalar; we generalize to a descending
@@ -1029,7 +1606,6 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         return improved;
     };
 
-    int globalPass = 0;
     for (int pass = 0; pass < maxPasses; pass++, globalPass++) {
         bool improved = runPass(globalPass, numThreads, relThresholdThreaded);
         // Canonicalize PST/material gauge so the per-term values stay
@@ -1112,7 +1688,7 @@ static void printArr8(const std::string &indent, Score arr[8]) {
     std::cout << "},\n";
 }
 
-static void printPST(const std::string &name, Score arr[64]) {
+static void printPST64(const std::string &name, const Score *arr) {
     std::cout << "    // " << name << "\n";
     std::cout << "    {\n";
     for (int row = 0; row < 8; row++) {
@@ -1121,6 +1697,21 @@ static void printPST(const std::string &name, Score arr[64]) {
             std::cout << fmtScore(arr[row * 8 + col]);
             if (row != 7 || col != 7) std::cout << ",";
             if (col < 7) std::cout << " ";
+        }
+        std::cout << "\n";
+    }
+    std::cout << "    },\n";
+}
+
+static void printPST32(const std::string &name, const Score *arr) {
+    std::cout << "    // " << name << " (half-board)\n";
+    std::cout << "    {\n";
+    for (int row = 0; row < 8; row++) {
+        std::cout << "        ";
+        for (int col = 0; col < 4; col++) {
+            std::cout << fmtScore(arr[row * 4 + col]);
+            if (row != 7 || col != 3) std::cout << ",";
+            if (col < 3) std::cout << " ";
         }
         std::cout << "\n";
     }
@@ -1156,7 +1747,8 @@ static void printCurrentValues() {
     printArr8("    ", evalParams.ConnectedPassersBonus);
 
     std::cout << "    " << fmtScore(evalParams.RookOn7thBonus) << ", // RookOn7thBonus\n";
-    std::cout << "    " << fmtScore(evalParams.BadBishopPenalty) << ", // BadBishopPenalty\n";
+    std::cout << "    " << fmtScore(evalParams.BadBishop) << ", // BadBishop\n";
+    std::cout << "    " << fmtScore(evalParams.BishopPawns) << ", // BishopPawns\n";
     std::cout << "    " << fmtScore(evalParams.Tempo) << ", // Tempo\n";
 
     // PieceScore
@@ -1167,12 +1759,12 @@ static void printCurrentValues() {
     }
     std::cout << "}, // PieceScore\n";
 
-    printPST("PawnPST", evalParams.PawnPST);
-    printPST("KnightPST", evalParams.KnightPST);
-    printPST("BishopPST", evalParams.BishopPST);
-    printPST("RookPST", evalParams.RookPST);
-    printPST("QueenPST", evalParams.QueenPST);
-    printPST("KingPST", evalParams.KingPST);
+    printPST64("PawnPST", evalParams.PawnPST);
+    printPST32("KnightPST", evalParams.KnightPST);
+    printPST32("BishopPST", evalParams.BishopPST);
+    printPST32("RookPST", evalParams.RookPST);
+    printPST32("QueenPST", evalParams.QueenPST);
+    printPST32("KingPST", evalParams.KingPST);
 
     // MobilityBonus
     std::cout << "    {\n";
@@ -1193,6 +1785,7 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.RookOpenFileBonus) << ", // RookOpenFileBonus\n";
     std::cout << "    " << fmtScore(evalParams.RookSemiOpenFileBonus)
               << ", // RookSemiOpenFileBonus\n";
+    std::cout << "    " << fmtScore(evalParams.RookOnQueenFile) << ", // RookOnQueenFile\n";
     std::cout << "    " << fmtScore(evalParams.KnightOutpostBonus) << ", // KnightOutpostBonus\n";
     std::cout << "    " << fmtScore(evalParams.BishopOutpostBonus) << ", // BishopOutpostBonus\n";
     std::cout << "    " << fmtScore(evalParams.TrappedRookByKingPenalty)
@@ -1208,31 +1801,40 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KingProtector) << ", // KingProtector\n";
     std::cout << "    " << fmtScore(evalParams.BishopPair) << ", // BishopPair\n";
 
-    std::cout << "    {" << fmtScore(evalParams.PawnShieldBonus[0]) << ", "
-              << fmtScore(evalParams.PawnShieldBonus[1]) << "}, // PawnShieldBonus\n";
-    std::cout << "    {";
-    for (int i = 0; i < 5; i++) {
-        std::cout << fmtScore(evalParams.BlockedPawnStorm[i]);
-        if (i < 4) std::cout << ", ";
+    std::cout << "    {\n";
+    for (int d = 0; d < 4; d++) {
+        std::cout << "        {";
+        for (int r = 0; r < 7; r++) {
+            std::cout << fmtScore(evalParams.Shelter[d][r]);
+            if (r < 6) std::cout << ", ";
+        }
+        std::cout << "}";
+        if (d < 3) std::cout << ",";
+        std::cout << "\n";
     }
-    std::cout << "}, // BlockedPawnStorm\n";
-    std::cout << "    {";
-    for (int i = 0; i < 5; i++) {
-        std::cout << fmtScore(evalParams.UnblockedPawnStorm[i]);
-        if (i < 4) std::cout << ", ";
+    std::cout << "    }, // Shelter\n";
+    std::cout << "    {\n";
+    for (int d = 0; d < 4; d++) {
+        std::cout << "        {";
+        for (int r = 0; r < 7; r++) {
+            std::cout << fmtScore(evalParams.UnblockedStorm[d][r]);
+            if (r < 6) std::cout << ", ";
+        }
+        std::cout << "}";
+        if (d < 3) std::cout << ",";
+        std::cout << "\n";
     }
-    std::cout << "}, // UnblockedPawnStorm\n";
-    std::cout << "    " << fmtScore(evalParams.SemiOpenFileNearKing)
-              << ", // SemiOpenFileNearKing\n";
-    std::cout << "    " << fmtScore(evalParams.OpenFileNearKing) << ", // OpenFileNearKing\n";
+    std::cout << "    }, // UnblockedStorm\n";
+    std::cout << "    {";
+    for (int r = 0; r < 7; r++) {
+        std::cout << fmtScore(evalParams.BlockedStorm[r]);
+        if (r < 6) std::cout << ", ";
+    }
+    std::cout << "}, // BlockedStorm\n";
     std::cout << "    " << fmtScore(evalParams.UndefendedKingZoneSq)
               << ", // UndefendedKingZoneSq\n";
-    std::cout << "    {";
-    for (int i = 0; i < 9; i++) {
-        std::cout << fmtScore(evalParams.KingSafeSqPenalty[i]);
-        if (i < 8) std::cout << ", ";
-    }
-    std::cout << "}, // KingSafeSqPenalty\n";
+    std::cout << "    " << fmtScore(evalParams.KingMobilityFactor)
+              << ", // KingMobilityFactor\n";
 
     std::cout << "    " << fmtScore(evalParams.KingAttackByKnight)
               << ", // KingAttackByKnight\n";
@@ -1269,6 +1871,7 @@ static void printCurrentValues() {
               << fmtScore(evalParams.CentralPawnBonus[1]) << "}, // CentralPawnBonus\n";
     std::cout << "    " << fmtScore(evalParams.BishopLongDiagonalBonus)
               << ", // BishopLongDiagonalBonus\n";
+    std::cout << "    " << fmtScore(evalParams.BishopXrayPawns) << ", // BishopXrayPawns\n";
     std::cout << "    " << fmtScore(evalParams.InitiativePasser) << ", // InitiativePasser\n";
     std::cout << "    " << fmtScore(evalParams.InitiativePawnCount)
               << ", // InitiativePawnCount\n";
@@ -1294,6 +1897,7 @@ int main(int argc, char **argv) {
     auto usage = [] {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
+        std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
@@ -1344,6 +1948,8 @@ int main(int argc, char **argv) {
     std::string fromCheckpoint;
     int refitKEvery = 5;        // refit K every N completed passes; 0 disables
     int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
+    int newtonPasses = 0;       // run N Newton-style passes before CD; 0 disables
+    bool useGaussNewton = true; // true: Gauss-Newton, false: diagonal Newton
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -1355,6 +1961,12 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--refresh-leaves-every" && argIdx + 1 < argc) {
             refreshLeavesEvery = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--newton-passes" && argIdx + 1 < argc) {
+            newtonPasses = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--gauss-newton" && argIdx + 1 < argc) {
+            useGaussNewton = std::atoi(argv[argIdx + 1]) != 0;
             argIdx += 2;
         } else {
             break;
@@ -1400,7 +2012,8 @@ int main(int argc, char **argv) {
     double K = findBestK(positions, numThreads);
     std::cerr << "K=" << K << "\n";
 
-    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery);
+    tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
+         useGaussNewton);
     printCurrentValues();
     return 0;
 }

@@ -4,22 +4,27 @@
 // `evalParams` instance is initialized from this struct, and
 // `resetEvalParams()` snaps it back to these values after a tune run.
 //
-// Values below come from a Texel tune covering every scalar in
-// `EvalParams` (1065 mg/eg halves) over 5.47M unique qsearch-leaf
-// positions extracted from a fresh 64,000-game self-play PGN at
-// nodes=100000 with mate-scored plies filtered out and identical
-// positions folded into a single weighted-average row at extraction
-// time. Tune ran to its full thirty parallel passes plus thirty
-// deterministic-finalizer passes, ending at loss 0.10736 (down
-// from an initial 0.1086 against the prior compiled-in defaults).
-// The values were then loaded through the canonicalization
-// pipeline: project violators onto current bounds, then center each
-// piece's PST around zero by mean and push the mean into PieceScore
-// (eval is bit-identical to the un-centered checkpoint, but the
-// per-term values stop drifting in the PST/material gauge null
-// direction).
+// Values below merge the tuned snapshot from main with the structural
+// refactor on this branch. Single-field terms (ThreatBy*, Tempo,
+// PieceScore, the rank chains, mobility, passed pawn extras, etc.)
+// keep main's tuned values verbatim. The structural rewrites convert
+// the corresponding tuned values into the new shape:
+//   - BadBishopPenalty -> BadBishop + BishopPawns split. Even split
+//     so `BadBishop + BishopPawns` reproduces the legacy total at one
+//     same-color pawn with no closed center.
+//   - Non-pawn PSTs -> 32-entry half-board layout. Each entry is the
+//     mean of the matching file pair from main's 64-entry table.
+//   - PawnShieldBonus, BlockedPawnStorm, UnblockedPawnStorm, and the
+//     Semi/OpenFileNearKing pair -> Shelter[4][7], UnblockedStorm[4][7],
+//     BlockedStorm[7]. The dominant peaks of the legacy tables are
+//     reproduced at the appropriate (edge_distance, rank) slots; the
+//     remaining cells are conservative starting values that the next
+//     Texel pass will refine.
+//   - KingSafeSqPenalty -> KingMobilityFactor (linear). The next
+//     Texel pass will fit the per-square weight against the new
+//     accumulator-folded form.
 //
-// Tuner improvements that produced this state:
+// Tuner improvements that produced the underlying main snapshot:
 //   - Bounds-based ParamRef with iterative-clamp projection that
 //     repairs chain violations the original sign-derived clamp could
 //     not (knight mobility ending in S(42, 23) is the canonical
@@ -46,16 +51,19 @@
 //     `SafePawnPush`, slider-on-queen, restricted piece) >= 0 each
 //     half.
 //   - Pawn-structure penalties (isolated, doubled, backward, weak
-//     unopposed, doubled-isolated, blocked, pawn-island,
-//     bad-bishop) <= 0 each half.
+//     unopposed, doubled-isolated, blocked, pawn-island) <= 0 each
+//     half. Bishop penalties (BadBishop, BishopPawns) <= 0 each half.
 //   - BishopPair / MinorOnKingRing / RookOnKingRing >= 0 against
 //     universal chess priors.
-//   - `RookOpenFile >= RookSemiOpenFile >= 0` per phase, and
-//     `OpenFileNearKing <= SemiOpenFileNearKing <= 0` mirrored for
-//     the king-zone files.
+//   - `RookOpenFile >= RookSemiOpenFile >= 0` per phase. The classical
+//     shelter / storm grids replace the previous semi-open / open file
+//     near-king pair: Shelter[d][0] is the no-pawn (semi-open) file
+//     penalty (<= 0); other Shelter slots are non-negative; storm slots
+//     stay non-negative because they are subtracted at the call site.
 //   - King-attack and king-safe-check piece-weight chains:
 //     `Queen >= Rook >= max(Bishop, Knight)` per half.
-//   - `KingSafeSqPenalty` non-decreasing chain on both halves.
+//   - `KingMobilityFactor` >= 0 each half (subtracted from the
+//     accumulator at the call site).
 //   - Mobility non-decreasing chain in count, per piece type and
 //     half.
 //   - Passed pawn rank chains: `PassedPawnBonus`, `ConnectedPawnBonus`,
@@ -74,144 +82,155 @@
 
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
-    S(226, 36), // ThreatByPawn
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(211, 14), S(196, 13), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(246, 0), S(0, 0)},
-    S(215, 21), // ThreatByKing
-    S(0, 0), // Hanging
-    S(34, 28), // WeakQueen
-    S(60, 16), // SafePawnPush
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 29), S(0, 43), S(0, 46), S(0, 46), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 22), S(0, 49), S(0, 78), S(0, 88), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(-33, -41), S(-33, -49), S(-93, -62), S(-312, -137), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(33, 23), S(33, 65), S(230, 124), S(230, 405), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(82, 24), S(89, 28), S(124, 28), S(124, 28), S(0, 0)},
-    S(0, 32), // RookOn7thBonus
-    S(-11, -11), // BadBishopPenalty
-    S(36, 0), // Tempo
-    {S(0, 0), S(261, 256), S(1002, 656), S(1056, 602), S(1610, 927), S(2692, 2153), S(0, 0)}, // PieceScore
+    S(228, 36), // ThreatByPawn
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(179, 17), S(160, 34), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(226, 8), S(0, 0)},
+    S(63, 1), // ThreatByKing
+    S(98, 31), // Hanging
+    S(26, 4), // WeakQueen
+    S(61, 16), // SafePawnPush
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 30), S(0, 48), S(0, 48), S(0, 48), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 26), S(0, 47), S(0, 80), S(0, 92), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, -46), S(-28, -66), S(-80, -66), S(-324, -103), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(26, 21), S(51, 63), S(222, 112), S(222, 389), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(-26, 28), S(125, 28), S(188, 28), S(188, 28), S(0, 0)},
+    S(0, 27), // RookOn7thBonus
+    S(0, 0), // BadBishop
+    S(-2, -9), // BishopPawns
+    S(42, 0), // Tempo
+    {S(0, 0), S(242, 256), S(986, 629), S(1040, 569), S(1578, 902), S(2706, 2053), S(0, 0)}, // PieceScore
     // PawnPST
     {
         S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0),
-        S(-40, -59), S(-62, -61), S(-58, -60), S(-46, -71), S(-53, -39), S(-17, -49), S(20, -61), S(-118, -74),
-        S(-82, -69), S(-126, -68), S(-90, -75), S(-94, -75), S(-28, -74), S(-89, -68), S(-42, -81), S(-85, -79),
-        S(-70, -51), S(-93, -53), S(-95, -85), S(-37, -96), S(-51, -81), S(-35, -85), S(-89, -73), S(-74, -71),
-        S(-6, -27), S(7, -43), S(18, -80), S(9, -83), S(32, -73), S(18, -93), S(-49, -43), S(-75, -28),
-        S(99, 56), S(82, 54), S(129, 17), S(137, 6), S(105, 12), S(160, 41), S(25, 79), S(8, 77),
-        S(325, 163), S(-20, 238), S(137, 224), S(165, 258), S(205, 159), S(346, 191), S(-201, 287), S(-88, 236),
+        S(-50, -68), S(-42, -58), S(-63, -61), S(-33, -68), S(-21, -70), S(-79, -55), S(-59, -67), S(-40, -78),
+        S(-101, -64), S(-88, -62), S(-77, -80), S(-79, -85), S(-30, -65), S(-111, -64), S(-82, -81), S(-112, -71),
+        S(-72, -51), S(-105, -50), S(-105, -83), S(-58, -89), S(-48, -90), S(-73, -76), S(-86, -66), S(-77, -71),
+        S(-33, -6), S(8, -50), S(-11, -67), S(41, -95), S(49, -82), S(-22, -88), S(-31, -51), S(-31, -25),
+        S(116, 68), S(45, 79), S(93, 16), S(76, 10), S(164, 22), S(207, 8), S(130, 59), S(-7, 81),
+        S(159, 184), S(43, 229), S(232, 211), S(132, 217), S(236, 198), S(147, 228), S(-106, 300), S(23, 203),
         S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)
     },
-    // KnightPST
+    // KnightPST (half-board)
     {
-        S(-554, 11), S(-67, -18), S(-106, -10), S(1, -32), S(-26, -11), S(-73, -27), S(-98, -14), S(-47, -18),
-        S(-112, -62), S(43, -19), S(-62, -8), S(20, -15), S(-15, -3), S(20, -37), S(-77, 31), S(-63, -17),
-        S(6, -20), S(32, -20), S(29, -10), S(24, 7), S(77, 10), S(53, -22), S(48, -16), S(-47, 15),
-        S(30, 11), S(56, 19), S(101, 13), S(128, 18), S(81, 32), S(93, 33), S(87, 9), S(3, 22),
-        S(43, 19), S(103, 14), S(130, 24), S(167, 28), S(96, 26), S(244, -11), S(92, 23), S(103, -12),
-        S(-176, 12), S(39, 13), S(142, -1), S(122, 13), S(187, 20), S(210, -10), S(200, 3), S(-24, 4),
-        S(-71, -6), S(-75, 28), S(71, 15), S(191, -20), S(-87, 27), S(320, -51), S(121, -41), S(-17, -13),
-        S(-521, -90), S(-361, 15), S(-383, 73), S(-85, 28), S(229, 28), S(-107, -62), S(172, -22), S(-697, 38)
+        S(-292, 30), S(-88, -5), S(-90, -8), S(-48, -13),
+        S(-56, -18), S(-77, 7), S(-23, -6), S(9, -4),
+        S(-41, -7), S(19, 1), S(28, -15), S(62, 14),
+        S(28, 1), S(102, 14), S(88, 30), S(97, 28),
+        S(103, 0), S(94, 23), S(157, 21), S(120, 50),
+        S(-4, -6), S(136, -4), S(84, 17), S(186, 23),
+        S(12, -73), S(-89, 20), S(76, -20), S(28, 40),
+        S(-299, -152), S(-134, -26), S(-237, 24), S(48, 6)
     },
-    // BishopPST
+    // BishopPST (half-board)
     {
-        S(-47, -50), S(36, -13), S(-30, -7), S(-36, -6), S(-78, 5), S(-85, -10), S(-17, -14), S(-6, -33),
-        S(51, -35), S(43, -20), S(63, -21), S(-26, 19), S(1, -3), S(7, 7), S(43, -37), S(-25, -70),
-        S(2, 5), S(72, 29), S(-12, 12), S(31, 12), S(-12, 36), S(4, -2), S(12, 2), S(33, -38),
-        S(3, -11), S(52, 4), S(59, 22), S(62, 12), S(29, 17), S(30, 13), S(12, 8), S(55, -7),
-        S(20, 20), S(78, 21), S(30, 24), S(55, 13), S(73, -8), S(149, -9), S(74, 17), S(6, -23),
-        S(91, 1), S(78, 27), S(-108, 22), S(27, -4), S(122, 13), S(264, -21), S(199, 7), S(94, -10),
-        S(-75, -3), S(-97, 3), S(8, 15), S(18, 2), S(-41, 6), S(37, -22), S(-181, 10), S(-174, -27),
-        S(-89, 0), S(-18, 37), S(-85, -15), S(-120, 65), S(-265, 43), S(-198, -10), S(-239, 9), S(-59, -72)
+        S(-59, -7), S(105, -33), S(-60, -3), S(-8, 0),
+        S(9, -28), S(36, -23), S(40, -12), S(-10, 10),
+        S(-1, -8), S(50, -4), S(7, 1), S(5, 18),
+        S(-11, -32), S(34, 12), S(46, 15), S(57, 7),
+        S(-14, -9), S(77, 12), S(93, 10), S(45, 21),
+        S(69, -12), S(37, -8), S(73, 5), S(117, -9),
+        S(-53, -42), S(-136, 11), S(19, 2), S(-25, 15),
+        S(-219, 27), S(-17, -6), S(-135, 27), S(-193, 41)
     },
-    // RookPST
+    // RookPST (half-board)
     {
-        S(-69, -16), S(-67, -4), S(-45, -6), S(-29, -14), S(0, -14), S(7, -15), S(-17, -5), S(-25, -30),
-        S(-139, -12), S(-126, -5), S(-79, -12), S(-20, -18), S(-25, -20), S(-11, 1), S(-11, -31), S(-206, 5),
-        S(-181, 6), S(-95, -23), S(-109, -5), S(-108, -11), S(-66, -21), S(-2, -18), S(-25, -19), S(-49, -29),
-        S(-95, 12), S(-15, 10), S(-93, 16), S(-38, 7), S(17, -13), S(-15, 17), S(64, 3), S(-71, -2),
-        S(-123, 33), S(14, 22), S(3, 35), S(51, 7), S(37, 6), S(91, 0), S(156, 0), S(-38, 3),
-        S(-77, 49), S(-24, 20), S(4, 31), S(78, 12), S(210, -23), S(287, -23), S(252, 0), S(26, 10),
-        S(-14, -9), S(-23, 6), S(19, 7), S(150, -7), S(126, -11), S(335, -44), S(126, 3), S(88, -15),
-        S(-123, 28), S(55, 6), S(151, 4), S(10, 18), S(69, 20), S(-56, 29), S(-257, 62), S(79, 7)
+        S(-25, -31), S(-38, -10), S(-2, -17), S(7, -25),
+        S(-74, -35), S(-36, -28), S(17, -33), S(-22, -38),
+        S(-81, -26), S(-74, -20), S(-31, -25), S(-73, -19),
+        S(-105, 9), S(-72, 21), S(-40, 11), S(8, -8),
+        S(-40, 23), S(5, 26), S(42, 20), S(20, 2),
+        S(6, 26), S(58, 18), S(52, 20), S(70, 17),
+        S(-1, 18), S(-22, 20), S(115, 6), S(90, 2),
+        S(21, 20), S(31, 19), S(60, 13), S(132, 18)
     },
-    // QueenPST
+    // QueenPST (half-board)
     {
-        S(-97, -14), S(-42, -49), S(-26, -55), S(0, -27), S(19, -59), S(-147, -25), S(105, -227), S(-222, -7),
-        S(-60, -58), S(-29, -40), S(20, -48), S(3, -17), S(19, -46), S(48, -59), S(60, -136), S(-131, -45),
-        S(-57, 0), S(8, -30), S(28, -16), S(-13, -14), S(16, -4), S(5, 44), S(38, 5), S(-21, -32),
-        S(6, -35), S(-65, 30), S(-6, 27), S(2, 51), S(53, 23), S(66, 37), S(20, 27), S(-11, -21),
-        S(10, -20), S(-21, 14), S(36, 58), S(8, 37), S(46, 72), S(74, 30), S(-17, 108), S(71, -62),
-        S(0, -48), S(-13, -34), S(4, 23), S(0, 34), S(22, 82), S(27, 145), S(70, 40), S(60, 34),
-        S(-119, -48), S(-138, 19), S(-71, 49), S(28, 47), S(-92, 138), S(81, 9), S(-211, 122), S(126, -82),
-        S(-86, 10), S(-80, 56), S(120, 1), S(35, 35), S(222, -60), S(18, 52), S(127, -37), S(13, 11)
+        S(-30, -40), S(-25, -60), S(4, -67), S(13, -40),
+        S(58, -100), S(43, -96), S(29, -45), S(35, -39),
+        S(-101, 0), S(24, -28), S(31, -4), S(3, -19),
+        S(-26, -24), S(18, 20), S(17, 18), S(7, 39),
+        S(53, -51), S(12, 27), S(43, 32), S(-17, 44),
+        S(49, -13), S(30, -1), S(-15, 64), S(-55, 119),
+        S(-96, 13), S(-173, 66), S(-145, 112), S(-70, 100),
+        S(70, -18), S(50, -22), S(63, -2), S(118, -8)
     },
-    // KingPST
+    // KingPST (half-board)
     {
-        S(172, -122), S(198, -74), S(137, -30), S(-88, -18), S(-28, -33), S(-138, -9), S(171, -67), S(224, -126),
-        S(363, -80), S(208, -42), S(148, -12), S(90, -4), S(21, 5), S(56, -1), S(175, -29), S(250, -62),
-        S(124, -54), S(63, -5), S(172, 4), S(-22, 38), S(53, 18), S(94, 11), S(192, -15), S(-7, -19),
-        S(68, -30), S(116, -11), S(-74, 38), S(-44, 55), S(-81, 58), S(53, 53), S(176, 24), S(-100, 6),
-        S(-201, 41), S(-3, 54), S(-40, 46), S(-199, 76), S(-223, 72), S(-78, 73), S(27, 83), S(-27, 15),
-        S(121, -5), S(-184, 77), S(-405, 88), S(-395, 117), S(-326, 107), S(-90, 124), S(152, 95), S(-132, 45),
-        S(343, -77), S(21, 21), S(-184, 42), S(-172, 113), S(44, 54), S(283, 63), S(19, 69), S(-123, -22),
-        S(-562, -367), S(521, -97), S(67, 65), S(-131, -26), S(-214, -94), S(-297, -24), S(30, 55), S(-414, -332)
+        S(233, -141), S(221, -87), S(43, -52), S(-38, -61),
+        S(257, -83), S(199, -55), S(39, -34), S(5, -21),
+        S(-41, -48), S(62, -28), S(20, -7), S(-99, 8),
+        S(-103, -6), S(-13, 3), S(-109, 36), S(-229, 31),
+        S(23, 9), S(37, 35), S(-186, 53), S(-300, 65),
+        S(131, 29), S(-119, 51), S(-111, 85), S(-299, 87),
+        S(247, -65), S(157, 72), S(99, 57), S(-95, 77),
+        S(-283, -203), S(293, 28), S(22, 109), S(-51, 77)
     },
     {
         {},
         {},
-        {S(-107, -164), S(-48, -41), S(-2, -14), S(9, 8), S(28, 24), S(43, 43), S(56, 43), S(56, 43), S(56, 43)},
-        {S(-15, 82), S(34, 91), S(67, 112), S(85, 128), S(103, 145), S(112, 150), S(112, 159), S(112, 161), S(122, 163), S(122, 163), S(122, 165), S(122, 165), S(128, 165), S(128, 165)},
-        {S(-37, 250), S(6, 285), S(12, 294), S(20, 300), S(20, 300), S(26, 315), S(26, 322), S(36, 329), S(36, 336), S(36, 344), S(43, 347), S(43, 356), S(43, 357), S(43, 357), S(43, 357)},
-        {S(5, 3), S(101, 225), S(109, 290), S(110, 318), S(130, 346), S(130, 348), S(143, 348), S(148, 370), S(160, 370), S(160, 372), S(160, 373), S(174, 380), S(174, 388), S(174, 388), S(176, 392), S(176, 400), S(176, 403), S(192, 403), S(212, 403), S(212, 403), S(218, 403), S(228, 403), S(228, 403), S(228, 403), S(228, 403), S(228, 403), S(230, 404), S(230, 404)},
+        {S(-43, -208), S(-34, -34), S(-5, -4), S(15, 12), S(27, 22), S(39, 39), S(56, 43), S(56, 43), S(56, 43)},
+        {S(-16, 80), S(48, 104), S(58, 131), S(81, 138), S(98, 146), S(107, 154), S(122, 158), S(122, 159), S(122, 163), S(122, 163), S(122, 163), S(122, 163), S(128, 165), S(128, 165)},
+        {S(-34, 258), S(7, 288), S(20, 290), S(20, 301), S(20, 303), S(22, 317), S(22, 328), S(22, 328), S(34, 336), S(34, 348), S(43, 348), S(43, 357), S(43, 357), S(43, 357), S(43, 357)},
+        {S(85, 35), S(101, 249), S(123, 250), S(123, 318), S(124, 334), S(135, 348), S(144, 348), S(145, 373), S(154, 373), S(163, 373), S(168, 373), S(174, 377), S(174, 379), S(174, 390), S(174, 395), S(182, 402), S(182, 402), S(188, 403), S(210, 403), S(210, 403), S(218, 403), S(228, 403), S(228, 403), S(228, 403), S(228, 403), S(228, 403), S(230, 404), S(230, 404)},
         {},
     },
-    {S(0, 0), S(-16, 38), S(-11, 48), S(6, 69), S(12, 201), S(79, 353), S(437, 396), S(0, 0)},
-    {S(0, 0), S(3, -13), S(53, 3), S(64, 6), S(65, 32), S(65, 73), S(68, 155), S(0, 0)},
-    S(136, 18), // RookOpenFileBonus
-    S(57, 18), // RookSemiOpenFileBonus
-    S(95, 21), // KnightOutpostBonus
-    S(95, 24), // BishopOutpostBonus
-    S(-82, 0), // TrappedRookByKingPenalty
-    S(67, 0), // RookBehindOurPasserBonus
-    S(-17, 90), // RookBehindTheirPasserBonus
-    S(29, 11), // MinorBehindPawnBonus
-    S(27, 0), // MinorOnKingRing
+    {S(0, 0), S(-32, 42), S(-22, 43), S(-22, 82), S(0, 171), S(5, 351), S(448, 380), S(0, 0)},
+    {S(0, 0), S(-4, -9), S(45, 5), S(51, 13), S(52, 29), S(175, 64), S(212, 123), S(0, 0)},
+    S(132, 17), // RookOpenFileBonus
+    S(62, 17), // RookSemiOpenFileBonus
+    S(8, 2), // RookOnQueenFile
+    S(78, 12), // KnightOutpostBonus
+    S(104, 25), // BishopOutpostBonus
+    S(-70, 0), // TrappedRookByKingPenalty
+    S(46, 19), // RookBehindOurPasserBonus
+    S(-113, 104), // RookBehindTheirPasserBonus
+    S(37, 3), // MinorBehindPawnBonus
+    S(15, 0), // MinorOnKingRing
     S(0, 0), // RookOnKingRing
-    S(-20, -4), // KingProtector
-    S(35, 11), // BishopPair
-    {S(128, 0), S(63, 0)}, // PawnShieldBonus
-    {S(0, 0), S(9, 0), S(87, 0), S(0, 0), S(0, 0)}, // BlockedPawnStorm
-    {S(0, 0), S(50, 0), S(142, 0), S(0, 0), S(0, 0)}, // UnblockedPawnStorm
-    S(-35, 0), // SemiOpenFileNearKing
-    S(-186, 0), // OpenFileNearKing
-    S(-46, 0), // UndefendedKingZoneSq
-    {S(-12, -68), S(0, -14), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)}, // KingSafeSqPenalty
-    S(24, 13), // KingAttackByKnight
-    S(6, 13), // KingAttackByBishop
-    S(24, 13), // KingAttackByRook
+    S(-14, -4), // KingProtector
+    S(11, 18), // BishopPair
+    {
+        {S(-23, 0), S(60, 0), S(78, 0), S(48, 0), S(52, 0), S(48, 0), S(152, 0)},
+        {S(-111, 0), S(184, 0), S(79, 0), S(0, 0), S(2, 0), S(64, 0), S(32, 0)},
+        {S(-53, 0), S(182, 0), S(74, 0), S(0, 0), S(72, 0), S(104, 0), S(56, 0)},
+        {S(-68, 0), S(140, 0), S(56, 0), S(15, 0), S(34, 0), S(56, 0), S(16, 0)}
+    }, // Shelter
+    {
+        {S(0, 0), S(0, 0), S(38, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(0, 0), S(0, 0), S(30, 0), S(19, 0), S(8, 0), S(0, 0), S(0, 0)},
+        {S(0, 0), S(0, 0), S(174, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)},
+        {S(0, 0), S(0, 0), S(110, 0), S(67, 0), S(0, 0), S(0, 0), S(0, 0)}
+    }, // UnblockedStorm
+    {S(0, 0), S(0, 0), S(51, 0), S(11, 0), S(1, 0), S(0, 0), S(18, 0)}, // BlockedStorm
+    S(-45, 0), // UndefendedKingZoneSq
+    S(5, 18), // KingMobilityFactor
+    S(24, 15), // KingAttackByKnight
+    S(9, 29), // KingAttackByBishop
+    S(24, 17), // KingAttackByRook
     S(24, 18), // KingAttackByQueen
-    {S(0, 0), S(0, 0), S(29, 4), S(29, 8), S(29, 8), S(29, 8), S(0, 0)}, // KingSafeCheck
-    S(16, 0), // KingRingWeakWeight
-    S(39, 35), // KingNoQueenDiscount
-    S(-8, -1), // IsolatedPawnPenalty
-    S(-5, -33), // DoubledPawnPenalty
-    S(0, -10), // BackwardPawnPenalty
-    S(-26, -19), // WeakUnopposedPenalty
-    S(0, -24), // DoubledIsolatedPenalty
-    {S(-102, -26), S(-66, -94)}, // BlockedPawnPenalty (rel rank 5, 6)
-    S(-16, -24), // PawnIslandPenalty
-    {S(27, 0), S(23, 0)}, // CentralPawnBonus
-    S(64, 15), // BishopLongDiagonalBonus
-    S(0, 53), // InitiativePasser
-    S(0, 48), // InitiativePawnCount
-    S(0, 12), // InitiativeOutflank
+    {S(0, 0), S(0, 0), S(29, 8), S(32, 152), S(29, 8), S(29, 8), S(0, 0)}, // KingSafeCheck
+    S(22, 0), // KingRingWeakWeight
+    S(34, 3), // KingNoQueenDiscount
+    S(0, 0), // IsolatedPawnPenalty
+    S(0, -14), // DoubledPawnPenalty
+    S(-3, -9), // BackwardPawnPenalty
+    S(-37, -22), // WeakUnopposedPenalty
+    S(-10, -52), // DoubledIsolatedPenalty
+    {S(-87, -28), S(-152, -80)}, // BlockedPawnPenalty (rel rank 5, 6)
+    S(-10, -17), // PawnIslandPenalty
+    {S(39, 0), S(27, 0)}, // CentralPawnBonus
+    S(53, 10), // BishopLongDiagonalBonus
+    S(-12, 0), // BishopXrayPawns
+    S(0, 47), // InitiativePasser
+    S(0, 56), // InitiativePawnCount
+    S(0, 0), // InitiativeOutflank
     S(0, 0), // InitiativeTension
-    S(0, 35), // InitiativeInfiltrate
+    S(0, 22), // InitiativeInfiltrate
     S(0, 48), // InitiativePureBase
     S(0, -1), // InitiativeConstant
-    S(77, 0), // SliderOnQueenBishop
-    S(67, 0), // SliderOnQueenRook
-    S(13, 3), // RestrictedPiece
+    S(93, 0), // SliderOnQueenBishop
+    S(35, 1), // SliderOnQueenRook
+    S(12, 1), // RestrictedPiece
 };
 
 // clang-format on

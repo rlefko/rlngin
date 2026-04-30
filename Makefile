@@ -38,7 +38,15 @@ TUNE_TARGET := $(BUILDDIR)/tune
 TUNE_SRC := tools/tune.cpp
 TUNE_OBJ := $(BUILDDIR)/tune.o
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa texel-selfplay texel-extract texel-tune
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa texel-selfplay texel-extract texel-tune texel texel-bg texel-stop texel-status texel-dump texel-apply
+
+# Texel pipeline tunables. Override on the command line, e.g.:
+#   make texel-bg ROUNDS=10000 LIMIT=1+0.08 TUNE_PASSES=50
+ROUNDS ?= 32000
+LIMIT ?= nodes=100000
+CONCURRENCY ?= 12
+TUNE_THREADS ?= 14
+TUNE_PASSES ?= 30
 
 build: $(TARGET)
 
@@ -138,4 +146,37 @@ texel-extract:
 
 texel-tune: $(TUNE_TARGET)
 	./scripts/texel_tune.sh
+
+# Full Texel pipeline: self-play -> extract -> tune. Defaults match the
+# overnight schedule (32k pairs, nodes=100000, concurrency 12, 14 tune
+# threads, 30 passes, refit-K every 4, refresh-leaves every 8). Stages
+# skip when their output exists; pass FORCE=1 to redo from scratch.
+# Override any setting on the command line, e.g.:
+#   make texel-bg ROUNDS=10000 LIMIT=1+0.08 TUNE_PASSES=50
+texel: $(TARGET) $(TUNE_TARGET)
+	./scripts/texel_pipeline.sh $(ROUNDS) $(LIMIT) $(CONCURRENCY) $(TUNE_THREADS) $(TUNE_PASSES)
+
+# Same as `texel` but launched detached. Survives a closed shell. Writes
+# tuning/texel/pipeline.pid for status / stop targets.
+texel-bg: $(TARGET) $(TUNE_TARGET)
+	@./scripts/texel_bg.sh $(ROUNDS) $(LIMIT) $(CONCURRENCY) $(TUNE_THREADS) $(TUNE_PASSES)
+
+# Stop the running pipeline and every descendant (self-play, extract,
+# tuner). Sweeps orphan workers pinned to tuning/texel/.
+texel-stop:
+	@./scripts/texel_stop.sh
+
+# Show pipeline state, active workers, and per-stage progress.
+texel-status:
+	@./scripts/texel_status.sh
+
+# Print the current tuned-eval snapshot from tuning/checkpoint.txt as a
+# kDefaultEvalParams literal. Useful for previewing before applying.
+texel-dump: $(TUNE_TARGET)
+	@$(TUNE_TARGET) --dump tuning/checkpoint.txt
+
+# Apply the current tuned snapshot to src/eval_params.cpp in place. Does
+# not commit; review with `git diff` and commit when ready.
+texel-apply: $(TUNE_TARGET)
+	@./scripts/texel_apply_checkpoint.sh
 

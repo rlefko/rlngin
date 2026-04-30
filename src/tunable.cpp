@@ -279,6 +279,43 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("PawnIslandPenaltyEg", &evalParams.PawnIslandPenalty, false,
                                     -60, 0, 5.0, 2.0));
 
+    // --- Bishop bad-color split: BadBishop is the flat per-bishop
+    // baseline, BishopPawns is the per-same-color-pawn weight scaled
+    // at the call site by (1 + blocked center pawns). Both halves are
+    // penalties bounded above by zero so SPSA cannot flip them. ---
+    out.push_back(makeScoreHalfSpec("BadBishopMg", &evalParams.BadBishop, true, -200, 0, 6.0, 2.0));
+    out.push_back(
+        makeScoreHalfSpec("BadBishopEg", &evalParams.BadBishop, false, -200, 0, 6.0, 2.0));
+    out.push_back(
+        makeScoreHalfSpec("BishopPawnsMg", &evalParams.BishopPawns, true, -200, 0, 6.0, 2.0));
+    out.push_back(
+        makeScoreHalfSpec("BishopPawnsEg", &evalParams.BishopPawns, false, -200, 0, 6.0, 2.0));
+
+    // --- Bishop x-ray pawns: per-enemy-pawn penalty along the bishop's
+    // diagonals (own pieces transparent). Penalty-signed; the eg half
+    // tends to dominate because long diagonals matter most when the
+    // board is open. ---
+    out.push_back(makeScoreHalfSpec("BishopXrayPawnsMg", &evalParams.BishopXrayPawns, true, -100, 0,
+                                    4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("BishopXrayPawnsEg", &evalParams.BishopXrayPawns, false, -100,
+                                    0, 4.0, 1.5));
+
+    // --- Rook on queen file: bonus per friendly rook sharing a file
+    // with an enemy queen. Bonus-signed; small magnitude because the
+    // term overlaps generic rook mobility. ---
+    out.push_back(makeScoreHalfSpec("RookOnQueenFileMg", &evalParams.RookOnQueenFile, true, 0, 100,
+                                    5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("RookOnQueenFileEg", &evalParams.RookOnQueenFile, false, 0, 100,
+                                    5.0, 2.0));
+
+    // --- King mobility factor: linear weight subtracted per safe king
+    // move from the king-danger accumulator. Both halves stay
+    // non-negative because the term is subtracted at the call site. ---
+    out.push_back(makeScoreHalfSpec("KingMobilityFactorMg", &evalParams.KingMobilityFactor, true, 0,
+                                    60, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("KingMobilityFactorEg", &evalParams.KingMobilityFactor, false,
+                                    0, 60, 4.0, 1.5));
+
     return out;
 }
 
