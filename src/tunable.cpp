@@ -179,6 +179,10 @@ std::vector<TunableSpec> buildRegistry() {
         makeScoreHalfSpec("KnightOnQueenMg", &evalParams.KnightOnQueen, true, 0, 100, 5.0, 2.0));
     out.push_back(
         makeScoreHalfSpec("KnightOnQueenEg", &evalParams.KnightOnQueen, false, 0, 100, 5.0, 2.0));
+    out.push_back(
+        makeScoreHalfSpec("PawnlessFlankMg", &evalParams.PawnlessFlank, true, -100, 0, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("PawnlessFlankEg", &evalParams.PawnlessFlank, false, -200, 0,
+                                    8.0, 3.0));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

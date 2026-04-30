@@ -858,16 +858,18 @@ TEST_CASE("Eval: rook on semi-open file beats rook on closed file", "[eval][rook
 TEST_CASE("Eval: trapped rook with no mobility is penalized", "[eval][rook]") {
     Board board;
 
-    // White king on g1 plus pawns on g2 and h2 shut the h1 rook in with
+    // White king on g1 plus pawns on a2/g2/h2 shut the h1 rook in with
     // zero safe squares. All castling rights gone, so the rook cannot be
     // relocated via O-O / O-O-O and the doubled penalty should fire.
-    board.setFen("4k3/8/8/8/8/8/6PP/6KR w - - 0 1");
+    // The a2 pawn keeps both flanks populated so the PawnlessFlank term
+    // does not fold into the comparison.
+    board.setFen("4k3/8/8/8/8/8/P5PP/6KR w - - 0 1");
     int trapped = evaluate(board);
 
     // Same material with the king on b1 -- the rook sits on the opposite
     // side of the board from its king, so the same-side gate fails and
     // no trap penalty applies.
-    board.setFen("4k3/8/8/8/8/8/6PP/1K5R w - - 0 1");
+    board.setFen("4k3/8/8/8/8/8/P5PP/1K5R w - - 0 1");
     int free = evaluate(board);
 
     CHECK(trapped < free);

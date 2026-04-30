@@ -296,6 +296,16 @@ struct EvalParams {
     // they cannot guard every landing square at once and the knight
     // wins the race for material on the next move.
     Score KnightOnQueen;
+
+    // Penalty when our king sits on a flank that has no pawns of
+    // either color. The four-file flank (a..d or e..h, by king file)
+    // captures the surface area an enemy king-side or queen-side
+    // attack would sweep through; with no pawns there the king has
+    // no shelter and no pawn-attack web to slow incoming pieces.
+    // The shelter / storm grids do not capture this case because
+    // they only walk the three shield files immediately around the
+    // king and silently zero out when every shield file is empty.
+    Score PawnlessFlank;
 };
 
 extern EvalParams evalParams;

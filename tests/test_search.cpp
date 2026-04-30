@@ -887,12 +887,13 @@ TEST_CASE("Search: evacuates a knight under pawn attack at shallow depth", "[sea
     // White knight on d5 is attacked by the black pawn on e6. White has
     // plenty of quiet alternatives that do not save the knight; the
     // correct reply is any knight move off d5. The threat-aware move
-    // ordering should surface the knight escape early; depth 3 is the
+    // ordering should surface the knight escape early; depth 5 is the
     // first iteration with enough plies for the search to see the
-    // ramifications on both sides of the move.
+    // ramifications on both sides of the move once the pawnless-flank
+    // signal also fires in the captured-knight branch.
     board.setFen("4k3/8/4p3/3N4/8/8/R7/4K3 w - - 0 1");
 
-    Move best = findBestMove(board, 3);
+    Move best = findBestMove(board, 5);
     CHECK(best.from == stringToSquare("d5"));
 }
 

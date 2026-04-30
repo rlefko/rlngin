@@ -876,6 +876,19 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             int egPen = kingDangerEg / KingDangerDivEg;
             scores[us] -= S(mgPen, egPen);
         }
+
+        // Pawnless flank: when every file on our king's half of the
+        // board (a..d if king is on the queenside, e..h otherwise) is
+        // pawnless, the king sits in open territory the shelter / storm
+        // grids cannot represent. Fold the penalty in unconditionally;
+        // the magnitude already accounts for how often this shape
+        // appears with the king still in the middlegame.
+        Bitboard ourFlank = (kingFile < 4)
+                                ? (FileABB | FileBBB | FileCBB | FileDBB)
+                                : (FileEBB | FileFBB | FileGBB | FileHBB);
+        if (!(board.byPiece[Pawn] & ourFlank)) {
+            scores[us] += evalParams.PawnlessFlank;
+        }
     }
 }
 
