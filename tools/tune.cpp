@@ -922,6 +922,109 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
     std::cerr << "checkpoint written to " << outPath << "\n";
 }
 
+// One Newton-Raphson pass over the parameter vector. Estimates per-
+// parameter first and second derivatives of the loss via central finite
+// differences (delta = 1 cp, the natural integer unit of these scalars),
+// builds a batched Newton step, and accepts the largest backtracking
+// scale whose loss is below the pre-pass baseline by more than the
+// threaded-noise threshold the coordinate-descent loop already uses.
+//
+// On accept the loop moves the entire parameter vector at once, so a
+// converged Newton phase can collapse what would be many coordinate-
+// descent passes into a single sweep. On reject the loop restores the
+// pre-pass vector and reports zero improvement; the caller treats two
+// consecutive zero-improvement passes as the signal to fall back to the
+// coordinate-descent ladder.
+//
+// Returns the relative loss decrease (`(L0 - Lnew) / L0`). Updates
+// `bestLoss` in place when an improvement is accepted.
+static double newtonPass(std::vector<LabeledPosition> &positions,
+                         std::vector<ParamRef> &params, double K, int numThreads,
+                         double &bestLoss) {
+    constexpr int delta = 1;             // finite-difference step size
+    constexpr int maxStep = 16;          // per-parameter clip
+    constexpr double minHessian = 1e-12; // floor for Newton division
+
+    const double L0 = bestLoss;
+    const double acceptThreshold = L0 * 1e-7; // matches the threaded CD threshold
+
+    std::vector<int> theta(params.size());
+    for (size_t i = 0; i < params.size(); i++)
+        theta[i] = params[i].read();
+
+    std::vector<double> dtheta(params.size(), 0.0);
+
+    for (size_t i = 0; i < params.size(); i++) {
+        auto &p = params[i];
+        int orig = theta[i];
+        bool canPlus = p.allow(orig + delta);
+        bool canMinus = p.allow(orig - delta);
+        if (!canPlus && !canMinus) continue;
+
+        double Lp = L0;
+        double Lm = L0;
+        if (canPlus) {
+            p.write(orig + delta);
+            Lp = computeLoss(positions, K, numThreads);
+        }
+        if (canMinus) {
+            p.write(orig - delta);
+            Lm = computeLoss(positions, K, numThreads);
+        }
+        p.write(orig); // restore for the next parameter and the line search
+
+        double g, h;
+        if (canPlus && canMinus) {
+            g = (Lp - Lm) / (2.0 * delta);
+            h = (Lp - 2.0 * L0 + Lm) / (delta * delta);
+        } else if (canPlus) {
+            g = (Lp - L0) / delta;
+            h = minHessian;
+        } else {
+            g = (L0 - Lm) / delta;
+            h = minHessian;
+        }
+
+        double step;
+        if (h > minHessian) {
+            step = -g / h;
+        } else {
+            // Flat or concave: gradient-descent fallback, capped at one
+            // cp so a noisy region cannot launch the parameter.
+            step = (g > 0.0 ? -1.0 : 1.0);
+        }
+        if (step > maxStep) step = maxStep;
+        if (step < -maxStep) step = -maxStep;
+        dtheta[i] = step;
+    }
+
+    auto applyScaled = [&](double scale) {
+        for (size_t i = 0; i < params.size(); i++) {
+            int newVal = theta[i] + static_cast<int>(std::round(dtheta[i] * scale));
+            params[i].write(params[i].clampToBounds(newVal));
+        }
+    };
+
+    auto restore = [&]() {
+        for (size_t i = 0; i < params.size(); i++)
+            params[i].write(theta[i]);
+    };
+
+    static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
+    for (double scale : backtrackScales) {
+        applyScaled(scale);
+        double L = computeLoss(positions, K, numThreads);
+        if (L0 - L > acceptThreshold) {
+            bestLoss = L;
+            std::cerr << "  newton accepted scale=" << scale << " loss=" << L << "\n";
+            return (L0 - L) / L0;
+        }
+    }
+
+    restore();
+    return 0.0;
+}
+
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
                  int maxPasses, int refitKEvery, int refreshLeavesEvery) {
     auto params = collectParams();
