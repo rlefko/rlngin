@@ -1297,8 +1297,23 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
                     orthoXrays += popcount(xraySquaresOrtho & ourRooks & ~firstOrtho);
                 }
             }
-            scores[us] += evalParams.SliderOnQueenBishop * diagXrays;
-            scores[us] += evalParams.SliderOnQueenRook * orthoXrays;
+            // Material-imbalance multiplier: x-ray pressure on the queen
+            // converts more reliably when we are already ahead in
+            // non-pawn material, because the recapture chain that
+            // normally absorbs the pressure has fewer free pieces to
+            // throw at it. Double the bonus on the up-material side;
+            // leave it at par when material is even or behind.
+            int ourNonPawnMat = board.pieceCount[us][Knight] * PieceValue[Knight] +
+                                board.pieceCount[us][Bishop] * PieceValue[Bishop] +
+                                board.pieceCount[us][Rook] * PieceValue[Rook] +
+                                board.pieceCount[us][Queen] * PieceValue[Queen];
+            int theirNonPawnMat = board.pieceCount[them][Knight] * PieceValue[Knight] +
+                                  board.pieceCount[them][Bishop] * PieceValue[Bishop] +
+                                  board.pieceCount[them][Rook] * PieceValue[Rook] +
+                                  board.pieceCount[them][Queen] * PieceValue[Queen];
+            int imbalanceMul = 1 + (ourNonPawnMat > theirNonPawnMat ? 1 : 0);
+            scores[us] += evalParams.SliderOnQueenBishop * diagXrays * imbalanceMul;
+            scores[us] += evalParams.SliderOnQueenRook * orthoXrays * imbalanceMul;
         }
 
         // Restricted piece: every square we attack that an enemy knight,
