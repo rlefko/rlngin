@@ -250,7 +250,8 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     int standPat = -INF_SCORE;
     int bestScore = -INF_SCORE;
     if (!inCheck) {
-        rawStandPat = (ttHit && ttEntry.eval != TT_NO_EVAL) ? ttEntry.eval : evaluate(board, alpha, beta);
+        rawStandPat =
+            (ttHit && ttEntry.eval != TT_NO_EVAL) ? ttEntry.eval : evaluate(board, alpha, beta);
         // Read-only correction: qsearch consumes the corrected eval for its
         // stand-pat and delta pruning decisions but does not update the table,
         // since qsearch returns are the signal the correction is tracking.

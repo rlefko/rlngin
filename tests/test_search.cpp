@@ -889,8 +889,10 @@ TEST_CASE("Search: evacuates a knight under pawn attack at shallow depth", "[sea
     // correct reply is any knight move off d5. The threat-aware move
     // ordering should surface the knight escape early; depth 5 is the
     // first iteration with enough plies for the search to see the
-    // ramifications on both sides of the move once the pawnless-flank
-    // signal also fires in the captured-knight branch.
+    // ramifications on both sides of the move. Lazy eval is gated off
+    // in this phase so the residual eg signals (pawnless-flank and the
+    // king-pawn-distance penalty) inform the captured-knight branch
+    // through the full evaluator rather than a bounded preview.
     board.setFen("4k3/8/4p3/3N4/8/8/R7/4K3 w - - 0 1");
 
     Move best = findBestMove(board, 5);

@@ -884,9 +884,8 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         // grids cannot represent. Fold the penalty in unconditionally;
         // the magnitude already accounts for how often this shape
         // appears with the king still in the middlegame.
-        Bitboard ourFlank = (kingFile < 4)
-                                ? (FileABB | FileBBB | FileCBB | FileDBB)
-                                : (FileEBB | FileFBB | FileGBB | FileHBB);
+        Bitboard ourFlank = (kingFile < 4) ? (FileABB | FileBBB | FileCBB | FileDBB)
+                                           : (FileEBB | FileFBB | FileGBB | FileHBB);
         if (!(board.byPiece[Pawn] & ourFlank)) {
             scores[us] += evalParams.PawnlessFlank;
         }
@@ -1319,10 +1318,11 @@ static int scaleFactor(const Board &board) {
 // bishop attacks. Returns 0 for everything else.
 static int endgameEgAdjust(const Board &board) {
     // KBNK: strong side has K + B + N exactly, weak side has K only.
-    // Drive the weak king toward the corner whose color matches the
+    // Drive the weak king toward the corner whose colour matches the
     // strong bishop. Without this gradient the search cannot distinguish
     // the right corner from the wrong one inside the 50-move horizon.
-    static const int KBNKBonus = 12; // per square of corner closeness
+    // The per-square eg weight is tunable via KBNKCornerEg so SPSA /
+    // Texel can refine the magnitude against the rest of the eval.
     for (int c = 0; c < 2; c++) {
         Color strong = static_cast<Color>(c);
         Color weak = static_cast<Color>(c ^ 1);
@@ -1338,27 +1338,20 @@ static int endgameEgAdjust(const Board &board) {
 
         Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strong];
         bool bishopLight = (strongBishop & LightSquaresBB) != 0;
-        // Light-square bishop drives the king to a1 or h8; dark-square
-        // bishop drives to a8 or h1. Reward the closer of the two
-        // matching corners.
-        int corner1 = bishopLight ? 0 : 7;   // a1 (dark) or h1 (light): pick by color
-        int corner2 = bishopLight ? 63 : 56; // h8 (dark) or a8 (light)
-        // Above mapping flips: a1 is dark (0); h1 is light (7); a8 is
-        // light (56); h8 is dark (63). Re-derive from the bishop color
-        // directly to avoid that inversion confusion.
-        if (bishopLight) {
-            corner1 = 7;  // h1 light
-            corner2 = 56; // a8 light
-        } else {
-            corner1 = 0;  // a1 dark
-            corner2 = 63; // h8 dark
-        }
+        // Square colour: (file + rank) parity. The light-coloured
+        // corners are h1 (sq 7) and a8 (sq 56); the dark-coloured
+        // corners are a1 (sq 0) and h8 (sq 63). The mating side
+        // pushes the lone king to whichever same-colour corner it can
+        // reach faster, so we score the closer of the two.
+        int corner1 = bishopLight ? 7 : 0;
+        int corner2 = bishopLight ? 56 : 63;
+
         Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
         if (!weakKingBB) continue;
         int weakKingSq = lsb(weakKingBB);
         int dist = std::min(chebyshev(weakKingSq, corner1), chebyshev(weakKingSq, corner2));
         int closeness = 7 - dist;
-        int bonus = closeness * KBNKBonus;
+        int bonus = closeness * eg_value(evalParams.KBNKCornerEg);
         return (strong == White) ? bonus : -bonus;
     }
 
@@ -1547,19 +1540,25 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // occupied by us and not attacked by an enemy pawn; the
         // recapture geometry past that is captured implicitly by the
         // KnightAttacks symmetry (a square hits the queen if and only
-        // if a knight on the queen would hit that square). Cap the
-        // candidate count at 2 because beyond that the additional
-        // squares add no signal: the fork is already unrecoverable.
+        // if a knight on the queen would hit that square). Iterate over
+        // every enemy queen so a promoted second queen also feeds the
+        // fork-threat tally; a knight that simultaneously forks two
+        // queens scores twice, which matches the pressure both threats
+        // exert on the defender's tempo budget.
         if (enemyQueens) {
-            int queenSq = lsb(enemyQueens);
-            Bitboard forkSquares = KnightAttacks[queenSq];
-            Bitboard ourKnightsIter = board.byPiece[Knight] & board.byColor[us];
+            Bitboard ourKnightsBase = board.byPiece[Knight] & board.byColor[us];
             Bitboard safeForKnight = ~board.byColor[us] & ~ctx.pawnAttacks[them];
             int knightForks = 0;
-            while (ourKnightsIter) {
-                int nsq = popLsb(ourKnightsIter);
-                Bitboard candidates = KnightAttacks[nsq] & forkSquares & safeForKnight;
-                if (popcount(candidates) >= 2) knightForks++;
+            Bitboard queensIter = enemyQueens;
+            while (queensIter) {
+                int queenSq = popLsb(queensIter);
+                Bitboard forkSquares = KnightAttacks[queenSq];
+                Bitboard knightsIter = ourKnightsBase;
+                while (knightsIter) {
+                    int nsq = popLsb(knightsIter);
+                    Bitboard candidates = KnightAttacks[nsq] & forkSquares & safeForKnight;
+                    if (popcount(candidates) >= 2) knightForks++;
+                }
             }
             scores[us] += evalParams.KnightOnQueen * knightForks;
         }
@@ -1575,8 +1574,8 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         if (ourQueensInf) {
             Bitboard enemyHalf = (us == White) ? (Rank5BB | Rank6BB | Rank7BB | Rank8BB)
                                                : (Rank1BB | Rank2BB | Rank3BB | Rank4BB);
-            Bitboard safeForQueen =
-                ~ctx.pawnAttacks[them] & ~ctx.attackedBy[them][Knight] & ~ctx.attackedBy[them][Bishop];
+            Bitboard safeForQueen = ~ctx.pawnAttacks[them] & ~ctx.attackedBy[them][Knight] &
+                                    ~ctx.attackedBy[them][Bishop];
             int infiltrated = popcount(ourQueensInf & enemyHalf & safeForQueen);
             scores[us] += evalParams.QueenInfiltration * infiltrated;
         }
@@ -1625,21 +1624,28 @@ int evaluate(const Board &board, int alpha, int beta) {
     // initiative) can pull the score back across. Saves a meaningful
     // fraction of total eval cost in lopsided positions while never
     // returning a value outside the bracket implied by the full eval.
+    //
+    // Gated on mgPhase > 10: in true endgames the scaleFactor block can
+    // shrink the eg half to zero (drawish OCB / fortress positions) and
+    // the endgameEgAdjust block can inject a corner-push gradient
+    // neither of which the lazy preview accounts for. Skipping lazy
+    // when scaleFactor would fire keeps the bound mathematically valid.
     {
         int mgPhase = std::min(gamePhase, 24);
-        int egPhase = 24 - mgPhase;
-        Score lazyTotal = scores[White] - scores[Black];
-        int lazyResult =
-            (mg_value(lazyTotal) * mgPhase + eg_value(lazyTotal) * egPhase) / 24;
-        if (board.byPiece[Pawn]) {
-            lazyResult = lazyResult * (200 - board.halfmoveClock) / 200;
+        if (mgPhase > 10) {
+            int egPhase = 24 - mgPhase;
+            Score lazyTotal = scores[White] - scores[Black];
+            int lazyResult = (mg_value(lazyTotal) * mgPhase + eg_value(lazyTotal) * egPhase) / 24;
+            if (board.byPiece[Pawn]) {
+                lazyResult = lazyResult * (200 - board.halfmoveClock) / 200;
+            }
+            int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
+            lazyResult += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
+            int lazyStmResult = (board.sideToMove == White) ? lazyResult : -lazyResult;
+            int lazyMargin = searchParams.LazyMargin;
+            if (lazyStmResult - lazyMargin >= beta) return lazyStmResult - lazyMargin;
+            if (lazyStmResult + lazyMargin <= alpha) return lazyStmResult + lazyMargin;
         }
-        int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
-        lazyResult += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
-        int lazyStmResult = (board.sideToMove == White) ? lazyResult : -lazyResult;
-        int lazyMargin = searchParams.LazyMargin;
-        if (lazyStmResult - lazyMargin >= beta) return lazyStmResult - lazyMargin;
-        if (lazyStmResult + lazyMargin <= alpha) return lazyStmResult + lazyMargin;
     }
 
     Score pawnScore = 0;

@@ -321,6 +321,15 @@ struct EvalParams {
     // captures the same signal for non-passer pawns. The mg half is
     // structurally zero; only the eg half carries a tunable value.
     Score KingPawnDistEg;
+
+    // KBNK corner-push gradient: in K + B + N vs K endings, the eg
+    // adjustment rewards driving the weak king toward the corner whose
+    // colour matches the strong bishop. The bonus fires per square of
+    // Chebyshev closeness (0..7) so the weak king sees a continuous
+    // pull toward the right corner across the search horizon. Mg half
+    // is structurally zero (KBNK only matters in the eg phase); only
+    // the eg half is tunable.
+    Score KBNKCornerEg;
 };
 
 extern EvalParams evalParams;
