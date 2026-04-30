@@ -1541,18 +1541,21 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
 
         // Knight on queen: each friendly knight that has two or more
         // safe candidate squares from which it would attack the enemy
-        // queen earns a bonus. "Safe" means the candidate square is not
-        // occupied by us and not attacked by an enemy pawn; the
-        // recapture geometry past that is captured implicitly by the
-        // KnightAttacks symmetry (a square hits the queen if and only
-        // if a knight on the queen would hit that square). Iterate over
-        // every enemy queen so a promoted second queen also feeds the
-        // fork-threat tally; a knight that simultaneously forks two
-        // queens scores twice, which matches the pressure both threats
-        // exert on the defender's tempo budget.
+        // queen earns a bonus. "Safe" means the candidate square is
+        // not occupied by us and not attacked by any enemy piece
+        // (queen attacks count as enemy attacks even though the queen
+        // is the target -- if the queen is the only enemy defender,
+        // recapturing the knight loses the queen too, but we cannot
+        // tell that without a SEE walk, so the strict filter avoids
+        // claiming forks the simple version cannot prove are real).
+        // Iterate over every enemy queen so a promoted second queen
+        // also feeds the fork-threat tally; a knight that
+        // simultaneously forks two queens scores twice, which matches
+        // the pressure both threats exert on the defender's tempo
+        // budget.
         if (enemyQueens) {
             Bitboard ourKnightsBase = board.byPiece[Knight] & board.byColor[us];
-            Bitboard safeForKnight = ~board.byColor[us] & ~ctx.pawnAttacks[them];
+            Bitboard safeForKnight = ~board.byColor[us] & ~ctx.allAttacks[them];
             int knightForks = 0;
             Bitboard queensIter = enemyQueens;
             while (queensIter) {
@@ -1619,6 +1622,9 @@ int evaluate(const Board &board, int alpha, int beta) {
     scores[White] += matScores[White];
     scores[Black] += matScores[Black];
 
+    int mgPhase = std::min(gamePhase, 24);
+    int egPhase = 24 - mgPhase;
+
     // Lazy eval cutoff: with material + PST already in hand, project
     // the cheap half through the same tempo / halfmove / STM-flip
     // pipeline the full eval uses, then bound by LazyMargin. If the
@@ -1635,22 +1641,18 @@ int evaluate(const Board &board, int alpha, int beta) {
     // the endgameEgAdjust block can inject a corner-push gradient
     // neither of which the lazy preview accounts for. Skipping lazy
     // when scaleFactor would fire keeps the bound mathematically valid.
-    {
-        int mgPhase = std::min(gamePhase, 24);
-        if (mgPhase > 10) {
-            int egPhase = 24 - mgPhase;
-            Score lazyTotal = scores[White] - scores[Black];
-            int lazyResult = (mg_value(lazyTotal) * mgPhase + eg_value(lazyTotal) * egPhase) / 24;
-            if (board.byPiece[Pawn]) {
-                lazyResult = lazyResult * (200 - board.halfmoveClock) / 200;
-            }
-            int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
-            lazyResult += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
-            int lazyStmResult = (board.sideToMove == White) ? lazyResult : -lazyResult;
-            int lazyMargin = searchParams.LazyMargin;
-            if (lazyStmResult - lazyMargin >= beta) return lazyStmResult - lazyMargin;
-            if (lazyStmResult + lazyMargin <= alpha) return lazyStmResult + lazyMargin;
+    if (mgPhase > 10) {
+        Score lazyTotal = scores[White] - scores[Black];
+        int lazyResult = (mg_value(lazyTotal) * mgPhase + eg_value(lazyTotal) * egPhase) / 24;
+        if (board.byPiece[Pawn]) {
+            lazyResult = lazyResult * (200 - board.halfmoveClock) / 200;
         }
+        int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
+        lazyResult += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
+        int lazyStmResult = (board.sideToMove == White) ? lazyResult : -lazyResult;
+        int lazyMargin = searchParams.LazyMargin;
+        if (lazyStmResult - lazyMargin >= beta) return lazyStmResult - lazyMargin;
+        if (lazyStmResult + lazyMargin <= alpha) return lazyStmResult + lazyMargin;
     }
 
     Score pawnScore = 0;
@@ -1679,9 +1681,6 @@ int evaluate(const Board &board, int alpha, int beta) {
 
     int mg = mg_value(total);
     int eg = eg_value(total);
-
-    int mgPhase = std::min(gamePhase, 24);
-    int egPhase = 24 - mgPhase;
 
     // Drawish endings scale the endgame half toward zero before blending.
     // Gated on genuine endgame phase so transient opposite-colored-bishop
