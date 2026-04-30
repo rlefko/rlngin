@@ -16,6 +16,8 @@ set -euo pipefail
 #   FROM_CHECKPOINT:       resume from this checkpoint (default: unset)
 #   REFIT_K_EVERY:         pass cadence for K refits (default: 4)
 #   REFRESH_LEAVES_EVERY:  pass cadence for leaf recomputes (default: 8)
+#   NEWTON_PASSES:         Newton-Raphson initial passes before CD
+#                          (default: 10; set 0 for legacy CD-only behavior)
 
 OUTPUT="${OUTPUT:-tuning/texel}"
 CORPUS="${1:-$OUTPUT/positions.epd}"
@@ -48,10 +50,12 @@ if [ -n "${FROM_CHECKPOINT:-}" ]; then
 fi
 ARGS+=(--refit-k-every "${REFIT_K_EVERY:-4}")
 ARGS+=(--refresh-leaves-every "${REFRESH_LEAVES_EVERY:-8}")
+ARGS+=(--newton-passes "${NEWTON_PASSES:-10}")
 
 echo "Texel tune: $CORPUS"
 echo "  threads:        $THREADS"
 echo "  max-passes:     $MAX_PASSES"
+echo "  newton-passes:  ${NEWTON_PASSES:-10}"
 echo "  refit-K:        every ${REFIT_K_EVERY:-4} pass(es)"
 echo "  refresh-leaves: every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
 if [ -n "${FROM_CHECKPOINT:-}" ]; then
