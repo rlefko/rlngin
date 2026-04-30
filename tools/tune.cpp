@@ -922,6 +922,157 @@ static void replayLog(const std::string &logPath, const std::string &outPath) {
     std::cerr << "checkpoint written to " << outPath << "\n";
 }
 
+// Sparse feature representation. Each position carries a list of
+// non-zero per-parameter linearization coefficients. uint16 fits the
+// 778-parameter index space; int16 fits every post-taper finite-
+// difference delta we have observed (max magnitudes for piece-score
+// and material params with all queens of the side present land
+// comfortably under 32K).
+struct FeatureEntry {
+    uint16_t paramIdx;
+    int16_t coef;
+};
+using FeatureVector = std::vector<FeatureEntry>;
+
+// Per-corpus feature cache. baseline[i] is the white-POV eval of
+// position i at theta_0. rows[i] is the sparse vector of (paramIdx,
+// coef) pairs such that
+//   eval(theta, position_i) ≈ baseline[i] + sum_j (theta_j - theta0[j]) * rows[i][j].coef
+// The approximation is exact for parameters the eval is linear in
+// (PSTs, material, mobility, threats, pawn structure, most rook /
+// bishop terms) and a first-order Taylor expansion at theta_0 for
+// the king-safety quadratic. Re-extracting after each leaf refresh
+// keeps drift bounded.
+struct CorpusFeatures {
+    std::vector<int> baseline;
+    std::vector<FeatureVector> rows;
+    std::vector<int> theta0;
+};
+
+// Extract per-position linearization features for the entire corpus.
+// One serial outer loop over parameters with a parallel inner loop
+// over positions. Per parameter we perturb theta_j by +1 (or -1 if
+// the upper neighbor is infeasible), evaluate every position on
+// `numThreads` threads, and append the non-zero deltas to the
+// per-position sparse feature vector. Each parameter's perturbation
+// is restored before moving on to the next, so the global evalParams
+// is unchanged when extraction returns.
+//
+// Cost: roughly (P / 1) * (N / numThreads) microseconds. For the
+// 778-parameter / 5.4M-position corpus on 14 threads, ~5 minutes.
+// Memory: 5.4M * avg ~100 active params * 4 bytes = ~2 GB plus the
+// 22 MB baseline vector.
+static CorpusFeatures extractCorpusFeatures(std::vector<LabeledPosition> &positions,
+                                            std::vector<ParamRef> &params, int numThreads) {
+    const size_t N = positions.size();
+    const size_t P = params.size();
+
+    CorpusFeatures cf;
+    cf.baseline.assign(N, 0);
+    cf.rows.assign(N, FeatureVector{});
+    cf.theta0.resize(P);
+    for (size_t j = 0; j < P; j++)
+        cf.theta0[j] = params[j].read();
+
+    auto runOverPositions = [&](auto &&fn) {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([start, end, &positions, fn]() {
+                for (size_t i = start; i < end; i++) {
+                    Board board = positions[i].board;
+                    int raw = evaluate(board);
+                    if (board.sideToMove == Black) raw = -raw;
+                    fn(i, raw);
+                }
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    };
+
+    std::cerr << "extracting features for " << N << " positions across " << P
+              << " parameters on " << numThreads << " threads\n";
+
+    runOverPositions([&](size_t i, int raw) { cf.baseline[i] = raw; });
+
+    std::vector<int> delta(N, 0);
+    const size_t reportEvery = std::max<size_t>(1, P / 20);
+    const int int16Min = std::numeric_limits<int16_t>::min();
+    const int int16Max = std::numeric_limits<int16_t>::max();
+
+    for (size_t j = 0; j < P; j++) {
+        auto &p = params[j];
+        int orig = cf.theta0[j];
+        int sign = 0;
+        if (p.allow(orig + 1)) {
+            sign = 1;
+            p.write(orig + 1);
+        } else if (p.allow(orig - 1)) {
+            sign = -1;
+            p.write(orig - 1);
+        } else {
+            // Pinned parameter contributes no linearization feature.
+            continue;
+        }
+
+        runOverPositions([&, sign](size_t i, int raw) {
+            // sign = +1 means feature = raw - baseline.
+            // sign = -1 means feature = baseline - raw (preserves
+            // the d(eval) / d(theta) sign so the Newton step is
+            // independent of which neighbor we sampled).
+            delta[i] = sign > 0 ? (raw - cf.baseline[i]) : (cf.baseline[i] - raw);
+        });
+
+        p.write(orig);
+
+        // Append non-zero entries in parallel by sharding the row
+        // index range across threads. Each thread only writes to its
+        // own slice of cf.rows so there is no contention.
+        std::vector<std::thread> appenders;
+        appenders.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            appenders.emplace_back([start, end, &delta, &cf, j, int16Min, int16Max]() {
+                for (size_t i = start; i < end; i++) {
+                    int d = delta[i];
+                    if (d == 0) continue;
+                    if (d > int16Max) d = int16Max;
+                    if (d < int16Min) d = int16Min;
+                    cf.rows[i].push_back({static_cast<uint16_t>(j), static_cast<int16_t>(d)});
+                }
+            });
+        }
+        for (auto &th : appenders)
+            th.join();
+
+        if ((j + 1) % reportEvery == 0 || j + 1 == P)
+            std::cerr << "  feature extract: " << (j + 1) << "/" << P << " parameters\n";
+    }
+
+    // Lightweight self-check: at theta_0 the prediction collapses to
+    // the baseline, so re-evaluating a sample of positions and
+    // comparing should mismatch nowhere. A non-zero count points at a
+    // non-deterministic eval (e.g., a forgotten thread_local hash
+    // race) before the first GN iteration.
+    size_t checkCount = 0, mismatchCount = 0;
+    size_t step = std::max<size_t>(1, N / 1000);
+    for (size_t i = 0; i < N; i += step) {
+        Board board = positions[i].board;
+        int raw = evaluate(board);
+        if (board.sideToMove == Black) raw = -raw;
+        if (raw != cf.baseline[i]) mismatchCount++;
+        checkCount++;
+    }
+    std::cerr << "feature extraction done: " << mismatchCount << "/" << checkCount
+              << " baseline mismatches\n";
+
+    return cf;
+}
+
 // One Newton-Raphson pass over the parameter vector. Estimates per-
 // parameter first and second derivatives of the loss via central finite
 // differences (delta = 1 cp, the natural integer unit of these scalars),
