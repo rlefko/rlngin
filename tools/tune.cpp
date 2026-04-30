@@ -125,6 +125,7 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("WeakQueenDefender", &evalParams.WeakQueenDefender, boundsNonPositive());
     addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsNonNegative());
     addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, boundsNonPositive());
+    addMgEgConstr("QueenInfiltration", &evalParams.QueenInfiltration, boundsNonNegative());
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).

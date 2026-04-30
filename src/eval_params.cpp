@@ -235,6 +235,7 @@ static const EvalParams kDefaultEvalParams = {
     S(-50, -10), // WeakQueenDefender
     S(16, 12), // KnightOnQueen
     S(-17, -78), // PawnlessFlank
+    S(8, 12), // QueenInfiltration
 };
 
 // clang-format on

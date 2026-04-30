@@ -306,6 +306,13 @@ struct EvalParams {
     // they only walk the three shield files immediately around the
     // king and silently zero out when every shield file is empty.
     Score PawnlessFlank;
+
+    // Bonus per friendly queen sitting on the enemy half of the board
+    // and not attacked by an enemy pawn or minor piece. Queens parked
+    // safely in the opponent's territory dominate the position because
+    // they cannot be cheaply evicted, so they sustain pressure across
+    // multiple files and ranks at no defender cost.
+    Score QueenInfiltration;
 };
 
 extern EvalParams evalParams;

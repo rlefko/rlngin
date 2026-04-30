@@ -1413,6 +1413,23 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
             }
             scores[us] += evalParams.KnightOnQueen * knightForks;
         }
+
+        // Queen infiltration: our queen sits on the enemy half of the
+        // board on a square neither an enemy pawn nor an enemy minor
+        // attacks. Such a queen cannot be cheaply evicted and exerts
+        // sustained pressure across files and ranks: it picks up any
+        // weak target the rest of the eval flags without taking the
+        // recapture-risk hit a queen normally pays for foraying past
+        // the midline.
+        Bitboard ourQueensInf = board.byPiece[Queen] & board.byColor[us];
+        if (ourQueensInf) {
+            Bitboard enemyHalf = (us == White) ? (Rank5BB | Rank6BB | Rank7BB | Rank8BB)
+                                               : (Rank1BB | Rank2BB | Rank3BB | Rank4BB);
+            Bitboard safeForQueen =
+                ~ctx.pawnAttacks[them] & ~ctx.attackedBy[them][Knight] & ~ctx.attackedBy[them][Bishop];
+            int infiltrated = popcount(ourQueensInf & enemyHalf & safeForQueen);
+            scores[us] += evalParams.QueenInfiltration * infiltrated;
+        }
     }
 }
 
