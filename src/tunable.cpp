@@ -187,6 +187,8 @@ std::vector<TunableSpec> buildRegistry() {
                                     100, 5.0, 2.0));
     out.push_back(makeScoreHalfSpec("QueenInfiltrationEg", &evalParams.QueenInfiltration, false, 0,
                                     100, 5.0, 2.0));
+    out.push_back(makeScoreHalfSpec("KingPawnDistEg", &evalParams.KingPawnDistEg, false, -50, 0, 4.0,
+                                    1.5));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

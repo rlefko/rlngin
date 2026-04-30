@@ -313,6 +313,14 @@ struct EvalParams {
     // they cannot be cheaply evicted, so they sustain pressure across
     // multiple files and ranks at no defender cost.
     Score QueenInfiltration;
+
+    // Endgame penalty per square of Chebyshev distance from our king
+    // to our nearest pawn. King-and-pawn endings reward the king that
+    // walks toward its pawns to support them; the existing
+    // PassedKingProxBonus only fires for passers, so this term
+    // captures the same signal for non-passer pawns. The mg half is
+    // structurally zero; only the eg half carries a tunable value.
+    Score KingPawnDistEg;
 };
 
 extern EvalParams evalParams;

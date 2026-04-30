@@ -236,6 +236,7 @@ static const EvalParams kDefaultEvalParams = {
     S(16, 12), // KnightOnQueen
     S(-17, -78), // PawnlessFlank
     S(8, 12), // QueenInfiltration
+    S(0, -16), // KingPawnDistEg
 };
 
 // clang-format on

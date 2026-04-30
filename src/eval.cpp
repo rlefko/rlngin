@@ -889,6 +889,24 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
         if (!(board.byPiece[Pawn] & ourFlank)) {
             scores[us] += evalParams.PawnlessFlank;
         }
+
+        // Endgame king to pawn distance: penalty per square of
+        // Chebyshev distance from our king to our nearest pawn.
+        // Captures the K+P endgame fundamental that the king must
+        // walk toward its pawns to support them, without limiting the
+        // signal to passers the way PassedKingProxBonus does. Eg-only
+        // by construction; the mg half stays zero in the table.
+        Bitboard ourPawnsKpd = board.byPiece[Pawn] & board.byColor[us];
+        if (ourPawnsKpd) {
+            int minDist = 8;
+            Bitboard iter = ourPawnsKpd;
+            while (iter) {
+                int psq = popLsb(iter);
+                int d = chebyshev(kingSq, psq);
+                if (d < minDist) minDist = d;
+            }
+            scores[us] += S(0, eg_value(evalParams.KingPawnDistEg) * minDist);
+        }
     }
 }
 
