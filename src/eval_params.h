@@ -269,6 +269,17 @@ struct EvalParams {
     // Pawn-defended squares are excluded because our attacker is already
     // outvalued there and the recapture is immediate.
     Score RestrictedPiece;
+
+    // Per-square pawn-push threat. For every legal single- or double-push
+    // target, count enemy non-pawn / non-king pieces that the pawn would
+    // attack from that landing square, including pushes that are not safe
+    // today. Distinct from SafePawnPush: the safe variant only fires when
+    // the push itself is supported, while this term credits the latent
+    // double-threat shape (push the pawn or move the piece) regardless of
+    // whether the push lands cleanly. Pieces already attacked by our pawns
+    // in place are excluded so the bonus does not double count with
+    // ThreatByPawn.
+    Score ThreatByPawnPush;
 };
 
 extern EvalParams evalParams;

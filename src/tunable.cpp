@@ -167,6 +167,10 @@ std::vector<TunableSpec> buildRegistry() {
         makeScoreHalfSpec("SafePawnPushMg", &evalParams.SafePawnPush, true, 0, 250, 10.0, 4.0));
     out.push_back(
         makeScoreHalfSpec("SafePawnPushEg", &evalParams.SafePawnPush, false, 0, 250, 10.0, 4.0));
+    out.push_back(makeScoreHalfSpec("ThreatByPawnPushMg", &evalParams.ThreatByPawnPush, true, 0, 200,
+                                    8.0, 3.0));
+    out.push_back(makeScoreHalfSpec("ThreatByPawnPushEg", &evalParams.ThreatByPawnPush, false, 0,
+                                    200, 8.0, 3.0));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

@@ -1331,6 +1331,22 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard pushVictims =
             pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
         scores[us] += evalParams.SafePawnPush * popcount(pushVictims);
+
+        // Per-square pawn-push threat: walk every push target (safe or
+        // not) and tally each (push square, victim piece) pair where the
+        // push lands attacking an enemy non-pawn / non-king. Pushes the
+        // opponent must address with a tempo even when capturing the
+        // pawn is on the board, so the signal is distinct from
+        // SafePawnPush. Already-pawn-attacked victims are filtered out
+        // to keep the bonus orthogonal to ThreatByPawn.
+        int pushSquareThreats = 0;
+        Bitboard pushIter = pushes;
+        while (pushIter) {
+            int psq = popLsb(pushIter);
+            Bitboard victims = PawnAttacks[us][psq] & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
+            pushSquareThreats += popcount(victims);
+        }
+        scores[us] += evalParams.ThreatByPawnPush * pushSquareThreats;
     }
 }
 
