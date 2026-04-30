@@ -1519,15 +1519,20 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         }
         scores[us] += evalParams.ThreatByPawnPush * pushSquareThreats;
 
-        // Weak-piece-protected-only-by-queen: any friendly non-king /
-        // non-queen piece under enemy attack whose only defender is the
+        // Weak-piece-protected-only-by-queen: any friendly non-pawn
+        // minor or rook under enemy attack whose only defender is the
         // queen. The queen's defense is tempo-fragile because every
-        // recapture trades down a major for a minor or pawn, so a piece
-        // that only the queen defends carries a structurally worse
-        // risk profile than one a less-valuable piece protects.
-        Bitboard ourPiecesNonKingNonQueen =
-            board.byColor[us] & ~board.byPiece[King] & ~board.byPiece[Queen];
-        Bitboard underAttack = ourPiecesNonKingNonQueen & ctx.allAttacks[them];
+        // recapture trades down a major for a minor or pawn, so a
+        // piece that only the queen defends carries a structurally
+        // worse risk profile than one a less-valuable piece protects.
+        // Pawns and the queen herself are excluded: pawns get queen-
+        // defended in routine endgame patterns where the term would
+        // just misfire, and a queen defending herself is not the
+        // discovery / overload signal we want to capture.
+        Bitboard ourMinorsAndRooks =
+            board.byColor[us] &
+            (board.byPiece[Knight] | board.byPiece[Bishop] | board.byPiece[Rook]);
+        Bitboard underAttack = ourMinorsAndRooks & ctx.allAttacks[them];
         Bitboard nonQueenDefense = ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] |
                                    ctx.attackedBy[us][Bishop] | ctx.attackedBy[us][Rook] |
                                    ctx.attackedBy[us][King];
