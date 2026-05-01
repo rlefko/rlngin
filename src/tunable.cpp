@@ -159,10 +159,13 @@ std::vector<TunableSpec> buildRegistry() {
     // Bounds spaced wide so SPSA can explore both an aggressive cutoff
     // (smaller margin = more bails, more nodes saved per call but
     // higher risk of returning a value the full eval would have moved
-    // back across) and a conservative cutoff. The lower bound is set
-    // above the typical positional swing so a too-aggressive value is
-    // not even reachable.
-    out.push_back(makeIntSpec("LazyMargin", &searchParams.LazyMargin, 400, 1500, 30.0, 10.0));
+    // back across) and a conservative cutoff that effectively disables
+    // the bail (margin > worst-case king-safety swing). The lower
+    // bound is set above the typical positional swing so a too-
+    // aggressive value is not even reachable; the upper bound goes
+    // past the worst-case residual so SPSA can pin lazy at "off" when
+    // the data prefers that.
+    out.push_back(makeIntSpec("LazyMargin", &searchParams.LazyMargin, 800, 4000, 60.0, 20.0));
 
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));

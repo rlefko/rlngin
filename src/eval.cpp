@@ -1645,12 +1645,20 @@ int evaluate(const Board &board, int alpha, int beta) {
     // fraction of total eval cost in lopsided positions while never
     // returning a value outside the bracket implied by the full eval.
     //
-    // Gated on mgPhase > 10: in true endgames the scaleFactor block can
-    // shrink the eg half to zero (drawish OCB / fortress positions) and
-    // the endgameEgAdjust block can inject a corner-push gradient
-    // neither of which the lazy preview accounts for. Skipping lazy
-    // when scaleFactor would fire keeps the bound mathematically valid.
-    if (mgPhase > 10) {
+    // Gates:
+    //   - mgPhase > 10: in true endgames the scaleFactor block can
+    //     shrink the eg half to zero (drawish OCB / fortress
+    //     positions) and the endgameEgAdjust block can inject a
+    //     corner-push gradient neither of which the lazy preview
+    //     accounts for. Skipping lazy when scaleFactor would fire
+    //     keeps the bound mathematically valid.
+    //   - non-PV nodes only (beta - alpha <= 1): PV nodes need exact
+    //     scores to refine the line; returning a bounded value at PV
+    //     poisons aspiration windows and the principal continuation.
+    //     Pruning siblings via lazy at a non-PV (zero-window) node is
+    //     the only place a coarse bound is harmless because failure
+    //     to bracket triggers a re-search anyway.
+    if (mgPhase > 10 && (beta - alpha) <= 1) {
         Score lazyTotal = scores[White] - scores[Black];
         int lazyResult = (mg_value(lazyTotal) * mgPhase + eg_value(lazyTotal) * egPhase) / 24;
         if (board.byPiece[Pawn]) {
