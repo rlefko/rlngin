@@ -711,6 +711,71 @@ static void assignGameWeights(std::vector<LabeledPosition> &positions) {
               << positions.size() << " positions, mean weight 1.000\n";
 }
 
+// Stable splitmix64-flavoured hash; used to bucket game ids into the
+// train / val partitions deterministically. Mixing the seed lets the
+// operator try multiple splits without changing the corpus on disk.
+static uint64_t splitHash(uint32_t key, uint64_t seed) {
+    uint64_t x = static_cast<uint64_t>(key) ^ seed;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    x = x ^ (x >> 31);
+    return x;
+}
+
+// Partition the corpus into a training slice and a held-out validation
+// slice. The split is by game id, not by position: every position
+// whose first source game id hashes into the val bucket goes to val,
+// the rest go to train. Position-level dedup keeps the first
+// occurrence's game id as `gameIds.front()`, so this is stable across
+// reloads of the same corpus.
+//
+// Legacy corpora without game-id metadata fall back to a deterministic
+// per-position-index split, which is weaker (a 250-ply draw can
+// straddle both partitions) but better than no split at all.
+//
+// `valFraction` is clamped to [0, 1]. Edge cases:
+//   * 0.0: every position goes to train (val empty, val gate disabled).
+//   * 1.0: every position goes to val (only useful for diagnostics).
+static std::pair<std::vector<size_t>, std::vector<size_t>>
+splitCorpus(const std::vector<LabeledPosition> &positions, double valFraction,
+            uint64_t seed) {
+    std::vector<size_t> train;
+    std::vector<size_t> val;
+    train.reserve(positions.size());
+    if (valFraction <= 0.0) {
+        for (size_t i = 0; i < positions.size(); i++)
+            train.push_back(i);
+        std::cerr << "splitCorpus: " << train.size() << " train, 0 val (val gate off)\n";
+        return {std::move(train), std::move(val)};
+    }
+    if (valFraction >= 1.0) {
+        for (size_t i = 0; i < positions.size(); i++)
+            val.push_back(i);
+        std::cerr << "splitCorpus: 0 train, " << val.size()
+                  << " val (training disabled, diagnostics only)\n";
+        return {std::move(train), std::move(val)};
+    }
+    constexpr uint64_t bucketScale = 1ULL << 16;
+    uint64_t valBucket = static_cast<uint64_t>(valFraction * bucketScale);
+    bool anyMetadata = false;
+    for (size_t i = 0; i < positions.size(); i++) {
+        const auto &lp = positions[i];
+        uint64_t h;
+        if (lp.gameIds.empty()) {
+            h = splitHash(static_cast<uint32_t>(i), seed);
+        } else {
+            anyMetadata = true;
+            h = splitHash(lp.gameIds.front(), seed);
+        }
+        if ((h % bucketScale) < valBucket) val.push_back(i);
+        else train.push_back(i);
+    }
+    std::cerr << "splitCorpus: " << train.size() << " train, " << val.size() << " val ("
+              << (anyMetadata ? "by game id" : "by position index, no metadata")
+              << ", target val fraction " << valFraction << ")\n";
+    return {std::move(train), std::move(val)};
+}
+
 static double sigmoid(double x, double K) {
     return 1.0 / (1.0 + std::exp(-K * x));
 }
@@ -843,17 +908,20 @@ static double pstSmoothnessPenalty() {
     return total;
 }
 
-static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
-                          int numThreads) {
-    // Positions here already hold qsearch-resolved leaf boards, so the
-    // inner loop only needs static evaluate(). The pawn and material
-    // hashes are now thread_local; each std::thread we spawn below gets
-    // a freshly-initialized empty table on first use inside that thread
-    // and the table is destroyed when the thread exits at the end of
-    // this loss eval. So no clearing is needed and no two threads ever
-    // touch the same hash entry, removing the race that previously sat
-    // under our 1e-8 acceptance threshold.
-    size_t n = positions.size();
+// Pure data MSE. The inner loop walks an explicit index list when one
+// is supplied so the train and val partitions can each take their own
+// loss without touching the other half of the corpus. Positions here
+// already hold qsearch-resolved leaf boards, so we only need a static
+// evaluate(). The pawn and material hashes are thread_local: each
+// std::thread spawned below gets a fresh empty table on first use and
+// destroys it on exit, so no clearing is needed and no two threads
+// ever touch the same hash entry. That removes the race that
+// previously sat under our 1e-8 acceptance threshold.
+static double computeDataLoss(const std::vector<LabeledPosition> &positions, double K,
+                              int numThreads,
+                              const std::vector<size_t> *indices = nullptr) {
+    size_t n = indices ? indices->size() : positions.size();
+    if (n == 0) return 0.0;
     std::vector<double> partial(numThreads, 0.0);
     std::vector<double> partialWeight(numThreads, 0.0);
     std::vector<std::thread> threads;
@@ -865,7 +933,8 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
             double sum = 0.0;
             double sumWeight = 0.0;
             for (size_t i = start; i < end; i++) {
-                Board board = positions[i].board;
+                size_t pi = indices ? (*indices)[i] : i;
+                Board board = positions[pi].board;
                 int raw = evaluate(board);
                 // evaluate returns side-to-move relative; convert to
                 // White POV so the tuner can compare to the White-POV
@@ -874,8 +943,8 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
                 // during qsearch.
                 if (board.sideToMove == Black) raw = -raw;
                 double pred = sigmoid(static_cast<double>(raw), K);
-                double err = pred - positions[i].result;
-                double w = positions[i].weight;
+                double err = pred - positions[pi].result;
+                double w = positions[pi].weight;
                 sum += w * err * err;
                 sumWeight += w;
             }
@@ -894,21 +963,25 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
     // assignGameWeights renormalises the corpus so the sum of weights
     // equals position count, but legacy corpora and edge cases may
     // leave totalWeight at zero; fall back to position count.
-    double dataLoss = totalWeight > 0.0
-                          ? total / totalWeight
-                          : total / static_cast<double>(n);
-    // PST smoothness regulariser: penalise sharp square-to-square
-    // jumps so the tuner cannot bake corpus-specific motifs into a
-    // single PST cell. Default lambda 1e-4 keeps the regulariser at a
-    // few percent of the data loss; PST_SMOOTH_LAMBDA in the env can
-    // dial this in or out without rebuilding.
+    return totalWeight > 0.0 ? total / totalWeight : total / static_cast<double>(n);
+}
+
+// Total loss including the parameter-only PST smoothness and pawn
+// mirror priors. Used for the training-side accept gate so that a step
+// which makes the data loss slightly worse but reduces an outsize
+// regulariser by enough to net out is still allowed -- the priors are
+// designed to shape parameters, not just measure them.
+//
+// PST_SMOOTH_LAMBDA / PAWN_MIRROR_LAMBDA env vars control the prior
+// strength without rebuilding. The regularisers are constant over the
+// corpus (parameter-only) so they cancel out of any indices-based
+// difference; we still include them so the training loss stays in the
+// same units regardless of which slice it is computed on.
+static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
+                          int numThreads,
+                          const std::vector<size_t> *indices = nullptr) {
+    double dataLoss = computeDataLoss(positions, K, numThreads, indices);
     double regLoss = pstSmoothLambda() * pstSmoothnessPenalty();
-    // Pawn PST soft mirror prior: caps how far the tuner can drive
-    // PawnPST[file] and PawnPST[7-file] apart on rank-and-file motifs
-    // that are not consistent across the corpus. Off by default at a
-    // tiny lambda because pawn structure is genuinely asymmetric;
-    // PAWN_MIRROR_LAMBDA dials it up if the operator wants stronger
-    // symmetry pressure.
     regLoss += pawnMirrorLambda() * pawnMirrorPenalty();
     return dataLoss + regLoss;
 }
@@ -958,16 +1031,19 @@ static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThr
               << stats.cappedIterations << " hit iteration cap\n";
 }
 
-static double findBestK(const std::vector<LabeledPosition> &positions, int numThreads) {
+static double findBestK(const std::vector<LabeledPosition> &positions, int numThreads,
+                        const std::vector<size_t> *indices = nullptr) {
     // Golden-section-style bracket search. Internal scale is ~228 per
     // pawn, so K in the range [0.0005, 0.01] covers the plausible span
-    // of Texel scaling constants.
+    // of Texel scaling constants. When `indices` is non-null the fit
+    // runs on the training partition only so the val slice never
+    // contributes to the sigmoid scale.
     double lo = 0.0005, hi = 0.02;
     for (int iter = 0; iter < 40; iter++) {
         double m1 = lo + (hi - lo) / 3.0;
         double m2 = hi - (hi - lo) / 3.0;
-        double l1 = computeLoss(positions, m1, numThreads);
-        double l2 = computeLoss(positions, m2, numThreads);
+        double l1 = computeLoss(positions, m1, numThreads, indices);
+        double l2 = computeLoss(positions, m2, numThreads, indices);
         if (l1 < l2)
             hi = m2;
         else
@@ -1403,8 +1479,9 @@ static bool choleskySolveSymmetric(std::vector<double> &A, std::vector<double> &
 // repeated engine evaluations of the same corpus.
 static double computeLossFromFeatures(const std::vector<LabeledPosition> &positions,
                                       const CorpusFeatures &cf, const std::vector<int> &theta,
-                                      double K, int numThreads) {
-    const size_t N = positions.size();
+                                      double K, int numThreads,
+                                      const std::vector<size_t> *indices = nullptr) {
+    const size_t N = indices ? indices->size() : positions.size();
     const size_t P = theta.size();
 
     std::vector<int> deltaTheta(P);
@@ -1422,12 +1499,13 @@ static double computeLossFromFeatures(const std::vector<LabeledPosition> &positi
             double sum = 0.0;
             double sumWeight = 0.0;
             for (size_t i = start; i < end; i++) {
-                int64_t eval = cf.baseline[i];
-                for (const auto &fe : cf.rows[i])
+                size_t pi = indices ? (*indices)[i] : i;
+                int64_t eval = cf.baseline[pi];
+                for (const auto &fe : cf.rows[pi])
                     eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
                 double pred = sigmoid(static_cast<double>(eval), K);
-                double err = pred - positions[i].result;
-                double w = positions[i].weight;
+                double err = pred - positions[pi].result;
+                double w = positions[pi].weight;
                 sum += w * err * err;
                 sumWeight += w;
             }
@@ -1469,8 +1547,9 @@ static double computeLossFromFeatures(const std::vector<LabeledPosition> &positi
 // otherwise.
 static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
                               const CorpusFeatures &cf, std::vector<ParamRef> &params, double K,
-                              int numThreads, double &bestLoss) {
-    const size_t N = positions.size();
+                              int numThreads, double &bestLoss,
+                              const std::vector<size_t> *trainIndices = nullptr) {
+    const size_t N = trainIndices ? trainIndices->size() : positions.size();
     const size_t P = params.size();
 
     constexpr int maxStepPerParam = 32;
@@ -1501,14 +1580,15 @@ static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
                 auto &JtJ = threadJtJ[t];
                 auto &Jtr = threadJtr[t];
                 for (size_t i = start; i < end; i++) {
-                    int64_t eval = cf.baseline[i];
-                    const auto &row = cf.rows[i];
+                    size_t pi = trainIndices ? (*trainIndices)[i] : i;
+                    int64_t eval = cf.baseline[pi];
+                    const auto &row = cf.rows[pi];
                     for (const auto &fe : row)
                         eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
                     double pred = sigmoid(static_cast<double>(eval), K);
-                    double residual = pred - positions[i].result;
+                    double residual = pred - positions[pi].result;
                     double sigprime = pred * (1.0 - pred);
-                    double w = positions[i].weight;
+                    double w = positions[pi].weight;
                     // Per-position weights enter the weighted least-
                     // squares normal equations symmetrically: each
                     // residual contributes w * sigprime^2 * f f^T to
@@ -1585,7 +1665,7 @@ static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
     static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
     for (double scale : backtrackScales) {
         applyScaled(scale);
-        double L = computeLoss(positions, K, numThreads);
+        double L = computeLoss(positions, K, numThreads, trainIndices);
         if (L0 - L > acceptThreshold) {
             bestLoss = L;
             std::cerr << "  gauss-newton accepted scale=" << scale << " loss=" << L << "\n";
@@ -1615,7 +1695,8 @@ static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
 // `bestLoss` in place when an improvement is accepted.
 static double newtonPass(std::vector<LabeledPosition> &positions,
                          std::vector<ParamRef> &params, double K, int numThreads,
-                         double &bestLoss) {
+                         double &bestLoss,
+                         const std::vector<size_t> *trainIndices = nullptr) {
     constexpr int delta = 1;             // finite-difference step size
     constexpr int maxStep = 16;          // per-parameter clip
     constexpr double minHessian = 1e-12; // floor for Newton division
@@ -1640,11 +1721,11 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
         double Lm = L0;
         if (canPlus) {
             p.write(orig + delta);
-            Lp = computeLoss(positions, K, numThreads);
+            Lp = computeLoss(positions, K, numThreads, trainIndices);
         }
         if (canMinus) {
             p.write(orig - delta);
-            Lm = computeLoss(positions, K, numThreads);
+            Lm = computeLoss(positions, K, numThreads, trainIndices);
         }
         p.write(orig); // restore for the next parameter and the line search
 
@@ -1688,7 +1769,7 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
     static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
     for (double scale : backtrackScales) {
         applyScaled(scale);
-        double L = computeLoss(positions, K, numThreads);
+        double L = computeLoss(positions, K, numThreads, trainIndices);
         if (L0 - L > acceptThreshold) {
             bestLoss = L;
             std::cerr << "  newton accepted scale=" << scale << " loss=" << L << "\n";
@@ -1702,16 +1783,38 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
 
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
                  int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses,
-                 bool useGaussNewton) {
+                 bool useGaussNewton,
+                 const std::vector<size_t> &trainIndices,
+                 const std::vector<size_t> &valIndices) {
     auto params = collectParams();
-    std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
-              << " positions with " << numThreads << " threads, K=" << K << "\n";
+    const std::vector<size_t> *trainPtr = trainIndices.empty() ? nullptr : &trainIndices;
+    const std::vector<size_t> *valPtr = valIndices.empty() ? nullptr : &valIndices;
+    std::cerr << "tuning " << params.size() << " scalars across "
+              << (trainPtr ? trainIndices.size() : positions.size())
+              << " train positions";
+    if (valPtr) std::cerr << " (" << valIndices.size() << " val held out)";
+    std::cerr << " with " << numThreads << " threads, K=" << K << "\n";
 
     projectToConstraints(params);
     validateConstraints(params);
 
-    double bestLoss = computeLoss(positions, K, numThreads);
-    std::cerr << "initial loss: " << bestLoss << "\n";
+    double bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+    std::cerr << "initial loss: " << bestLoss;
+    if (valPtr) {
+        double initialVal = computeDataLoss(positions, K, numThreads, valPtr);
+        std::cerr << " val_loss=" << initialVal;
+    }
+    std::cerr << "\n";
+
+    // Helper for the per-pass val report. Pulls the data-only val loss
+    // (no regularisers, since those are parameter-only and would just
+    // add a constant offset to every val measurement). Empty when no
+    // val partition was set up.
+    auto reportVal = [&](const std::string &tag, int pass) {
+        if (!valPtr) return;
+        double vl = computeDataLoss(positions, K, numThreads, valPtr);
+        std::cerr << "  " << tag << " pass " << pass << " val_loss=" << vl << "\n";
+    };
 
     // Optional Newton-style initial phase. Two flavors share the same
     // pass-count budget and the same K-refit / leaf-refresh cadences:
@@ -1741,10 +1844,11 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
             std::cerr << "gauss-newton pass " << globalPass << " starting (loss=" << bestLoss
                       << ")\n";
-            double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss);
+            double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss, trainPtr);
             centerPSTGauge();
             std::cerr << "gauss-newton pass " << globalPass << " done, loss=" << bestLoss
                       << " rel-improvement=" << rel << "\n";
+            reportVal("gauss-newton", globalPass);
             writeCheckpoint("tuning/checkpoint.txt", params);
 
             if (rel < 1e-6) {
@@ -1761,16 +1865,16 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
                 std::cerr << "refit K after gauss-newton pass " << globalPass << "\n";
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after gauss-newton pass " << globalPass << "\n";
                 precomputeLeaves(positions, numThreads);
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "post-refresh K " << oldK << " -> " << K
                           << ", rebased loss=" << bestLoss << "\n";
                 // Re-extract features against the new qsearch leaves.
@@ -1784,10 +1888,11 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         int stalled = 0;
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
             std::cerr << "newton pass " << globalPass << " starting (loss=" << bestLoss << ")\n";
-            double rel = newtonPass(positions, params, K, numThreads, bestLoss);
+            double rel = newtonPass(positions, params, K, numThreads, bestLoss, trainPtr);
             centerPSTGauge();
             std::cerr << "newton pass " << globalPass << " done, loss=" << bestLoss
                       << " rel-improvement=" << rel << "\n";
+            reportVal("newton", globalPass);
             writeCheckpoint("tuning/checkpoint.txt", params);
 
             if (rel < 1e-6) {
@@ -1803,16 +1908,16 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
                 std::cerr << "refit K after newton pass " << globalPass << "\n";
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after newton pass " << globalPass << "\n";
                 precomputeLeaves(positions, numThreads);
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "post-refresh K " << oldK << " -> " << K
                           << ", rebased loss=" << bestLoss << "\n";
             }
@@ -1856,7 +1961,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             for (int step : stepLadder) {
                 if (p.allow(original + step)) {
                     p.write(original + step);
-                    double loss = computeLoss(positions, K, passNumThreads);
+                    double loss = computeLoss(positions, K, passNumThreads, trainPtr);
                     if (bestLoss - loss > threshold) {
                         bestLoss = loss;
                         improved = true;
@@ -1868,7 +1973,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                 }
                 if (p.allow(original - step)) {
                     p.write(original - step);
-                    double loss = computeLoss(positions, K, passNumThreads);
+                    double loss = computeLoss(positions, K, passNumThreads, trainPtr);
                     if (bestLoss - loss > threshold) {
                         bestLoss = loss;
                         improved = true;
@@ -1893,6 +1998,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         centerPSTGauge();
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
+        reportVal("cd", globalPass);
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
 
@@ -1904,8 +2010,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
             std::cerr << "refit K after pass " << globalPass << "\n";
             double oldK = K;
-            K = findBestK(positions, numThreads);
-            bestLoss = computeLoss(positions, K, numThreads);
+            K = findBestK(positions, numThreads, trainPtr);
+            bestLoss = computeLoss(positions, K, numThreads, trainPtr);
             std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
         }
 
@@ -1920,8 +2026,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             precomputeLeaves(positions, numThreads);
             // Re-fit K against the new leaves and rebase loss.
             double oldK = K;
-            K = findBestK(positions, numThreads);
-            bestLoss = computeLoss(positions, K, numThreads);
+            K = findBestK(positions, numThreads, trainPtr);
+            bestLoss = computeLoss(positions, K, numThreads, trainPtr);
             std::cerr << "post-refresh K " << oldK << " -> " << K << ", rebased loss=" << bestLoss
                       << "\n";
         }
@@ -1939,7 +2045,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     // valid.
     std::cerr << "tight-threshold finalizer at " << relThresholdDeterministic
               << " (numThreads=" << numThreads << ")\n";
-    bestLoss = computeLoss(positions, K, numThreads);
+    bestLoss = computeLoss(positions, K, numThreads, trainPtr);
     std::cerr << "finalizer baseline loss: " << bestLoss << "\n";
     for (int finalPass = 0; finalPass < maxPasses; finalPass++, globalPass++) {
         bool improved = runPass(globalPass, numThreads, relThresholdDeterministic);
@@ -1949,6 +2055,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         centerPSTGauge();
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
+        reportVal("cd-final", globalPass);
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
     }
@@ -2185,6 +2292,7 @@ int main(int argc, char **argv) {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
+        std::cerr << "            [--val-fraction X]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
@@ -2237,6 +2345,7 @@ int main(int argc, char **argv) {
     int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
     int newtonPasses = 0;       // run N Newton-style passes before CD; 0 disables
     bool useGaussNewton = true; // true: Gauss-Newton, false: diagonal Newton
+    double valFraction = 0.10;  // game-id-based train / val split fraction
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -2254,6 +2363,9 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--gauss-newton" && argIdx + 1 < argc) {
             useGaussNewton = std::atoi(argv[argIdx + 1]) != 0;
+            argIdx += 2;
+        } else if (a == "--val-fraction" && argIdx + 1 < argc) {
+            valFraction = std::atof(argv[argIdx + 1]);
             argIdx += 2;
         } else {
             break;
@@ -2300,14 +2412,25 @@ int main(int argc, char **argv) {
     // game id metadata field.
     assignGameWeights(positions);
 
+    // Held-out validation slice. Splitting by game id keeps every row
+    // from a given game in one partition, so the val loss reflects
+    // generalisation to *unseen games* rather than unseen plies of
+    // games the tuner already saw. valFraction <= 0 disables the
+    // split (all positions go to train, val empty, gate off).
+    auto split = splitCorpus(positions, valFraction, /*seed=*/0xc0ffeeULL);
+    std::vector<size_t> trainIndices = std::move(split.first);
+    std::vector<size_t> valIndices = std::move(split.second);
+
     precomputeLeaves(positions, numThreads);
 
     std::cerr << "finding K...\n";
-    double K = findBestK(positions, numThreads);
+    const std::vector<size_t> *trainPtr =
+        trainIndices.empty() ? nullptr : &trainIndices;
+    double K = findBestK(positions, numThreads, trainPtr);
     std::cerr << "K=" << K << "\n";
 
     tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
-         useGaussNewton);
+         useGaussNewton, trainIndices, valIndices);
     printCurrentValues();
     return 0;
 }
