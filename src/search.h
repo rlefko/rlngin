@@ -129,6 +129,17 @@ int qsearchScore(const Board &board);
 // loop run cheap static evaluate() calls instead of full qsearch.
 Board qsearchLeafBoard(const Board &root);
 
+// Run a fixed-depth alpha-beta search from `root`, walk the resulting
+// principal variation to its terminal position, then re-enter qsearch
+// to land on a quiet leaf. Used by the Texel tuner's `--leaf-depth N`
+// option to resolve more tactical noise (Andrew-Grant style PV-terminal
+// corpus). depth <= 0 falls back to plain qsearchLeafBoard. Same TT
+// preconditions as qsearchLeafBoard: thread_local TT means workers can
+// run concurrently, but the call clears its own thread_local TT so a
+// caller must not interleave it with other search activity on the same
+// thread.
+Board pvLeafBoard(const Board &root, int depth);
+
 // Aggregate stats accumulated by every `qsearchLeafBoard` call since
 // the last `resetQsearchLeafCounters()`. The tuner inspects these
 // after `precomputeLeaves` so anomalies (returned-in-check leaves,

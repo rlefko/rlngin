@@ -21,6 +21,30 @@ set -euo pipefail
 #   USE_GAUSS_NEWTON:      1 to run Gauss-Newton via cached features,
 #                          0 to fall back to diagonal Newton via finite
 #                          differences on the loss (default: 1)
+#   LEAF_DEPTH:            PV walk depth for the leaf precompute
+#                          (default: 0 = qsearch leaves only; 4-6 walks
+#                          a low-depth alpha-beta PV before falling
+#                          into qsearch, Andrew-Grant style)
+#   VAL_FRACTION:          held-out validation slice as a fraction of
+#                          the corpus (default: 0.10; 0 disables the
+#                          split and the val gate)
+#   VAL_GATE_WARMUP:       passes the val gate is in report-only mode
+#                          before it starts reverting non-improving
+#                          passes (default: 5)
+#   NO_VAL_GATE:           1 to disable the val-loss accept gate
+#                          entirely while still emitting the bucketed
+#                          val report each pass (default: 0)
+#   CURATED_EPD:           path to a small curated EPD pack to mix
+#                          into the training set (default: unset).
+#                          Read by the tuner directly; this script
+#                          forwards the env to the child process.
+#   CURATED_WEIGHT:        per-position weight for curated rows
+#                          (default: 5.0; only meaningful with
+#                          CURATED_EPD set)
+#   PST_SMOOTH_LAMBDA:     PST smoothness regulariser strength
+#                          (default: 1e-9). Read by the tuner.
+#   PAWN_MIRROR_LAMBDA:    pawn PST mirror prior strength
+#                          (default: 1e-8). Read by the tuner.
 
 OUTPUT="${OUTPUT:-tuning/texel}"
 CORPUS="${1:-$OUTPUT/positions.epd}"
@@ -55,19 +79,41 @@ ARGS+=(--refit-k-every "${REFIT_K_EVERY:-4}")
 ARGS+=(--refresh-leaves-every "${REFRESH_LEAVES_EVERY:-8}")
 ARGS+=(--newton-passes "${NEWTON_PASSES:-10}")
 ARGS+=(--gauss-newton "${USE_GAUSS_NEWTON:-1}")
+ARGS+=(--leaf-depth "${LEAF_DEPTH:-0}")
+ARGS+=(--val-fraction "${VAL_FRACTION:-0.10}")
+ARGS+=(--val-gate-warmup "${VAL_GATE_WARMUP:-5}")
+if [ "${NO_VAL_GATE:-0}" != "0" ]; then
+    ARGS+=(--no-val-gate)
+fi
 
 echo "Texel tune: $CORPUS"
-echo "  threads:        $THREADS"
-echo "  max-passes:     $MAX_PASSES"
-echo "  newton-passes:  ${NEWTON_PASSES:-10}"
-echo "  gauss-newton:   ${USE_GAUSS_NEWTON:-1}"
-echo "  refit-K:        every ${REFIT_K_EVERY:-4} pass(es)"
-echo "  refresh-leaves: every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
-if [ -n "${FROM_CHECKPOINT:-}" ]; then
-    echo "  resume:     $FROM_CHECKPOINT"
+echo "  threads:           $THREADS"
+echo "  max-passes:        $MAX_PASSES"
+echo "  newton-passes:     ${NEWTON_PASSES:-10}"
+echo "  gauss-newton:      ${USE_GAUSS_NEWTON:-1}"
+echo "  refit-K:           every ${REFIT_K_EVERY:-4} pass(es)"
+echo "  refresh-leaves:    every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
+echo "  leaf-depth:        ${LEAF_DEPTH:-0}"
+echo "  val-fraction:      ${VAL_FRACTION:-0.10}"
+if [ "${NO_VAL_GATE:-0}" != "0" ]; then
+    echo "  val-gate:          off (diagnostics only)"
+else
+    echo "  val-gate-warmup:   ${VAL_GATE_WARMUP:-5} pass(es)"
 fi
-echo "  log:        $LOG"
-echo "  archive:    $ARCHIVE_CKPT"
+if [ -n "${CURATED_EPD:-}" ]; then
+    echo "  curated-epd:       $CURATED_EPD (weight=${CURATED_WEIGHT:-5.0})"
+fi
+if [ -n "${PST_SMOOTH_LAMBDA:-}" ]; then
+    echo "  pst-smooth-lambda: $PST_SMOOTH_LAMBDA"
+fi
+if [ -n "${PAWN_MIRROR_LAMBDA:-}" ]; then
+    echo "  pawn-mirror-lambda: $PAWN_MIRROR_LAMBDA"
+fi
+if [ -n "${FROM_CHECKPOINT:-}" ]; then
+    echo "  resume:            $FROM_CHECKPOINT"
+fi
+echo "  log:               $LOG"
+echo "  archive:           $ARCHIVE_CKPT"
 
 "$TUNE" "${ARGS[@]}" "$CORPUS" "$THREADS" "$MAX_PASSES" 2>&1 | tee "$LOG"
 
