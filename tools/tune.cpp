@@ -2014,7 +2014,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                  bool useGaussNewton,
                  const std::vector<size_t> &trainIndices,
                  const std::vector<size_t> &valIndices,
-                 int valGateWarmup, bool valGateEnabled,
+                 int valGateWarmup, int valGatePatience, bool valGateEnabled,
                  int leafDepth) {
     auto params = collectParams();
     const std::vector<size_t> *trainPtr = trainIndices.empty() ? nullptr : &trainIndices;
@@ -2025,26 +2025,20 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     if (valPtr) std::cerr << " (" << valIndices.size() << " val held out)";
     std::cerr << " with " << numThreads << " threads, K=" << K << "\n";
     if (valPtr) {
-        std::cerr << "val gate: "
-                  << (valGateEnabled ? ("on, warmup=" + std::to_string(valGateWarmup) + " passes")
-                                     : std::string("off (diagnostics only)"))
-                  << "\n";
+        if (valGateEnabled) {
+            std::cerr << "val gate: on, warmup=" << valGateWarmup
+                      << " passes, patience=" << valGatePatience
+                      << " consecutive non-improvements\n";
+        } else {
+            std::cerr << "val gate: off (diagnostics only)\n";
+        }
     }
 
     projectToConstraints(params);
     validateConstraints(params);
 
     double bestLoss = computeLoss(positions, K, numThreads, trainPtr);
-    double bestValLoss = std::numeric_limits<double>::infinity();
-    if (valPtr) bestValLoss = computeDataLoss(positions, K, numThreads, valPtr);
-    std::cerr << "initial loss: " << bestLoss;
-    if (valPtr) std::cerr << " val_loss=" << bestValLoss;
-    std::cerr << "\n";
 
-    // Snapshot the live params so a reverted pass can be rolled back
-    // bit-for-bit. Coordinate descent moves params in place during the
-    // pass, so without a pre-pass snapshot we cannot undo a pass that
-    // failed the val gate.
     auto snapshotParams = [&]() {
         std::vector<int> snap(params.size());
         for (size_t i = 0; i < params.size(); i++) snap[i] = params[i].read();
@@ -2054,61 +2048,89 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         for (size_t i = 0; i < params.size(); i++) params[i].write(snap[i]);
     };
 
-    // Helper for the per-pass val report. Drops out cleanly when no val
-    // partition was set up. Pulls the bucketed val report (no
-    // regularisers in the val numbers, since those are parameter-only
-    // and would just add a constant offset to every measurement). The
-    // bucketed line layout is greppable: train_loss / val_loss summary
-    // first, then one line each for phase, result, material, eval
-    // magnitude.
-    //
-    // Returns the overall val loss (data MSE on the held-out slice)
-    // so the caller can feed it into the accept gate without paying
-    // the per-position pass twice.
+    // Best-val tracking. We never revert mid-run -- coordinate descent
+    // is deterministic given the params, so a mid-run revert would
+    // just replay the same step ladder and revert again. Instead we
+    // remember the param vector at the lowest val loss seen so far,
+    // let training continue (so a noisy bad pass cannot prematurely
+    // stop the trajectory), and at the end of tune() restore the
+    // final params to the best-val snapshot. That captures the most
+    // generalising point along the trajectory rather than wherever
+    // the run happened to terminate.
+    double bestValLoss = std::numeric_limits<double>::infinity();
+    std::vector<int> bestValSnapshot;
+    int noValImprovement = 0;
+    if (valPtr) {
+        bestValLoss = computeDataLoss(positions, K, numThreads, valPtr);
+        bestValSnapshot = snapshotParams();
+    }
+    std::cerr << "initial loss: " << bestLoss;
+    if (valPtr) std::cerr << " val_loss=" << bestValLoss;
+    std::cerr << "\n";
+
+    // Bucketed val report; returns the overall val loss so the caller
+    // can feed the gate without paying the per-position pass twice.
     auto reportVal = [&](const std::string &tag, int pass) -> double {
         if (!valPtr) return 0.0;
         return reportValidation(positions, valIndices, K, numThreads, bestLoss, pass, tag);
     };
 
-    // Hybrid val-loss accept gate. Caller supplies a pre-pass param
-    // snapshot, the freshly-measured val loss, and the train-side
-    // improved flag from the pass body. Returns the (possibly
-    // overridden) improved flag the outer loop should believe:
+    // Best-val accept gate. Three cases per pass:
     //
-    //   * Warmup window (`pass < valGateWarmup`): record the best val
-    //     loss seen but do not revert, so the early coarse moves can
-    //     settle without being interrupted by val-side noise.
-    //   * After warmup: if the new val loss did not beat the prior
-    //     best by more than the relative tolerance, restore the
-    //     pre-pass param snapshot, rebuild bestLoss, and treat the
-    //     pass as no improvement. The convergence check the outer
-    //     loop already runs (two stalled passes -> exit) gets the
-    //     same signal it would for a flat training pass.
+    //   * Val improved (new minimum): update bestValLoss and snapshot
+    //     the current params as the best-val state. Reset the
+    //     consecutive-non-improvement counter. Also write a
+    //     `checkpoint_bestval.txt` so the operator has an on-disk
+    //     copy of the best-val state if the run is interrupted.
+    //   * Val did not improve: log the counter and let training
+    //     continue. We do NOT revert the pass, because mid-run
+    //     reverts replay the same deterministic CD step ladder and
+    //     just produce the same regression next pass. Other
+    //     parameters in the same pass might genuinely have improved
+    //     even if the aggregate val measurement happened to land
+    //     above the previous best -- not chopping them off lets the
+    //     trajectory continue exploring.
+    //   * Patience exceeded (post-warmup, `noValImprovement >=
+    //     patience`): break the loop. The end-of-tune handler will
+    //     restore params to the best-val snapshot regardless of
+    //     where the loop exits.
     //
-    // No-op when valPtr is null or when `valGateEnabled` is false;
-    // train-side improved flag is returned unchanged in those cases.
-    auto applyValGate = [&](const std::vector<int> &preSnapshot, double valLoss, int pass,
-                            const std::string &tag, bool improved) -> bool {
+    // Returns the (possibly overridden) `improved` flag the outer
+    // loop should believe: true if training should continue, false
+    // if patience hit.
+    auto applyValGate = [&](double valLoss, int pass, const std::string &tag,
+                            bool improved) -> bool {
         if (!valPtr || !valGateEnabled) return improved;
-        if (pass < valGateWarmup) {
-            if (valLoss < bestValLoss) bestValLoss = valLoss;
+        if (valLoss < bestValLoss * (1.0 - 1e-6)) {
+            bestValLoss = valLoss;
+            bestValSnapshot = snapshotParams();
+            noValImprovement = 0;
+            std::cerr << "  " << tag << " pass " << pass
+                      << " new best val_loss=" << valLoss << "\n";
+            writeCheckpoint("tuning/checkpoint_bestval.txt", params);
             return improved;
         }
-        // 1e-6 relative tolerance matches the floating-point summation
-        // floor the threaded loss already accommodates; below that
-        // threshold val "improvements" are noise.
-        if (valLoss >= bestValLoss * (1.0 - 1e-6)) {
-            restoreParams(preSnapshot);
-            bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+        if (pass < valGateWarmup) return improved;
+        noValImprovement++;
+        std::cerr << "  " << tag << " pass " << pass
+                  << " no val improvement (" << noValImprovement << "/"
+                  << valGatePatience << " toward patience limit, best_val_loss="
+                  << bestValLoss << ")\n";
+        if (noValImprovement >= valGatePatience) {
             std::cerr << "  " << tag << " pass " << pass
-                      << " reverted by val gate: val_loss=" << valLoss
-                      << " best_val_loss=" << bestValLoss
-                      << " (train rolled back to loss=" << bestLoss << ")\n";
+                      << " val gate stop: " << valGatePatience
+                      << " consecutive passes without val improvement\n";
             return false;
         }
-        bestValLoss = valLoss;
         return improved;
     };
+
+    // Reset the patience counter at the start of each phase. GN /
+    // Newton / CD-ladder / CD-finalizer each explore the loss
+    // landscape differently, so a phase that exhausts patience
+    // without progress should not pre-empt the next phase from
+    // running at all.
+    auto resetPatience = [&]() { noValImprovement = 0; };
 
     // Optional Newton-style initial phase. Two flavors share the same
     // pass-count budget and the same K-refit / leaf-refresh cadences:
@@ -2134,21 +2156,22 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     if (newtonPasses > 0 && useGaussNewton) {
         std::cerr << "gauss-newton phase: up to " << newtonPasses << " passes\n";
         CorpusFeatures cf = extractCorpusFeatures(positions, params, numThreads);
+        resetPatience();
         int stalled = 0;
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
             std::cerr << "gauss-newton pass " << globalPass << " starting (loss=" << bestLoss
                       << ")\n";
-            auto preSnapshot = snapshotParams();
             double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss, trainPtr);
             centerPSTGauge();
             std::cerr << "gauss-newton pass " << globalPass << " done, loss=" << bestLoss
                       << " rel-improvement=" << rel << "\n";
             double valLoss = reportVal("gauss-newton", globalPass);
             bool improved = rel >= 1e-6;
-            improved = applyValGate(preSnapshot, valLoss, globalPass, "gauss-newton", improved);
-            // If the gate reverted, rel is no longer the actual
-            // improvement -- treat as a stalled pass for the
-            // convergence check.
+            improved = applyValGate(valLoss, globalPass, "gauss-newton", improved);
+            // If the gate signalled patience-exhaustion, treat as a
+            // stalled pass for the train-side convergence check too
+            // so the existing "two stalled passes -> exit" path runs
+            // in lockstep with the val gate.
             if (!improved) rel = 0.0;
             writeCheckpoint("tuning/checkpoint.txt", params);
 
@@ -2186,17 +2209,17 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         }
     } else if (newtonPasses > 0) {
         std::cerr << "newton phase: up to " << newtonPasses << " passes\n";
+        resetPatience();
         int stalled = 0;
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
             std::cerr << "newton pass " << globalPass << " starting (loss=" << bestLoss << ")\n";
-            auto preSnapshot = snapshotParams();
             double rel = newtonPass(positions, params, K, numThreads, bestLoss, trainPtr);
             centerPSTGauge();
             std::cerr << "newton pass " << globalPass << " done, loss=" << bestLoss
                       << " rel-improvement=" << rel << "\n";
             double valLoss = reportVal("newton", globalPass);
             bool improved = rel >= 1e-6;
-            improved = applyValGate(preSnapshot, valLoss, globalPass, "newton", improved);
+            improved = applyValGate(valLoss, globalPass, "newton", improved);
             if (!improved) rel = 0.0;
             writeCheckpoint("tuning/checkpoint.txt", params);
 
@@ -2295,8 +2318,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         return improved;
     };
 
+    resetPatience();
     for (int pass = 0; pass < maxPasses; pass++, globalPass++) {
-        auto preSnapshot = snapshotParams();
         bool improved = runPass(globalPass, numThreads, relThresholdThreaded);
         // Canonicalize PST/material gauge so the per-term values stay
         // interpretable. Bit-identical eval, and the next pass picks
@@ -2305,7 +2328,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
         double valLoss = reportVal("cd", globalPass);
-        improved = applyValGate(preSnapshot, valLoss, globalPass, "cd", improved);
+        improved = applyValGate(valLoss, globalPass, "cd", improved);
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
 
@@ -2354,8 +2377,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
               << " (numThreads=" << numThreads << ")\n";
     bestLoss = computeLoss(positions, K, numThreads, trainPtr);
     std::cerr << "finalizer baseline loss: " << bestLoss << "\n";
+    resetPatience();
     for (int finalPass = 0; finalPass < maxPasses; finalPass++, globalPass++) {
-        auto preSnapshot = snapshotParams();
         bool improved = runPass(globalPass, numThreads, relThresholdDeterministic);
         // Canonicalize PST/material gauge so the per-term values stay
         // interpretable. Bit-identical eval, and the next pass picks
@@ -2364,9 +2387,37 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
         double valLoss = reportVal("cd-final", globalPass);
-        improved = applyValGate(preSnapshot, valLoss, globalPass, "cd-final", improved);
+        improved = applyValGate(valLoss, globalPass, "cd-final", improved);
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
+    }
+
+    // End-of-tune: restore the param vector to the best-val snapshot
+    // we observed along the trajectory, re-center the gauge, and
+    // overwrite the live checkpoint so the dump that follows reflects
+    // the most-generalising point rather than wherever the last pass
+    // happened to land. No-op when val tracking was off (legacy
+    // pipeline) or when the very first val measurement was the best
+    // (params already match the snapshot).
+    if (valPtr && valGateEnabled && !bestValSnapshot.empty()) {
+        bool needsRestore = false;
+        for (size_t i = 0; i < params.size(); i++) {
+            if (params[i].read() != bestValSnapshot[i]) {
+                needsRestore = true;
+                break;
+            }
+        }
+        if (needsRestore) {
+            restoreParams(bestValSnapshot);
+            centerPSTGauge();
+            bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+            std::cerr << "tune complete: restored params to best-val snapshot, val_loss="
+                      << bestValLoss << " train_loss=" << bestLoss << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+        } else {
+            std::cerr << "tune complete: final params already match best-val snapshot, val_loss="
+                      << bestValLoss << "\n";
+        }
     }
 }
 
@@ -2601,8 +2652,8 @@ int main(int argc, char **argv) {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
-        std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--no-val-gate]\n";
-        std::cerr << "            [--leaf-depth N]\n";
+        std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--val-gate-patience N]\n";
+        std::cerr << "            [--no-val-gate] [--leaf-depth N]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
@@ -2658,13 +2709,25 @@ int main(int argc, char **argv) {
     double valFraction = 0.10;  // game-id-based train / val split fraction
     // Default warmup: VAL_GATE_WARMUP env var, else 5 passes. The
     // warmup window lets the initial coarse moves settle before the
-    // gate starts reverting passes that fail to improve val loss.
+    // gate's patience counter starts ticking on non-improving passes.
     int valGateWarmup = [] {
         const char *env = std::getenv("VAL_GATE_WARMUP");
         if (!env) return 5;
         char *endp = nullptr;
         long v = std::strtol(env, &endp, 10);
         return (endp == env) ? 5 : static_cast<int>(v);
+    }();
+    // Patience: number of consecutive post-warmup passes without val
+    // improvement before the loop breaks. Default 8 so a couple of
+    // noisy passes do not chop off real later improvements; the
+    // best-val snapshot is restored on exit regardless of where the
+    // loop terminated.
+    int valGatePatience = [] {
+        const char *env = std::getenv("VAL_GATE_PATIENCE");
+        if (!env) return 8;
+        char *endp = nullptr;
+        long v = std::strtol(env, &endp, 10);
+        return (endp == env) ? 8 : static_cast<int>(v);
     }();
     bool valGateEnabled = true;
     // PV walk depth for the leaf precompute. Default 0 keeps the
@@ -2702,6 +2765,9 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--val-gate-warmup" && argIdx + 1 < argc) {
             valGateWarmup = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--val-gate-patience" && argIdx + 1 < argc) {
+            valGatePatience = std::atoi(argv[argIdx + 1]);
             argIdx += 2;
         } else if (a == "--no-val-gate") {
             valGateEnabled = false;
@@ -2804,7 +2870,8 @@ int main(int argc, char **argv) {
     std::cerr << "K=" << K << "\n";
 
     tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
-         useGaussNewton, trainIndices, valIndices, valGateWarmup, valGateEnabled, leafDepth);
+         useGaussNewton, trainIndices, valIndices, valGateWarmup, valGatePatience, valGateEnabled,
+         leafDepth);
     printCurrentValues();
     return 0;
 }

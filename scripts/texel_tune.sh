@@ -29,8 +29,12 @@ set -euo pipefail
 #                          the corpus (default: 0.10; 0 disables the
 #                          split and the val gate)
 #   VAL_GATE_WARMUP:       passes the val gate is in report-only mode
-#                          before it starts reverting non-improving
-#                          passes (default: 5)
+#                          before its patience counter starts ticking
+#                          on non-improving passes (default: 5)
+#   VAL_GATE_PATIENCE:     consecutive post-warmup passes without val
+#                          improvement before the loop breaks
+#                          (default: 8). Best-val params are restored
+#                          on exit regardless of where the loop ends.
 #   NO_VAL_GATE:           1 to disable the val-loss accept gate
 #                          entirely while still emitting the bucketed
 #                          val report each pass (default: 0)
@@ -82,6 +86,7 @@ ARGS+=(--gauss-newton "${USE_GAUSS_NEWTON:-1}")
 ARGS+=(--leaf-depth "${LEAF_DEPTH:-0}")
 ARGS+=(--val-fraction "${VAL_FRACTION:-0.10}")
 ARGS+=(--val-gate-warmup "${VAL_GATE_WARMUP:-5}")
+ARGS+=(--val-gate-patience "${VAL_GATE_PATIENCE:-8}")
 if [ "${NO_VAL_GATE:-0}" != "0" ]; then
     ARGS+=(--no-val-gate)
 fi
@@ -99,6 +104,7 @@ if [ "${NO_VAL_GATE:-0}" != "0" ]; then
     echo "  val-gate:          off (diagnostics only)"
 else
     echo "  val-gate-warmup:   ${VAL_GATE_WARMUP:-5} pass(es)"
+    echo "  val-gate-patience: ${VAL_GATE_PATIENCE:-8} pass(es)"
 fi
 if [ -n "${CURATED_EPD:-}" ]; then
     echo "  curated-epd:       $CURATED_EPD (weight=${CURATED_WEIGHT:-5.0})"
