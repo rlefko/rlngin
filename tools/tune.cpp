@@ -793,13 +793,23 @@ static const double PstSmoothEg[7] = {0.0, 1.0, 0.6, 0.5, 0.4, 0.3, 1.0};
 
 // Read tunable env vars once on program start so subsequent loss
 // evaluations do not pay the getenv / strtod cost.
+//
+// The PST smoothness penalty sums squared adjacent-cell differences
+// over every PST. With typical 50 cp adjacent diffs that sum lands
+// around 2.5e2 to 3e2 cp^2 even on a tuned snapshot, while the data
+// MSE on a Texel corpus sits around 5e-2 to 1e-1. Default lambda
+// 1e-9 puts the regulariser at a few percent of the data loss; the
+// previous 1e-4 default was wildly over-scaled and let the regulariser
+// dominate every accept gate. PST_SMOOTH_LAMBDA in the env still
+// dials it in or out without rebuilding when the operator wants
+// stronger smoothness pressure.
 static double pstSmoothLambda() {
     static const double cached = [] {
         const char *env = std::getenv("PST_SMOOTH_LAMBDA");
-        if (!env) return 1e-4;
+        if (!env) return 1e-9;
         char *endp = nullptr;
         double v = std::strtod(env, &endp);
-        return (endp == env) ? 1e-4 : v;
+        return (endp == env) ? 1e-9 : v;
     }();
     return cached;
 }
@@ -810,13 +820,18 @@ static double pstSmoothLambda() {
 // (g and h pawns play differently from a and b pawns once castling
 // directions matter). A soft mirror prior caps how far the tuner
 // can drift the two halves apart from corpus signal alone.
+//
+// Mirror penalty is naturally smaller than the smoothness penalty
+// because there are fewer pairs (24 vs hundreds), so a slightly
+// looser default (1e-8) keeps the prior at a similar fraction of
+// the data loss. Previous default 1e-4 was over-scaled.
 static double pawnMirrorLambda() {
     static const double cached = [] {
         const char *env = std::getenv("PAWN_MIRROR_LAMBDA");
-        if (!env) return 1e-4;
+        if (!env) return 1e-8;
         char *endp = nullptr;
         double v = std::strtod(env, &endp);
-        return (endp == env) ? 1e-4 : v;
+        return (endp == env) ? 1e-8 : v;
     }();
     return cached;
 }
