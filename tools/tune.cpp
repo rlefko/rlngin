@@ -1897,6 +1897,13 @@ static void printCurrentValues() {
               << ", // SliderOnQueenBishop\n";
     std::cout << "    " << fmtScore(evalParams.SliderOnQueenRook) << ", // SliderOnQueenRook\n";
     std::cout << "    " << fmtScore(evalParams.RestrictedPiece) << ", // RestrictedPiece\n";
+    std::cout << "    " << fmtScore(evalParams.ThreatByPawnPush) << ", // ThreatByPawnPush\n";
+    std::cout << "    " << fmtScore(evalParams.WeakQueenDefender) << ", // WeakQueenDefender\n";
+    std::cout << "    " << fmtScore(evalParams.KnightOnQueen) << ", // KnightOnQueen\n";
+    std::cout << "    " << fmtScore(evalParams.PawnlessFlank) << ", // PawnlessFlank\n";
+    std::cout << "    " << fmtScore(evalParams.QueenInfiltration) << ", // QueenInfiltration\n";
+    std::cout << "    " << fmtScore(evalParams.KingPawnDistEg) << ", // KingPawnDistEg\n";
+    std::cout << "    " << fmtScore(evalParams.KBNKCornerEg) << ", // KBNKCornerEg\n";
     std::cout << "};\n";
 }
 
