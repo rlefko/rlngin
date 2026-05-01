@@ -35,7 +35,9 @@ namespace {
 
 struct LabeledPosition {
     Board board;
-    double result; // 1.0 / 0.5 / 0.0 from White POV
+    double result;                    // 1.0 / 0.5 / 0.0 from White POV
+    std::vector<uint32_t> gameIds;    // every source game that produced this row
+    double weight = 1.0;              // per game inverse weight, normalised post load
 };
 
 // Inclusive integer bounds for a parameter half. The wide defaults are
@@ -608,6 +610,14 @@ static std::vector<ParamRef> collectParams() {
     return out;
 }
 
+// Strip leading and trailing whitespace from a string in place.
+static void trim(std::string &s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+        s.pop_back();
+}
+
 static std::vector<LabeledPosition> loadDataset(const std::string &path) {
     std::vector<LabeledPosition> out;
     std::ifstream in(path);
@@ -617,20 +627,88 @@ static std::vector<LabeledPosition> loadDataset(const std::string &path) {
     }
     std::string line;
     while (std::getline(in, line)) {
-        auto sep = line.find('|');
-        if (sep == std::string::npos) continue;
-        std::string fen = line.substr(0, sep);
-        std::string result = line.substr(sep + 1);
-        while (!fen.empty() && fen.back() == ' ')
-            fen.pop_back();
-        while (!result.empty() && (result.front() == ' '))
-            result.erase(result.begin());
+        // Format: "{FEN} | {result}" (legacy) or
+        //         "{FEN} | {result} | {gameId,gameId,...}" (current).
+        auto sep1 = line.find('|');
+        if (sep1 == std::string::npos) continue;
+        auto sep2 = line.find('|', sep1 + 1);
+
+        std::string fen = line.substr(0, sep1);
+        std::string result = (sep2 == std::string::npos)
+                                 ? line.substr(sep1 + 1)
+                                 : line.substr(sep1 + 1, sep2 - sep1 - 1);
+        std::string gameIdsField =
+            (sep2 == std::string::npos) ? std::string() : line.substr(sep2 + 1);
+        trim(fen);
+        trim(result);
+        trim(gameIdsField);
+
         LabeledPosition lp;
         lp.board.setFen(fen);
         lp.result = std::stod(result);
+        if (!gameIdsField.empty()) {
+            size_t pos = 0;
+            while (pos < gameIdsField.size()) {
+                size_t comma = gameIdsField.find(',', pos);
+                std::string token = (comma == std::string::npos)
+                                        ? gameIdsField.substr(pos)
+                                        : gameIdsField.substr(pos, comma - pos);
+                if (!token.empty()) {
+                    lp.gameIds.push_back(static_cast<uint32_t>(std::stoul(token)));
+                }
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+        }
         out.push_back(std::move(lp));
     }
     return out;
+}
+
+// Compute per game inverse weights for every position. A position
+// extracted from games {a, b, c} where game a contributed 80
+// positions, game b 40, and game c 60 receives weight
+// 1/80 + 1/40 + 1/60. After all per position weights are populated
+// the corpus is renormalised so the average weight is 1.0, which
+// keeps absolute loss numbers comparable to the unweighted
+// pipeline (so K refit and the relative-improvement gate stay
+// calibrated).
+static void assignGameWeights(std::vector<LabeledPosition> &positions) {
+    std::unordered_map<uint32_t, uint64_t> gameSizes;
+    for (const auto &lp : positions) {
+        for (uint32_t gid : lp.gameIds) {
+            gameSizes[gid] += 1;
+        }
+    }
+    if (gameSizes.empty()) {
+        // Legacy corpus with no game id metadata: every position
+        // already has weight 1.0 from default-construction; no
+        // renormalisation needed.
+        return;
+    }
+    double totalWeight = 0.0;
+    for (auto &lp : positions) {
+        if (lp.gameIds.empty()) {
+            lp.weight = 1.0;
+        } else {
+            double w = 0.0;
+            for (uint32_t gid : lp.gameIds) {
+                auto it = gameSizes.find(gid);
+                if (it != gameSizes.end() && it->second > 0) {
+                    w += 1.0 / static_cast<double>(it->second);
+                }
+            }
+            lp.weight = w;
+        }
+        totalWeight += lp.weight;
+    }
+    if (totalWeight <= 0.0) return;
+    double scale = static_cast<double>(positions.size()) / totalWeight;
+    for (auto &lp : positions) {
+        lp.weight *= scale;
+    }
+    std::cerr << "assignGameWeights: " << gameSizes.size() << " games, "
+              << positions.size() << " positions, mean weight 1.000\n";
 }
 
 static double sigmoid(double x, double K) {
@@ -777,6 +855,7 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
     // under our 1e-8 acceptance threshold.
     size_t n = positions.size();
     std::vector<double> partial(numThreads, 0.0);
+    std::vector<double> partialWeight(numThreads, 0.0);
     std::vector<std::thread> threads;
     threads.reserve(numThreads);
     for (int t = 0; t < numThreads; t++) {
@@ -784,6 +863,7 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
         size_t end = (n * (t + 1)) / numThreads;
         threads.emplace_back([&, start, end, t]() {
             double sum = 0.0;
+            double sumWeight = 0.0;
             for (size_t i = start; i < end; i++) {
                 Board board = positions[i].board;
                 int raw = evaluate(board);
@@ -795,17 +875,28 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
                 if (board.sideToMove == Black) raw = -raw;
                 double pred = sigmoid(static_cast<double>(raw), K);
                 double err = pred - positions[i].result;
-                sum += err * err;
+                double w = positions[i].weight;
+                sum += w * err * err;
+                sumWeight += w;
             }
             partial[t] = sum;
+            partialWeight[t] = sumWeight;
         });
     }
     for (auto &th : threads)
         th.join();
     double total = 0.0;
-    for (double p : partial)
-        total += p;
-    double dataLoss = total / static_cast<double>(n);
+    double totalWeight = 0.0;
+    for (int t = 0; t < numThreads; t++) {
+        total += partial[t];
+        totalWeight += partialWeight[t];
+    }
+    // assignGameWeights renormalises the corpus so the sum of weights
+    // equals position count, but legacy corpora and edge cases may
+    // leave totalWeight at zero; fall back to position count.
+    double dataLoss = totalWeight > 0.0
+                          ? total / totalWeight
+                          : total / static_cast<double>(n);
     // PST smoothness regulariser: penalise sharp square-to-square
     // jumps so the tuner cannot bake corpus-specific motifs into a
     // single PST cell. Default lambda 1e-4 keeps the regulariser at a
@@ -1321,6 +1412,7 @@ static double computeLossFromFeatures(const std::vector<LabeledPosition> &positi
         deltaTheta[j] = theta[j] - cf.theta0[j];
 
     std::vector<double> partial(numThreads, 0.0);
+    std::vector<double> partialWeight(numThreads, 0.0);
     std::vector<std::thread> threads;
     threads.reserve(numThreads);
     for (int t = 0; t < numThreads; t++) {
@@ -1328,23 +1420,30 @@ static double computeLossFromFeatures(const std::vector<LabeledPosition> &positi
         size_t end = (N * (t + 1)) / numThreads;
         threads.emplace_back([&, start, end, t]() {
             double sum = 0.0;
+            double sumWeight = 0.0;
             for (size_t i = start; i < end; i++) {
                 int64_t eval = cf.baseline[i];
                 for (const auto &fe : cf.rows[i])
                     eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
                 double pred = sigmoid(static_cast<double>(eval), K);
                 double err = pred - positions[i].result;
-                sum += err * err;
+                double w = positions[i].weight;
+                sum += w * err * err;
+                sumWeight += w;
             }
             partial[t] = sum;
+            partialWeight[t] = sumWeight;
         });
     }
     for (auto &th : threads)
         th.join();
     double total = 0.0;
-    for (double p : partial)
-        total += p;
-    return total / static_cast<double>(N);
+    double totalWeight = 0.0;
+    for (int t = 0; t < numThreads; t++) {
+        total += partial[t];
+        totalWeight += partialWeight[t];
+    }
+    return totalWeight > 0.0 ? total / totalWeight : total / static_cast<double>(N);
 }
 
 // One full Gauss-Newton iteration over the parameter vector. With
@@ -1409,8 +1508,13 @@ static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
                     double pred = sigmoid(static_cast<double>(eval), K);
                     double residual = pred - positions[i].result;
                     double sigprime = pred * (1.0 - pred);
-                    double weightR = K * sigprime * residual;
-                    double weightH = K * K * sigprime * sigprime;
+                    double w = positions[i].weight;
+                    // Per-position weights enter the weighted least-
+                    // squares normal equations symmetrically: each
+                    // residual contributes w * sigprime^2 * f f^T to
+                    // J^T J and w * sigprime * residual * f to J^T r.
+                    double weightR = w * K * sigprime * residual;
+                    double weightH = w * K * K * sigprime * sigprime;
                     const size_t M = row.size();
                     for (size_t a = 0; a < M; a++) {
                         int idxA = row[a].paramIdx;
@@ -2188,6 +2292,13 @@ int main(int argc, char **argv) {
     std::cerr << "loading " << dataset << "...\n";
     auto positions = loadDataset(dataset);
     std::cerr << "loaded " << positions.size() << " positions\n";
+    // Per-game inverse weighting so a 250-ply draw stops out-voting a
+    // sharp 30-move win in coordinate descent. Renormalises the corpus
+    // so the sum of weights equals position count, keeping K refit and
+    // absolute loss numbers comparable to the unweighted pipeline.
+    // No-op (every weight stays 1.0) on legacy corpora that lack the
+    // game id metadata field.
+    assignGameWeights(positions);
 
     precomputeLeaves(positions, numThreads);
 
