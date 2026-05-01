@@ -265,23 +265,45 @@ static std::vector<ParamRef> collectParams() {
     // unconstrained because the lowest counts (a knight with 0..2 moves)
     // legitimately carry a negative contribution.
     static const int mobilityCounts[7] = {0, 0, 9, 14, 15, 28, 0};
+    // Per piece slope caps on the mobility chain. The non decreasing
+    // prior alone lets the tuner spike a single count by 50+ cp when a
+    // recurring corpus motif rewards exactly that count. Capping the
+    // delta between adjacent counts keeps the curve readable as a
+    // smooth gradient instead of a step function. Values are loose
+    // enough that real diminishing return shifts are still expressible
+    // (knight mobility goes from 0 to 9 counts over 350 cp at the
+    // extreme; capping per step at 40 still permits a 360 cp span).
+    static const int mobilitySlopeMax[7] = {0, 0, 40, 35, 30, 25, 0};
     for (int pt = Knight; pt <= Queen; pt++) {
         const int n = mobilityCounts[pt];
+        const int maxStep = mobilitySlopeMax[pt];
         for (int i = 0; i < n; i++) {
-            auto mgChain = [pt, i, n] {
+            auto mgChain = [pt, i, n, maxStep] {
                 Bounds b;
-                if (i > 0)
-                    b.lo = std::max(b.lo, mg_value(evalParams.MobilityBonus[pt][i - 1]));
-                if (i < n - 1)
-                    b.hi = std::min(b.hi, mg_value(evalParams.MobilityBonus[pt][i + 1]));
+                if (i > 0) {
+                    int prev = mg_value(evalParams.MobilityBonus[pt][i - 1]);
+                    b.lo = std::max(b.lo, prev);
+                    b.hi = std::min(b.hi, prev + maxStep);
+                }
+                if (i < n - 1) {
+                    int next = mg_value(evalParams.MobilityBonus[pt][i + 1]);
+                    b.hi = std::min(b.hi, next);
+                    b.lo = std::max(b.lo, next - maxStep);
+                }
                 return b;
             };
-            auto egChain = [pt, i, n] {
+            auto egChain = [pt, i, n, maxStep] {
                 Bounds b;
-                if (i > 0)
-                    b.lo = std::max(b.lo, eg_value(evalParams.MobilityBonus[pt][i - 1]));
-                if (i < n - 1)
-                    b.hi = std::min(b.hi, eg_value(evalParams.MobilityBonus[pt][i + 1]));
+                if (i > 0) {
+                    int prev = eg_value(evalParams.MobilityBonus[pt][i - 1]);
+                    b.lo = std::max(b.lo, prev);
+                    b.hi = std::min(b.hi, prev + maxStep);
+                }
+                if (i < n - 1) {
+                    int next = eg_value(evalParams.MobilityBonus[pt][i + 1]);
+                    b.hi = std::min(b.hi, next);
+                    b.lo = std::max(b.lo, next - maxStep);
+                }
                 return b;
             };
             std::string base =
