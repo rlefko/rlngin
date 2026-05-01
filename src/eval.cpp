@@ -4,7 +4,6 @@
 #include "eval_params.h"
 #include "material_hash.h"
 #include "pawn_hash.h"
-#include "search_params.h"
 #include "zobrist.h"
 
 #include <algorithm>
@@ -1462,23 +1461,8 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
                     orthoXrays += popcount(xraySquaresOrtho & ourRooks & ~firstOrtho);
                 }
             }
-            // Material-imbalance multiplier: x-ray pressure on the queen
-            // converts more reliably when we are already ahead in
-            // non-pawn material, because the recapture chain that
-            // normally absorbs the pressure has fewer free pieces to
-            // throw at it. Double the bonus on the up-material side;
-            // leave it at par when material is even or behind.
-            int ourNonPawnMat = board.pieceCount[us][Knight] * PieceValue[Knight] +
-                                board.pieceCount[us][Bishop] * PieceValue[Bishop] +
-                                board.pieceCount[us][Rook] * PieceValue[Rook] +
-                                board.pieceCount[us][Queen] * PieceValue[Queen];
-            int theirNonPawnMat = board.pieceCount[them][Knight] * PieceValue[Knight] +
-                                  board.pieceCount[them][Bishop] * PieceValue[Bishop] +
-                                  board.pieceCount[them][Rook] * PieceValue[Rook] +
-                                  board.pieceCount[them][Queen] * PieceValue[Queen];
-            int imbalanceMul = 1 + (ourNonPawnMat > theirNonPawnMat ? 1 : 0);
-            scores[us] += evalParams.SliderOnQueenBishop * diagXrays * imbalanceMul;
-            scores[us] += evalParams.SliderOnQueenRook * orthoXrays * imbalanceMul;
+            scores[us] += evalParams.SliderOnQueenBishop * diagXrays;
+            scores[us] += evalParams.SliderOnQueenRook * orthoXrays;
         }
 
         // Restricted piece: every square we attack that an enemy knight,
@@ -1599,7 +1583,7 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
     }
 }
 
-int evaluate(const Board &board, int alpha, int beta) {
+int evaluate(const Board &board) {
     ensureEvalInit();
 
     Score scores[2] = {0, 0};
@@ -1633,44 +1617,6 @@ int evaluate(const Board &board, int alpha, int beta) {
 
     int mgPhase = std::min(gamePhase, 24);
     int egPhase = 24 - mgPhase;
-
-    // Lazy eval cutoff: with material + PST already in hand, project
-    // the cheap half through the same tempo / halfmove / STM-flip
-    // pipeline the full eval uses, then bound by LazyMargin. If the
-    // bounded preview already sits fully outside [alpha, beta], skip
-    // every remaining term and return that bound. The margin is the
-    // conservative envelope of how much the residual half (pawn
-    // structure beyond the pawn hash, mobility, threats, king safety,
-    // initiative) can pull the score back across. Saves a meaningful
-    // fraction of total eval cost in lopsided positions while never
-    // returning a value outside the bracket implied by the full eval.
-    //
-    // Gates:
-    //   - mgPhase > 10: in true endgames the scaleFactor block can
-    //     shrink the eg half to zero (drawish OCB / fortress
-    //     positions) and the endgameEgAdjust block can inject a
-    //     corner-push gradient neither of which the lazy preview
-    //     accounts for. Skipping lazy when scaleFactor would fire
-    //     keeps the bound mathematically valid.
-    //   - non-PV nodes only (beta - alpha <= 1): PV nodes need exact
-    //     scores to refine the line; returning a bounded value at PV
-    //     poisons aspiration windows and the principal continuation.
-    //     Pruning siblings via lazy at a non-PV (zero-window) node is
-    //     the only place a coarse bound is harmless because failure
-    //     to bracket triggers a re-search anyway.
-    if (mgPhase > 10 && (beta - alpha) <= 1) {
-        Score lazyTotal = scores[White] - scores[Black];
-        int lazyResult = (mg_value(lazyTotal) * mgPhase + eg_value(lazyTotal) * egPhase) / 24;
-        if (board.byPiece[Pawn]) {
-            lazyResult = lazyResult * (200 - board.halfmoveClock) / 200;
-        }
-        int tempoContribution = mg_value(evalParams.Tempo) * mgPhase / 24;
-        lazyResult += (board.sideToMove == White) ? tempoContribution : -tempoContribution;
-        int lazyStmResult = (board.sideToMove == White) ? lazyResult : -lazyResult;
-        int lazyMargin = searchParams.LazyMargin;
-        if (lazyStmResult - lazyMargin >= beta) return lazyStmResult - lazyMargin;
-        if (lazyStmResult + lazyMargin <= alpha) return lazyStmResult + lazyMargin;
-    }
 
     Score pawnScore = 0;
     Bitboard passers[2] = {0, 0};
