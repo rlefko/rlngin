@@ -130,6 +130,8 @@ static std::vector<ParamRef> collectParams() {
         {"KingPawnDistEg.eg", &evalParams.KingPawnDistEg, false, boundsNonPositive()});
     out.push_back(
         {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsNonNegative()});
+    out.push_back(
+        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsNonNegative()});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -1904,6 +1906,7 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.QueenInfiltration) << ", // QueenInfiltration\n";
     std::cout << "    " << fmtScore(evalParams.KingPawnDistEg) << ", // KingPawnDistEg\n";
     std::cout << "    " << fmtScore(evalParams.KBNKCornerEg) << ", // KBNKCornerEg\n";
+    std::cout << "    " << fmtScore(evalParams.LucenaEg) << ", // LucenaEg\n";
     std::cout << "};\n";
 }
 

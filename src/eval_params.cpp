@@ -238,6 +238,7 @@ static const EvalParams kDefaultEvalParams = {
     S(2, 0), // QueenInfiltration
     S(0, 0), // KingPawnDistEg
     S(0, 0), // KBNKCornerEg
+    S(0, 100), // LucenaEg
 };
 
 // clang-format on

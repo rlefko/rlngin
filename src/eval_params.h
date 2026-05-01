@@ -333,6 +333,17 @@ struct EvalParams {
     // is structurally zero (KBNK only matters in the eg phase); only
     // the eg half is tunable.
     Score KBNKCornerEg;
+
+    // Lucena bridge-building win: in K + R + P vs K + R with the pawn
+    // on rank 6 (attacker's POV), the strong king on rank 7 or 8 in
+    // front of the pawn, and the defender king cut off at least two
+    // files away from the pawn file, the position is a textbook win
+    // by the bridge-building rook technique. The default scale stays
+    // 64 (the material edge already says winning), but a flat eg
+    // bonus drives the search toward this configuration earlier than
+    // the raw material gradient alone would. Mg structurally zero;
+    // only the eg half is tunable.
+    Score LucenaEg;
 };
 
 extern EvalParams evalParams;

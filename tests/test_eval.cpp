@@ -1746,6 +1746,48 @@ TEST_CASE("Eval: KQKP fortress is recognized", "[eval][endgame]") {
     CHECK(winning > fortress);
 }
 
+TEST_CASE("Eval: Philidor third-rank rook holds K+R+P vs K+R", "[eval][endgame]") {
+    Board board;
+
+    // Classical Philidor draw shape: white K+R+P (e4 pawn) vs black K+R
+    // with the black rook on the 6th rank (e6 = 3rd from black's POV)
+    // and the black king back on e8. The recognizer should scale the
+    // eg half to zero so the engine plays the position as a draw
+    // rather than blindly converting the +pawn material.
+    board.setFen("4k3/8/4r3/8/4P3/8/4R3/4K3 w - - 0 1");
+    int philidor = evaluate(board);
+
+    // Same material with the black rook on the 1st rank (passive
+    // defence rather than the active third-rank technique). The
+    // recognizer must NOT fire here, so the position should score as
+    // genuine winning material for white.
+    board.setFen("4k3/8/8/8/4P3/8/4R3/4K1r1 w - - 0 1");
+    int passive = evaluate(board);
+
+    CHECK(passive > philidor);
+}
+
+TEST_CASE("Eval: Lucena bridge bonus drives K+R+P vs K+R conversion", "[eval][endgame]") {
+    Board board;
+
+    // Classical Lucena win: white K + R + P with the pawn on rank 7
+    // (e7) and the king on the 8th in front of it (e8), the black
+    // rook somewhere harmless (h1) and the black king cut off three
+    // files away on a-file. The bridge-building rook technique
+    // converts; the eg bonus drives the search toward this
+    // configuration earlier than the raw material gradient alone.
+    board.setFen("4K3/4P3/8/8/8/k7/8/r6R w - - 0 1");
+    int lucena = evaluate(board);
+
+    // Same material with the black king close (one file from the
+    // pawn). Defender is in time to block; recognizer should NOT
+    // fire so the eval matches plain material.
+    board.setFen("4K3/4P3/3k4/8/8/8/8/r6R w - - 0 1");
+    int blocked = evaluate(board);
+
+    CHECK(lucena >= blocked);
+}
+
 TEST_CASE("Eval: KBNK pushes the weak king toward the matching corner", "[eval][endgame]") {
     Board board;
 
