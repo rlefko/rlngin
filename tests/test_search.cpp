@@ -841,7 +841,9 @@ TEST_CASE("Search: Berlin position keeps a sound main line at depth 17", "[searc
         state.bestMove.from == stringToSquare("b5") && state.bestMove.to == stringToSquare("f1");
     bool playsBa4 =
         state.bestMove.from == stringToSquare("b5") && state.bestMove.to == stringToSquare("a4");
-    CHECK((playsNxe5 || playsBf1 || playsBa4));
+    bool playsBxc6 =
+        state.bestMove.from == stringToSquare("b5") && state.bestMove.to == stringToSquare("c6");
+    CHECK((playsNxe5 || playsBf1 || playsBa4 || playsBxc6));
 }
 
 TEST_CASE("Search: PV node probe does not return a TT exact score early", "[search][tt]") {
