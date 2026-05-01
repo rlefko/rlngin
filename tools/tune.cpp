@@ -2763,6 +2763,38 @@ int main(int argc, char **argv) {
     std::vector<size_t> trainIndices = std::move(split.first);
     std::vector<size_t> valIndices = std::move(split.second);
 
+    // Optional curated EPD pack. CURATED_EPD points to a small balanced
+    // position file (same `FEN | result` parser as the main corpus,
+    // game-id metadata not expected). Curated rows always go to the
+    // training set -- never the validation slice -- because the whole
+    // point is to bias the gradient toward positions the operator
+    // hand-selected. Per-position weight defaults to 5.0 so a 100-row
+    // pack punches above its row count without dominating a 5M
+    // corpus; CURATED_WEIGHT in the env raises or lowers that.
+    if (const char *curatedPath = std::getenv("CURATED_EPD")) {
+        if (*curatedPath) {
+            double curatedWeight = 5.0;
+            if (const char *wEnv = std::getenv("CURATED_WEIGHT")) {
+                char *endp = nullptr;
+                double v = std::strtod(wEnv, &endp);
+                if (endp != wEnv) curatedWeight = v;
+            }
+            std::cerr << "loading curated pack from " << curatedPath << "...\n";
+            auto curated = loadDataset(curatedPath);
+            const size_t baseIdx = positions.size();
+            for (auto &lp : curated) {
+                lp.gameIds.clear();
+                lp.weight = curatedWeight;
+                positions.push_back(std::move(lp));
+            }
+            for (size_t i = baseIdx; i < positions.size(); i++) {
+                trainIndices.push_back(i);
+            }
+            std::cerr << "loaded " << (positions.size() - baseIdx) << " curated positions"
+                      << ", weight=" << curatedWeight << " each (training only)\n";
+        }
+    }
+
     precomputeLeaves(positions, numThreads, leafDepth);
 
     std::cerr << "finding K...\n";
