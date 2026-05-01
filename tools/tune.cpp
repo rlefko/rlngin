@@ -637,6 +637,99 @@ static double sigmoid(double x, double K) {
     return 1.0 / (1.0 + std::exp(-K * x));
 }
 
+// Per piece smoothness weights for the PST L2 regulariser. The pawn
+// PST is full board (file structure matters) and the king eg is the
+// term that most often picks up corpus motifs (corners drift away
+// from the center on rare endgames), so those two carry the heaviest
+// weights. Knight values are second priority because the corner /
+// edge cells typically capture rare-attack motifs. Queen smoothness
+// is intentionally lighter because the queen's tactical reach
+// genuinely produces sharp local jumps. Index by piece type.
+static const double PstSmoothMg[7] = {0.0, 1.0, 0.6, 0.5, 0.4, 0.3, 0.4};
+static const double PstSmoothEg[7] = {0.0, 1.0, 0.6, 0.5, 0.4, 0.3, 1.0};
+
+// Read tunable env vars once on program start so subsequent loss
+// evaluations do not pay the getenv / strtod cost.
+static double pstSmoothLambda() {
+    static const double cached = [] {
+        const char *env = std::getenv("PST_SMOOTH_LAMBDA");
+        if (!env) return 1e-4;
+        char *endp = nullptr;
+        double v = std::strtod(env, &endp);
+        return (endp == env) ? 1e-4 : v;
+    }();
+    return cached;
+}
+
+// Sum of squared differences between adjacent squares in every PST,
+// scaled by per piece weights. Adjacency for the pawn 64-entry PST
+// is the standard 8x8 grid (rank +/- 1 same file, or file +/- 1 same
+// rank). Adjacency for the 32-entry half-board PSTs is over (rank,
+// fileIdx) where fileIdx in [0..3]. Only the rank 2..7 region of the
+// pawn PST is walked because the back ranks are forced to zero.
+static double pstSmoothnessPenalty() {
+    double total = 0.0;
+
+    auto sqr = [](double x) { return x * x; };
+
+    // Pawn full-board (skip rank 0 and rank 7; both are forced zero).
+    for (int rank = 1; rank <= 6; rank++) {
+        for (int file = 0; file < 8; file++) {
+            int sq = rank * 8 + file;
+            if (file < 7) {
+                int neighbour = sq + 1;
+                int rankNeighbour = neighbour / 8;
+                if (rankNeighbour >= 1 && rankNeighbour <= 6) {
+                    total += PstSmoothMg[Pawn] *
+                             sqr(mg_value(evalParams.PawnPST[sq]) -
+                                 mg_value(evalParams.PawnPST[neighbour]));
+                    total += PstSmoothEg[Pawn] *
+                             sqr(eg_value(evalParams.PawnPST[sq]) -
+                                 eg_value(evalParams.PawnPST[neighbour]));
+                }
+            }
+            if (rank < 6) {
+                int neighbour = sq + 8;
+                total += PstSmoothMg[Pawn] *
+                         sqr(mg_value(evalParams.PawnPST[sq]) -
+                             mg_value(evalParams.PawnPST[neighbour]));
+                total += PstSmoothEg[Pawn] *
+                         sqr(eg_value(evalParams.PawnPST[sq]) -
+                             eg_value(evalParams.PawnPST[neighbour]));
+            }
+        }
+    }
+
+    // Non-pawn half-board PSTs: index = (rank << 2) | fileIdx where
+    // fileIdx in [0..3]. Adjacency over the half-board grid.
+    auto walkHalfBoard = [&](const Score *pst, int pieceType) {
+        const double wmg = PstSmoothMg[pieceType];
+        const double weg = PstSmoothEg[pieceType];
+        for (int rank = 0; rank < 8; rank++) {
+            for (int fIdx = 0; fIdx < 4; fIdx++) {
+                int idx = (rank << 2) | fIdx;
+                if (fIdx < 3) {
+                    int neighbour = idx + 1;
+                    total += wmg * sqr(mg_value(pst[idx]) - mg_value(pst[neighbour]));
+                    total += weg * sqr(eg_value(pst[idx]) - eg_value(pst[neighbour]));
+                }
+                if (rank < 7) {
+                    int neighbour = idx + 4;
+                    total += wmg * sqr(mg_value(pst[idx]) - mg_value(pst[neighbour]));
+                    total += weg * sqr(eg_value(pst[idx]) - eg_value(pst[neighbour]));
+                }
+            }
+        }
+    };
+    walkHalfBoard(evalParams.KnightPST, Knight);
+    walkHalfBoard(evalParams.BishopPST, Bishop);
+    walkHalfBoard(evalParams.RookPST, Rook);
+    walkHalfBoard(evalParams.QueenPST, Queen);
+    walkHalfBoard(evalParams.KingPST, King);
+
+    return total;
+}
+
 static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
                           int numThreads) {
     // Positions here already hold qsearch-resolved leaf boards, so the
@@ -677,7 +770,14 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
     double total = 0.0;
     for (double p : partial)
         total += p;
-    return total / static_cast<double>(n);
+    double dataLoss = total / static_cast<double>(n);
+    // PST smoothness regulariser: penalise sharp square-to-square
+    // jumps so the tuner cannot bake corpus-specific motifs into a
+    // single PST cell. Default lambda 1e-4 keeps the regulariser at a
+    // few percent of the data loss; PST_SMOOTH_LAMBDA in the env can
+    // dial this in or out without rebuilding.
+    double regLoss = pstSmoothLambda() * pstSmoothnessPenalty();
+    return dataLoss + regLoss;
 }
 
 // Replace each training position's root board with its qsearch-resolved
