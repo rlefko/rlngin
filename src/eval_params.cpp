@@ -231,13 +231,13 @@ static const EvalParams kDefaultEvalParams = {
     S(43, 7), // SliderOnQueenBishop
     S(34, 0), // SliderOnQueenRook
     S(8, 1), // RestrictedPiece
-    S(35, 20), // ThreatByPawnPush
-    S(-50, -10), // WeakQueenDefender
-    S(16, 12), // KnightOnQueen
-    S(-17, -78), // PawnlessFlank
-    S(8, 12), // QueenInfiltration
-    S(0, -16), // KingPawnDistEg
-    S(0, 12), // KBNKCornerEg
+    S(28, 0), // ThreatByPawnPush
+    S(-42, -14), // WeakQueenDefender
+    S(61, 0), // KnightOnQueen
+    S(-202, -147), // PawnlessFlank
+    S(2, 0), // QueenInfiltration
+    S(0, 0), // KingPawnDistEg
+    S(0, 0), // KBNKCornerEg
 };
 
 // clang-format on
