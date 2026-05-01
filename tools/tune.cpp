@@ -986,6 +986,193 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
     return dataLoss + regLoss;
 }
 
+// Phase increments mirror the engine's `GamePhaseInc` (see eval.cpp)
+// so the reporter buckets val positions by the same opening / middle /
+// endgame definition the search uses.
+static const int TunerPhaseInc[7] = {0, 0, 1, 1, 2, 4, 0};
+
+// Compute the same `mgPhase` value the engine clamps to [0, 24]. Used
+// purely for val bucketing; the engine still does its own phase work
+// during evaluate().
+static int phaseFromBoard(const Board &board) {
+    int phase = 0;
+    for (int pt = Knight; pt <= Queen; pt++) {
+        phase += TunerPhaseInc[pt] * (board.pieceCount[White][pt] + board.pieceCount[Black][pt]);
+    }
+    return phase > 24 ? 24 : phase;
+}
+
+// Signed material delta from White's POV in pawn units. Used as a
+// rough material-imbalance bucket for the val reporter (sign tells us
+// who's ahead; magnitude buckets balanced / one-pawn / one-minor /
+// rook-or-better).
+static int materialDeltaCpFromBoard(const Board &board) {
+    static const int valueCp[7] = {0, 100, 320, 320, 500, 900, 0};
+    int delta = 0;
+    for (int pt = Pawn; pt <= Queen; pt++) {
+        delta += valueCp[pt] * (board.pieceCount[White][pt] - board.pieceCount[Black][pt]);
+    }
+    return delta;
+}
+
+// One bucket of (weight, weighted MSE numerator, count). Buckets merge
+// over threads by simple field-wise add.
+struct BucketStat {
+    double sumWeight = 0.0;
+    double sumWErr2 = 0.0;
+    size_t count = 0;
+    void operator+=(const BucketStat &o) {
+        sumWeight += o.sumWeight;
+        sumWErr2 += o.sumWErr2;
+        count += o.count;
+    }
+    double meanLoss() const { return sumWeight > 0.0 ? sumWErr2 / sumWeight : 0.0; }
+};
+
+// Categorical bucket buckets for the val reporter. Indices are kept
+// stable so the log lines stay machine-greppable.
+namespace bucket {
+constexpr int PhaseOpen = 0; // mgPhase >= 18
+constexpr int PhaseMid = 1;  // 8 <= mgPhase < 18
+constexpr int PhaseEnd = 2;  // mgPhase < 8
+constexpr int PhaseN = 3;
+
+constexpr int ResultWin = 0;  // 1.0
+constexpr int ResultDraw = 1; // 0.5
+constexpr int ResultLoss = 2; // 0.0
+constexpr int ResultN = 3;
+
+// Material delta from White's POV in cp:
+//   < -300  : down a minor or worse
+//   [-300, -50] : down a pawn-ish (pawn or fragmentary)
+//   [-50, 50]   : balanced (within +/- half a pawn)
+//   [50, 300]   : up a pawn-ish
+//   > 300       : up a minor or better
+constexpr int MatDownMinor = 0;
+constexpr int MatDownPawn = 1;
+constexpr int MatBalanced = 2;
+constexpr int MatUpPawn = 3;
+constexpr int MatUpMinor = 4;
+constexpr int MatN = 5;
+
+// Eval magnitude buckets in cp (post side-to-move flip, White POV):
+//   <= -300, (-300, 0], (0, 300], > 300
+constexpr int EvalDeep = 0;     // <= -300
+constexpr int EvalNegSmall = 1; // (-300, 0]
+constexpr int EvalPosSmall = 2; // (0, 300]
+constexpr int EvalDeepPos = 3;  // > 300
+constexpr int EvalN = 4;
+} // namespace bucket
+
+// Per-pass bucketed val reporter. Walks the val partition once,
+// classifying each position by phase, result, signed material delta,
+// and signed eval magnitude. Output goes to std::cerr in a stable
+// machine-greppable layout so the log can be diffed pass over pass.
+//
+// Uses the same threaded loop pattern as computeDataLoss so per-pass
+// overhead scales with thread count. Heavy lambda body but the loop
+// is bound by static evaluate() so the wins are linear.
+static void reportValidation(const std::vector<LabeledPosition> &positions,
+                             const std::vector<size_t> &valIndices, double K, int numThreads,
+                             double trainLoss, int globalPass, const std::string &tag) {
+    if (valIndices.empty()) return;
+    const size_t n = valIndices.size();
+    struct ThreadAcc {
+        std::array<BucketStat, bucket::PhaseN> phase{};
+        std::array<BucketStat, bucket::ResultN> result{};
+        std::array<BucketStat, bucket::MatN> material{};
+        std::array<BucketStat, bucket::EvalN> evalMag{};
+        BucketStat overall{};
+    };
+    std::vector<ThreadAcc> tacc(numThreads);
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++) {
+        size_t start = (n * t) / numThreads;
+        size_t end = (n * (t + 1)) / numThreads;
+        threads.emplace_back([&, start, end, t]() {
+            auto &acc = tacc[t];
+            for (size_t i = start; i < end; i++) {
+                size_t pi = valIndices[i];
+                const auto &lp = positions[pi];
+                Board board = lp.board;
+                int raw = evaluate(board);
+                if (board.sideToMove == Black) raw = -raw;
+                double pred = sigmoid(static_cast<double>(raw), K);
+                double err = pred - lp.result;
+                double w = lp.weight;
+                double w_err2 = w * err * err;
+                BucketStat sample{w, w_err2, 1};
+                acc.overall += sample;
+
+                int phase = phaseFromBoard(board);
+                int phaseIdx;
+                if (phase >= 18) phaseIdx = bucket::PhaseOpen;
+                else if (phase >= 8) phaseIdx = bucket::PhaseMid;
+                else phaseIdx = bucket::PhaseEnd;
+                acc.phase[phaseIdx] += sample;
+
+                int resultIdx;
+                if (lp.result > 0.75) resultIdx = bucket::ResultWin;
+                else if (lp.result < 0.25) resultIdx = bucket::ResultLoss;
+                else resultIdx = bucket::ResultDraw;
+                acc.result[resultIdx] += sample;
+
+                int matDelta = materialDeltaCpFromBoard(board);
+                int matIdx;
+                if (matDelta < -300) matIdx = bucket::MatDownMinor;
+                else if (matDelta < -50) matIdx = bucket::MatDownPawn;
+                else if (matDelta <= 50) matIdx = bucket::MatBalanced;
+                else if (matDelta <= 300) matIdx = bucket::MatUpPawn;
+                else matIdx = bucket::MatUpMinor;
+                acc.material[matIdx] += sample;
+
+                int evalIdx;
+                if (raw <= -300) evalIdx = bucket::EvalDeep;
+                else if (raw <= 0) evalIdx = bucket::EvalNegSmall;
+                else if (raw <= 300) evalIdx = bucket::EvalPosSmall;
+                else evalIdx = bucket::EvalDeepPos;
+                acc.evalMag[evalIdx] += sample;
+            }
+        });
+    }
+    for (auto &th : threads)
+        th.join();
+
+    ThreadAcc total;
+    for (int t = 0; t < numThreads; t++) {
+        for (int i = 0; i < bucket::PhaseN; i++) total.phase[i] += tacc[t].phase[i];
+        for (int i = 0; i < bucket::ResultN; i++) total.result[i] += tacc[t].result[i];
+        for (int i = 0; i < bucket::MatN; i++) total.material[i] += tacc[t].material[i];
+        for (int i = 0; i < bucket::EvalN; i++) total.evalMag[i] += tacc[t].evalMag[i];
+        total.overall += tacc[t].overall;
+    }
+
+    auto fmt = [](const BucketStat &b) {
+        std::ostringstream os;
+        os << b.meanLoss() << "(" << b.count << ")";
+        return os.str();
+    };
+
+    std::cerr << "  " << tag << " pass " << globalPass << " train_loss=" << trainLoss
+              << " val_loss=" << total.overall.meanLoss() << "\n";
+    std::cerr << "    by_phase open=" << fmt(total.phase[bucket::PhaseOpen])
+              << " mid=" << fmt(total.phase[bucket::PhaseMid])
+              << " end=" << fmt(total.phase[bucket::PhaseEnd]) << "\n";
+    std::cerr << "    by_result win=" << fmt(total.result[bucket::ResultWin])
+              << " draw=" << fmt(total.result[bucket::ResultDraw])
+              << " loss=" << fmt(total.result[bucket::ResultLoss]) << "\n";
+    std::cerr << "    by_material down_minor=" << fmt(total.material[bucket::MatDownMinor])
+              << " down_pawn=" << fmt(total.material[bucket::MatDownPawn])
+              << " balanced=" << fmt(total.material[bucket::MatBalanced])
+              << " up_pawn=" << fmt(total.material[bucket::MatUpPawn])
+              << " up_minor=" << fmt(total.material[bucket::MatUpMinor]) << "\n";
+    std::cerr << "    by_eval [<=-300]=" << fmt(total.evalMag[bucket::EvalDeep])
+              << " [-300,0]=" << fmt(total.evalMag[bucket::EvalNegSmall])
+              << " [0,300]=" << fmt(total.evalMag[bucket::EvalPosSmall])
+              << " [>300]=" << fmt(total.evalMag[bucket::EvalDeepPos]) << "\n";
+}
+
 // Replace each training position's root board with its qsearch-resolved
 // leaf so the loss loop can use a fast static evaluate() call. Runs
 // sequentially because qsearchLeafBoard clears and rewrites the global
@@ -1806,14 +1993,16 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     }
     std::cerr << "\n";
 
-    // Helper for the per-pass val report. Pulls the data-only val loss
-    // (no regularisers, since those are parameter-only and would just
-    // add a constant offset to every val measurement). Empty when no
-    // val partition was set up.
+    // Helper for the per-pass val report. Drops out cleanly when no val
+    // partition was set up. Pulls the bucketed val report (no
+    // regularisers in the val numbers, since those are parameter-only
+    // and would just add a constant offset to every measurement). The
+    // bucketed line layout is greppable: train_loss / val_loss summary
+    // first, then one line each for phase, result, material, eval
+    // magnitude.
     auto reportVal = [&](const std::string &tag, int pass) {
         if (!valPtr) return;
-        double vl = computeDataLoss(positions, K, numThreads, valPtr);
-        std::cerr << "  " << tag << " pass " << pass << " val_loss=" << vl << "\n";
+        reportValidation(positions, valIndices, K, numThreads, bestLoss, pass, tag);
     };
 
     // Optional Newton-style initial phase. Two flavors share the same
