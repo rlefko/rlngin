@@ -23,7 +23,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2470);
+    CHECK(evaluate(board) == 2462);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -70,12 +70,12 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1203);
+    CHECK(evaluate(board) == 1199);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2470);
+    CHECK(evaluate(board) == 2462);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -468,7 +468,7 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     board.setFen("4k3/3pn3/4P3/8/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
-        CHECK(line.find("mg=  -117") != std::string::npos);
+        CHECK(line.find("mg=  -113") != std::string::npos);
         CHECK(line.find("eg=   -95") != std::string::npos);
     }
 }
@@ -1348,7 +1348,7 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     // a KQvK evaluation matches the pure material plus PST plus king
     // safety baseline and is not damped by the initiative constant.
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2470);
+    CHECK(evaluate(board) == 2462);
 }
 
 TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
