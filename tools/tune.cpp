@@ -661,6 +661,41 @@ static double pstSmoothLambda() {
     return cached;
 }
 
+// Pawn PST mirror prior magnitude. Non-pawn PSTs are stored half
+// board so they are mirror-identical by construction, but the pawn
+// PST is full board because pawn structure is genuinely asymmetric
+// (g and h pawns play differently from a and b pawns once castling
+// directions matter). A soft mirror prior caps how far the tuner
+// can drift the two halves apart from corpus signal alone.
+static double pawnMirrorLambda() {
+    static const double cached = [] {
+        const char *env = std::getenv("PAWN_MIRROR_LAMBDA");
+        if (!env) return 1e-4;
+        char *endp = nullptr;
+        double v = std::strtod(env, &endp);
+        return (endp == env) ? 1e-4 : v;
+    }();
+    return cached;
+}
+
+// Sum of squared file-mirror differences across the pawn PST. Skips
+// the back ranks (forced zero). Each pair contributes once.
+static double pawnMirrorPenalty() {
+    double total = 0.0;
+    auto sqr = [](double x) { return x * x; };
+    for (int rank = 1; rank <= 6; rank++) {
+        for (int file = 0; file < 4; file++) {
+            int sq = rank * 8 + file;
+            int mirror = rank * 8 + (7 - file);
+            total += sqr(mg_value(evalParams.PawnPST[sq]) -
+                         mg_value(evalParams.PawnPST[mirror]));
+            total += sqr(eg_value(evalParams.PawnPST[sq]) -
+                         eg_value(evalParams.PawnPST[mirror]));
+        }
+    }
+    return total;
+}
+
 // Sum of squared differences between adjacent squares in every PST,
 // scaled by per piece weights. Adjacency for the pawn 64-entry PST
 // is the standard 8x8 grid (rank +/- 1 same file, or file +/- 1 same
@@ -777,6 +812,13 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
     // few percent of the data loss; PST_SMOOTH_LAMBDA in the env can
     // dial this in or out without rebuilding.
     double regLoss = pstSmoothLambda() * pstSmoothnessPenalty();
+    // Pawn PST soft mirror prior: caps how far the tuner can drive
+    // PawnPST[file] and PawnPST[7-file] apart on rank-and-file motifs
+    // that are not consistent across the corpus. Off by default at a
+    // tiny lambda because pawn structure is genuinely asymmetric;
+    // PAWN_MIRROR_LAMBDA dials it up if the operator wants stronger
+    // symmetry pressure.
+    regLoss += pawnMirrorLambda() * pawnMirrorPenalty();
     return dataLoss + regLoss;
 }
 
