@@ -1195,20 +1195,37 @@ static double reportValidation(const std::vector<LabeledPosition> &positions,
     return total.overall.meanLoss();
 }
 
-// Replace each training position's root board with its qsearch-resolved
-// leaf so the loss loop can use a fast static evaluate() call. Runs
-// sequentially because qsearchLeafBoard clears and rewrites the global
-// TT per position.
-static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThreads) {
-    std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions on "
-              << numThreads << " threads...\n";
+// Replace each training position's root board with its quiet leaf so
+// the loss loop can use a fast static evaluate() call. Two modes:
+//
+//   leafDepth = 0 : pure qsearch leaf (existing default). Handles
+//                   capture chains but cannot see one-ply tactics.
+//   leafDepth > 0 : run a fixed-depth alpha-beta search and follow
+//                   the PV to its terminal, then qsearch from there.
+//                   Resolves more tactical noise (Andrew-Grant style
+//                   PV-terminal corpus) at the cost of a noticeably
+//                   longer precompute -- a depth-6 walk over 5M
+//                   positions on 14 threads is several minutes on
+//                   top of the qsearch-only baseline.
+//
+// Both modes use thread_local TTs inside the leaf function so the
+// outer worker pool can run concurrently without contention.
+static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThreads,
+                             int leafDepth = 0) {
+    if (leafDepth > 0) {
+        std::cerr << "precomputing PV-terminal leaves (depth=" << leafDepth << ") for "
+                  << positions.size() << " positions on " << numThreads << " threads...\n";
+    } else {
+        std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions on "
+                  << numThreads << " threads...\n";
+    }
     resetQsearchLeafCounters();
 
     // Workers share an atomic cursor so any uneven per-position cost
     // (some leaves walk a long capture chain, others stand-pat at the
     // root) load-balances naturally. Each worker has its own
-    // thread_local TT inside qsearchLeafBoard, so there is no
-    // contention on the table itself.
+    // thread_local TT inside qsearchLeafBoard / pvLeafBoard, so there
+    // is no contention on the table itself.
     std::atomic<size_t> nextIndex{0};
     std::atomic<size_t> nextReport{50000};
     const size_t total = positions.size();
@@ -1217,7 +1234,9 @@ static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThr
         while (true) {
             size_t i = nextIndex.fetch_add(1, std::memory_order_relaxed);
             if (i >= total) break;
-            positions[i].board = qsearchLeafBoard(positions[i].board);
+            positions[i].board = leafDepth > 0
+                                     ? pvLeafBoard(positions[i].board, leafDepth)
+                                     : qsearchLeafBoard(positions[i].board);
             size_t threshold = nextReport.load(std::memory_order_relaxed);
             if (i + 1 >= threshold) {
                 if (nextReport.compare_exchange_strong(threshold, threshold + 50000)) {
@@ -1995,7 +2014,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                  bool useGaussNewton,
                  const std::vector<size_t> &trainIndices,
                  const std::vector<size_t> &valIndices,
-                 int valGateWarmup, bool valGateEnabled) {
+                 int valGateWarmup, bool valGateEnabled,
+                 int leafDepth) {
     auto params = collectParams();
     const std::vector<size_t> *trainPtr = trainIndices.empty() ? nullptr : &trainIndices;
     const std::vector<size_t> *valPtr = valIndices.empty() ? nullptr : &valIndices;
@@ -2152,7 +2172,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after gauss-newton pass " << globalPass << "\n";
-                precomputeLeaves(positions, numThreads);
+                precomputeLeaves(positions, numThreads, leafDepth);
                 double oldK = K;
                 K = findBestK(positions, numThreads, trainPtr);
                 bestLoss = computeLoss(positions, K, numThreads, trainPtr);
@@ -2199,7 +2219,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after newton pass " << globalPass << "\n";
-                precomputeLeaves(positions, numThreads);
+                precomputeLeaves(positions, numThreads, leafDepth);
                 double oldK = K;
                 K = findBestK(positions, numThreads, trainPtr);
                 bestLoss = computeLoss(positions, K, numThreads, trainPtr);
@@ -2310,7 +2330,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         // precompute over the whole corpus), so default off.
         if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
             std::cerr << "refresh leaves after pass " << globalPass << "\n";
-            precomputeLeaves(positions, numThreads);
+            precomputeLeaves(positions, numThreads, leafDepth);
             // Re-fit K against the new leaves and rebase loss.
             double oldK = K;
             K = findBestK(positions, numThreads, trainPtr);
@@ -2582,6 +2602,7 @@ int main(int argc, char **argv) {
                      "[--refresh-leaves-every N]\n";
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
         std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--no-val-gate]\n";
+        std::cerr << "            [--leaf-depth N]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
@@ -2646,6 +2667,18 @@ int main(int argc, char **argv) {
         return (endp == env) ? 5 : static_cast<int>(v);
     }();
     bool valGateEnabled = true;
+    // PV walk depth for the leaf precompute. Default 0 keeps the
+    // existing qsearch-only behaviour; positive values re-enter
+    // alpha-beta from the root and walk the PV to its terminal
+    // before falling into qsearch. Read once from CLI / env var so
+    // the operator does not have to recompile to swap modes.
+    int leafDepth = [] {
+        const char *env = std::getenv("LEAF_DEPTH");
+        if (!env) return 0;
+        char *endp = nullptr;
+        long v = std::strtol(env, &endp, 10);
+        return (endp == env) ? 0 : static_cast<int>(v);
+    }();
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -2673,6 +2706,9 @@ int main(int argc, char **argv) {
         } else if (a == "--no-val-gate") {
             valGateEnabled = false;
             argIdx += 1;
+        } else if (a == "--leaf-depth" && argIdx + 1 < argc) {
+            leafDepth = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
         } else {
             break;
         }
@@ -2727,7 +2763,7 @@ int main(int argc, char **argv) {
     std::vector<size_t> trainIndices = std::move(split.first);
     std::vector<size_t> valIndices = std::move(split.second);
 
-    precomputeLeaves(positions, numThreads);
+    precomputeLeaves(positions, numThreads, leafDepth);
 
     std::cerr << "finding K...\n";
     const std::vector<size_t> *trainPtr =
@@ -2736,7 +2772,7 @@ int main(int argc, char **argv) {
     std::cerr << "K=" << K << "\n";
 
     tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
-         useGaussNewton, trainIndices, valIndices, valGateWarmup, valGateEnabled);
+         useGaussNewton, trainIndices, valIndices, valGateWarmup, valGateEnabled, leafDepth);
     printCurrentValues();
     return 0;
 }

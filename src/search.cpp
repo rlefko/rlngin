@@ -1501,6 +1501,45 @@ void rebuildLmrTable() {
     }
 }
 
+// PV-terminal leaf walk for the Texel tuner. Runs one fixed-depth
+// alpha-beta search from the root, follows the principal variation
+// recorded in `state.pv[0]` to the search horizon, then qsearches
+// from there to land on a quiet leaf. Used by the tuner's
+// `--leaf-depth N` option to resolve more tactical noise than plain
+// qsearch (Andrew-Grant style PV-terminal corpus).
+//
+// depth <= 0 falls back to qsearchLeafBoard, which is the existing
+// default behaviour. The search runs against the thread_local TT and
+// a fresh SearchState, so concurrent worker threads can each call
+// pvLeafBoard without contention. Time-limit infrastructure is
+// disabled by setting `allocatedTimeMs` to its max so the search
+// runs until the depth budget is exhausted.
+Board pvLeafBoard(const Board &root, int depth) {
+    if (depth <= 0) return qsearchLeafBoard(root);
+
+    tt.clear();
+    g_tunerLeafMode = false;
+
+    SearchState state;
+    state.startTime = std::chrono::steady_clock::now();
+    state.allocatedTimeMs = std::numeric_limits<int64_t>::max();
+    state.rootDepth = depth;
+
+    Board working = root;
+    (void)negamax(working, depth, 0, -INF_SCORE, INF_SCORE, state);
+
+    Board cur = root;
+    int pvLen = state.pvLength[0];
+    for (int i = 0; i < pvLen; i++) {
+        cur.makeMove(state.pv[0][i]);
+    }
+
+    // Re-enter qsearch from the PV terminal so the static eval sits
+    // on a quiet position. qsearchLeafBoard handles its own TT clear
+    // and resets g_tunerLeafMode, so we leave both untouched here.
+    return qsearchLeafBoard(cur);
+}
+
 void initSearch() {
     rebuildLmrTable();
 }
