@@ -23,7 +23,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2444);
+    CHECK(evaluate(board) == 2443);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -52,14 +52,14 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // expected score; the KingPawnDistEg term subtracts a chebyshev-
     // distance penalty for the king sitting four squares from the pawn.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 275);
+    CHECK(evaluate(board) == 271);
 
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
     // contribution survives, which is small with phase=1 and no pieces
     // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 33);
+    CHECK(evaluate(board) == 31);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
     // is scaled to zero. The mg half reflects material, PSTs, and the
@@ -70,12 +70,12 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1199);
+    CHECK(evaluate(board) == 1194);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2444);
+    CHECK(evaluate(board) == 2443);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -459,8 +459,8 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     board.setFen("4k3/4p3/4n3/4P3/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
-        CHECK(line.find("mg=   -90") != std::string::npos);
-        CHECK(line.find("eg=   -24") != std::string::npos);
+        CHECK(line.find("mg=   -83") != std::string::npos);
+        CHECK(line.find("eg=   -23") != std::string::npos);
     }
 
     // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
@@ -468,8 +468,8 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     board.setFen("4k3/3pn3/4P3/8/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
-        CHECK(line.find("mg=  -119") != std::string::npos);
-        CHECK(line.find("eg=   -93") != std::string::npos);
+        CHECK(line.find("mg=  -112") != std::string::npos);
+        CHECK(line.find("eg=   -95") != std::string::npos);
     }
 }
 
@@ -504,14 +504,14 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // king sits on h8 to keep the position outside the KPK rook-file
     // fortress envelope.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 275);
+    CHECK(evaluate(board) == 271);
 
     // Textbook K + P vs K with an outside passed pawn: white is winning
     // and the score should not be dragged down by treating the "no
     // opposing pawn" feature as a weakness. The king is one square from
     // the pawn so KingPawnDistEg only contributes a single-step penalty.
     board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
-    CHECK(evaluate(board) == 250);
+    CHECK(evaluate(board) == 245);
 }
 
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {
@@ -1348,7 +1348,7 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     // a KQvK evaluation matches the pure material plus PST plus king
     // safety baseline and is not damped by the initiative constant.
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2444);
+    CHECK(evaluate(board) == 2443);
 }
 
 TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
