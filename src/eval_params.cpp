@@ -87,7 +87,7 @@ static const EvalParams kDefaultEvalParams = {
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(225, 31), S(0, 0)},
     S(127, 19), // ThreatByKing
     S(100, 21), // Hanging
-    S(0, 33), // WeakQueen
+    S(57, 0), // WeakQueen
     S(21, 32), // SafePawnPush
     {S(0, 0), S(0, 0), S(0, 0), S(0, 27), S(0, 43), S(0, 43), S(0, 43), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 21), S(0, 39), S(0, 73), S(0, 83), S(0, 0)},
@@ -97,8 +97,8 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 21), // RookOn7thBonus
     S(0, 0), // BadBishop
     S(-1, -7), // BishopPawns
-    S(71, 0), // Tempo
-    {S(0, 0), S(208, 228), S(925, 560), S(960, 493), S(1513, 779), S(2684, 1767), S(0, 0)}, // PieceScore
+    S(48, 0), // Tempo
+    {S(0, 0), S(213, 233), S(934, 581), S(966, 515), S(1485, 819), S(2681, 1856), S(0, 0)}, // PieceScore
     // PawnPST
     {
         S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0),
@@ -208,7 +208,7 @@ static const EvalParams kDefaultEvalParams = {
     S(10, 29), // KingAttackByBishop
     S(30, 33), // KingAttackByRook
     S(30, 33), // KingAttackByQueen
-    {S(0, 0), S(0, 0), S(31, 0), S(36, 299), S(32, 1), S(32, 1), S(0, 0)}, // KingSafeCheck
+    {S(0, 0), S(0, 0), S(30, 1), S(32, 280), S(30, 1), S(30, 1), S(0, 0)}, // KingSafeCheck
     S(22, 22), // KingRingWeakWeight
     S(28, 0), // KingNoQueenDiscount
     S(-1, 0), // IsolatedPawnPenalty
