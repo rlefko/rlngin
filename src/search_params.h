@@ -102,6 +102,13 @@ struct SearchParams {
     // instead of one. Gated to non-PV nodes so the double extension never
     // stacks with PV check or recapture extensions on the same move.
     int SingularDoubleMargin;
+
+    // Cut-node Internal Iterative Reduction depth gate. When the search is
+    // at a cut-node and the TT either has no best move or a much shallower
+    // record than the current iteration, drop one extra ply so the next
+    // visit gets a better TT move at full depth. Only fires once the
+    // remaining depth is at least this large.
+    int IirCutNodeDepth;
 };
 
 extern SearchParams searchParams;

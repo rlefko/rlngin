@@ -562,6 +562,15 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
         depth -= 1;
     }
+    // Cut-node IIR: at deep cut-nodes the search is already expected to fail
+    // high, so an extra ply less at this visit is comparatively cheap when
+    // the TT either has no best move or a much shallower record than the
+    // current iteration. Stacks with the original rule when both apply, so a
+    // depth-7 cut-node with no TT move loses two plies instead of one.
+    if (cutNode && depth >= searchParams.IirCutNodeDepth &&
+        (!ttHit || ttMove.from == 0 || ttEntry.depth + 4 <= depth)) {
+        depth -= 1;
+    }
 
     bool inCheck = isInCheck(board);
 
