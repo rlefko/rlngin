@@ -3415,7 +3415,7 @@ int main(int argc, char **argv) {
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
         std::cerr << "            [--adam-epochs N] [--adam-lr X]\n";
         std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--val-gate-patience N]\n";
-        std::cerr << "            [--no-val-gate] [--leaf-depth N]\n";
+        std::cerr << "            [--val-gate] [--leaf-depth N]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
@@ -3491,7 +3491,7 @@ int main(int argc, char **argv) {
         long v = std::strtol(env, &endp, 10);
         return (endp == env) ? 8 : static_cast<int>(v);
     }();
-    bool valGateEnabled = true;
+    bool valGateEnabled = false;
     // PV walk depth for the leaf precompute. Default 0 keeps the
     // existing qsearch-only behaviour; positive values re-enter
     // alpha-beta from the root and walk the PV to its terminal
@@ -3555,8 +3555,8 @@ int main(int argc, char **argv) {
         } else if (a == "--val-gate-patience" && argIdx + 1 < argc) {
             valGatePatience = std::atoi(argv[argIdx + 1]);
             argIdx += 2;
-        } else if (a == "--no-val-gate") {
-            valGateEnabled = false;
+        } else if (a == "--val-gate") {
+            valGateEnabled = true;
             argIdx += 1;
         } else if (a == "--leaf-depth" && argIdx + 1 < argc) {
             leafDepth = std::atoi(argv[argIdx + 1]);

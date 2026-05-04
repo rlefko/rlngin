@@ -41,16 +41,24 @@ set -euo pipefail
 #   VAL_FRACTION:          held-out validation slice as a fraction of
 #                          the corpus (default: 0.10; 0 disables the
 #                          split and the val gate)
+#   VAL_GATE:              1 to enable the val-loss accept gate with
+#                          NN-style warmup + patience early stopping.
+#                          Off by default; the bucketed val report is
+#                          still emitted each pass for diagnostics.
+#                          A 5k-game SPRT showed the gate at best
+#                          neutral and most likely costing a few Elo
+#                          on classical HCE Texel, so we follow the
+#                          conventional Andrew Grant / Berserk recipe
+#                          and leave it off.
 #   VAL_GATE_WARMUP:       passes the val gate is in report-only mode
 #                          before its patience counter starts ticking
-#                          on non-improving passes (default: 5)
+#                          on non-improving passes (default: 5; only
+#                          applied when VAL_GATE=1)
 #   VAL_GATE_PATIENCE:     consecutive post-warmup passes without val
 #                          improvement before the loop breaks
-#                          (default: 8). Best-val params are restored
-#                          on exit regardless of where the loop ends.
-#   NO_VAL_GATE:           1 to disable the val-loss accept gate
-#                          entirely while still emitting the bucketed
-#                          val report each pass (default: 0)
+#                          (default: 8; only applied when VAL_GATE=1).
+#                          Best-val params are restored on exit
+#                          regardless of where the loop ends.
 #   VAL_EPD:               path to an external val corpus EPD that
 #                          overrides the in-corpus split. The tuner
 #                          uses the entire loaded file as the val
@@ -112,8 +120,8 @@ ARGS+=(--leaf-depth "${LEAF_DEPTH:-0}")
 ARGS+=(--val-fraction "${VAL_FRACTION:-0.10}")
 ARGS+=(--val-gate-warmup "${VAL_GATE_WARMUP:-5}")
 ARGS+=(--val-gate-patience "${VAL_GATE_PATIENCE:-8}")
-if [ "${NO_VAL_GATE:-0}" != "0" ]; then
-    ARGS+=(--no-val-gate)
+if [ "${VAL_GATE:-0}" != "0" ]; then
+    ARGS+=(--val-gate)
 fi
 
 echo "Texel tune: $CORPUS"
@@ -127,11 +135,12 @@ echo "  refit-K:           every ${REFIT_K_EVERY:-0} pass(es)"
 echo "  refresh-leaves:    every ${REFRESH_LEAVES_EVERY:-0} pass(es)"
 echo "  leaf-depth:        ${LEAF_DEPTH:-0}"
 echo "  val-fraction:      ${VAL_FRACTION:-0.10}"
-if [ "${NO_VAL_GATE:-0}" != "0" ]; then
-    echo "  val-gate:          off (diagnostics only)"
-else
+if [ "${VAL_GATE:-0}" != "0" ]; then
+    echo "  val-gate:          on"
     echo "  val-gate-warmup:   ${VAL_GATE_WARMUP:-5} pass(es)"
     echo "  val-gate-patience: ${VAL_GATE_PATIENCE:-8} pass(es)"
+else
+    echo "  val-gate:          off (diagnostics only)"
 fi
 if [ -n "${VAL_EPD:-}" ]; then
     echo "  val-epd (external): $VAL_EPD"
