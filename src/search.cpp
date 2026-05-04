@@ -558,15 +558,19 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Internal iterative reduction: if we lack a TT move at a node deep enough
     // to justify it, spend one ply less so the sibling search produces a TT
-    // move for the eventual re-visit. Applies at both PV and non-PV nodes.
-    if (depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
+    // move for the eventual re-visit. Restricted to PV and cut nodes,
+    // matching modern Stockfish: all-nodes already prune aggressively, so
+    // dropping a ply there only adds noise without buying a useful TT hint
+    // for the next visit.
+    if ((pvNode || cutNode) && depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
         depth -= 1;
     }
     // Cut-node IIR: at deep cut-nodes the search is already expected to fail
     // high, so an extra ply less at this visit is comparatively cheap when
     // the TT either has no best move or a much shallower record than the
     // current iteration. Stacks with the original rule when both apply, so a
-    // depth-7 cut-node with no TT move loses two plies instead of one.
+    // depth-8 cut-node with no TT move loses two plies instead of one (the
+    // original IIR drops 8 to 7, then this rule drops it to 6).
     if (cutNode && depth >= searchParams.IirCutNodeDepth &&
         (!ttHit || ttMove.from == 0 || ttEntry.depth + 4 <= depth)) {
         depth -= 1;
