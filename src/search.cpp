@@ -757,11 +757,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             // it. Gated on `!ttCapture` so a tactically loaded TT move does
             // not let us shortcut past the alternatives' real evaluation.
             return singularBeta;
+        } else if (ttEntry.score >= beta) {
+            // Strong negative extension: the TT score itself already proves
+            // a fail-high, so the singular search not finding alternatives
+            // is consistent with the TT verdict. Drop two plies because the
+            // outcome is over-determined and any further work is wasted.
+            singularExtension = -2;
         } else if (cutNode) {
-            // Negative extension: TT score is high enough that singular
-            // search did not beat singularBeta, and we are at a cut-node
-            // already expecting fail-high. Searching shallower saves work
-            // because the TT verdict is likely correct.
+            // Negative extension: TT score is below beta but we are at a
+            // cut-node already expecting fail-high. Searching shallower
+            // saves work because the TT verdict is likely correct.
             singularExtension = -1;
         }
     }
