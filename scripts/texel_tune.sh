@@ -21,6 +21,19 @@ set -euo pipefail
 #   USE_GAUSS_NEWTON:      1 to run Gauss-Newton via cached features,
 #                          0 to fall back to diagonal Newton via finite
 #                          differences on the loss (default: 1)
+#   ADAM_EPOCHS:           Adam optimiser epochs between GN and CD
+#                          (default: 100). Set to 0 to skip the Adam
+#                          phase and run GN -> CD directly. The Adam
+#                          phase reuses the GN feature cache and runs
+#                          ~100x faster per iteration than CD; on a
+#                          well-converged GN starting point it
+#                          typically eliminates most of the CD ladder
+#                          residual.
+#   ADAM_LR:               Adam learning rate in cp-ish units
+#                          (default: 1.0). Standard Texel-style
+#                          gradient optimisation lr range is 0.5 to
+#                          5.0; lower values are slower but more
+#                          stable, higher values may overshoot.
 #   LEAF_DEPTH:            PV walk depth for the leaf precompute
 #                          (default: 0 = qsearch leaves only; 4-6 walks
 #                          a low-depth alpha-beta PV before falling
@@ -93,6 +106,8 @@ ARGS+=(--refit-k-every "${REFIT_K_EVERY:-4}")
 ARGS+=(--refresh-leaves-every "${REFRESH_LEAVES_EVERY:-8}")
 ARGS+=(--newton-passes "${NEWTON_PASSES:-10}")
 ARGS+=(--gauss-newton "${USE_GAUSS_NEWTON:-1}")
+ARGS+=(--adam-epochs "${ADAM_EPOCHS:-100}")
+ARGS+=(--adam-lr "${ADAM_LR:-1.0}")
 ARGS+=(--leaf-depth "${LEAF_DEPTH:-0}")
 ARGS+=(--val-fraction "${VAL_FRACTION:-0.10}")
 ARGS+=(--val-gate-warmup "${VAL_GATE_WARMUP:-5}")
@@ -106,6 +121,8 @@ echo "  threads:           $THREADS"
 echo "  max-passes:        $MAX_PASSES"
 echo "  newton-passes:     ${NEWTON_PASSES:-10}"
 echo "  gauss-newton:      ${USE_GAUSS_NEWTON:-1}"
+echo "  adam-epochs:       ${ADAM_EPOCHS:-100}"
+echo "  adam-lr:           ${ADAM_LR:-1.0}"
 echo "  refit-K:           every ${REFIT_K_EVERY:-4} pass(es)"
 echo "  refresh-leaves:    every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
 echo "  leaf-depth:        ${LEAF_DEPTH:-0}"

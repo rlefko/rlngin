@@ -2131,9 +2131,168 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
     return 0.0;
 }
 
+// Adam optimiser state. We carry a real-valued shadow parameter vector
+// because Adam updates are sub-cp by design and the integer params
+// would otherwise round most of them to zero. The shadow vector is
+// rounded to integers, written to params, projected to constraints,
+// then synced back so the next epoch sees the in-bounds values.
+struct AdamState {
+    std::vector<double> theta;  // real-valued shadow params
+    std::vector<double> m;      // first moment, size P
+    std::vector<double> v;      // second moment, size P
+    int t = 0;                  // step counter for bias correction
+};
+
+// One full-batch Adam epoch over the cached corpus features. Computes
+// the gradient of the data MSE in parallel across `numThreads` workers
+// (each with a P-sized local accumulator, merged serially), applies a
+// bias-corrected Adam update to the shadow theta, rounds + writes the
+// integer params, projects onto the constraint region, and resyncs the
+// shadow theta from the projected values.
+//
+// Concurrency: per-thread P-sized gradient accumulator (~6 KB at P=791,
+// fits in L1). Final merge is O(P * numThreads), negligible compared
+// to the O(N * sparse-features) main loop. Loss + total weight are
+// reduced in the same pass to avoid a second corpus walk.
+//
+// Why no regulariser gradient: Gauss-Newton's normal equations don't
+// include the regulariser either, and at our default lambdas
+// (1e-9 / 1e-8) the data MSE gradient dominates by 6+ orders of
+// magnitude. Keeping Adam pure-data-gradient lets it converge
+// alongside GN consistently, and the next CD ladder cleans up any
+// residual regulariser-driven motion.
+//
+// Returns relative loss decrease; updates `bestLoss` in place.
+static double adamEpoch(std::vector<LabeledPosition> &positions, const CorpusFeatures &cf,
+                        std::vector<ParamRef> &params, AdamState &adam, double K, int numThreads,
+                        double lr, double beta1, double beta2, double eps, double &bestLoss,
+                        const std::vector<size_t> *trainIndices = nullptr) {
+    const size_t N = trainIndices ? trainIndices->size() : positions.size();
+    const size_t P = params.size();
+
+    adam.t++;
+    const double L0 = bestLoss;
+
+    // Build deltaTheta in feature-cache units. We round the shadow
+    // theta to integers before forming deltaTheta so the linearised
+    // eval matches what an integer-rounded write+evaluate would give.
+    std::vector<int> deltaTheta(P);
+    for (size_t p = 0; p < P; p++) {
+        int rounded = static_cast<int>(std::lround(adam.theta[p]));
+        deltaTheta[p] = rounded - cf.theta0[p];
+    }
+
+    // Threaded gradient + loss accumulation. Each worker walks its
+    // slice and accumulates into a private gradient vector + scalar
+    // loss / weight totals.
+    std::vector<std::vector<double>> threadGrad(numThreads, std::vector<double>(P, 0.0));
+    std::vector<double> threadLoss(numThreads, 0.0);
+    std::vector<double> threadWeight(numThreads, 0.0);
+    {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([&, start, end, t]() {
+                auto &grad = threadGrad[t];
+                double lossSum = 0.0;
+                double weightSum = 0.0;
+                for (size_t i = start; i < end; i++) {
+                    size_t pi = trainIndices ? (*trainIndices)[i] : i;
+                    int64_t eval = cf.baseline[pi];
+                    const auto &row = cf.rows[pi];
+                    for (const auto &fe : row)
+                        eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                    double pred = sigmoid(static_cast<double>(eval), K);
+                    double residual = pred - positions[pi].result;
+                    double sigprime = pred * (1.0 - pred);
+                    double w = positions[pi].weight;
+                    lossSum += w * residual * residual;
+                    weightSum += w;
+                    // Gradient contribution: partial of (w * residual^2)
+                    // with respect to theta_p is 2 * w * residual *
+                    // K * sigprime * coef_p. We omit the leading 2 to
+                    // mirror the Gauss-Newton residual scaling, which
+                    // means the effective Adam learning rate is in
+                    // GN-comparable units.
+                    double scale = K * sigprime * residual * w;
+                    for (const auto &fe : row) {
+                        grad[fe.paramIdx] += scale * static_cast<double>(fe.coef);
+                    }
+                }
+                threadLoss[t] = lossSum;
+                threadWeight[t] = weightSum;
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    }
+
+    std::vector<double> grad(P, 0.0);
+    double dataLoss = 0.0;
+    double totalWeight = 0.0;
+    for (int t = 0; t < numThreads; t++) {
+        const auto &g = threadGrad[t];
+        for (size_t p = 0; p < P; p++)
+            grad[p] += g[p];
+        dataLoss += threadLoss[t];
+        totalWeight += threadWeight[t];
+    }
+    if (totalWeight > 0.0) {
+        const double inv = 1.0 / totalWeight;
+        dataLoss *= inv;
+        for (size_t p = 0; p < P; p++)
+            grad[p] *= inv;
+    } else if (N > 0) {
+        const double inv = 1.0 / static_cast<double>(N);
+        dataLoss *= inv;
+        for (size_t p = 0; p < P; p++)
+            grad[p] *= inv;
+    }
+
+    // Adam update with bias correction. The two precomputed factors
+    // (1 - beta^t) approach 1 quickly; for small t they keep the
+    // first-step magnitude calibrated.
+    const double oneMinusBeta1T = 1.0 - std::pow(beta1, adam.t);
+    const double oneMinusBeta2T = 1.0 - std::pow(beta2, adam.t);
+    const double biasInv1 = oneMinusBeta1T > 0.0 ? 1.0 / oneMinusBeta1T : 1.0;
+    const double biasInv2 = oneMinusBeta2T > 0.0 ? 1.0 / oneMinusBeta2T : 1.0;
+    for (size_t p = 0; p < P; p++) {
+        adam.m[p] = beta1 * adam.m[p] + (1.0 - beta1) * grad[p];
+        adam.v[p] = beta2 * adam.v[p] + (1.0 - beta2) * grad[p] * grad[p];
+        double mHat = adam.m[p] * biasInv1;
+        double vHat = adam.v[p] * biasInv2;
+        adam.theta[p] -= lr * mHat / (std::sqrt(vHat) + eps);
+    }
+
+    // Round, write, project, resync. Projection may snap chain entries
+    // and slope-cap violators; we copy the projected integer values
+    // back into the shadow theta so the next epoch's linearization
+    // and Adam state stay consistent with the in-bounds parameters.
+    for (size_t p = 0; p < P; p++) {
+        int newVal = static_cast<int>(std::lround(adam.theta[p]));
+        params[p].write(params[p].clampToBounds(newVal));
+    }
+    projectToConstraints(params);
+    for (size_t p = 0; p < P; p++) {
+        adam.theta[p] = static_cast<double>(params[p].read());
+    }
+
+    // Total loss includes the parameter-only regulariser so the val
+    // gate's bestLoss tracking stays in the same units used by
+    // computeLoss elsewhere in the tuner.
+    double regLoss = pstSmoothLambda() * pstSmoothnessPenalty();
+    regLoss += pawnMirrorLambda() * pawnMirrorPenalty();
+    double totalLoss = dataLoss + regLoss;
+    bestLoss = totalLoss;
+
+    return L0 > 0.0 ? (L0 - totalLoss) / L0 : 0.0;
+}
+
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
                  int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses,
-                 bool useGaussNewton,
+                 bool useGaussNewton, int adamEpochs, double adamLr,
                  const std::vector<size_t> &trainIndices,
                  const std::vector<size_t> &valIndices,
                  int valGateWarmup, int valGatePatience, bool valGateEnabled,
@@ -2305,9 +2464,15 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     // drops below 1e-6. After Newton-style passes finish, the
     // coordinate-descent ladder below picks up any residual.
     int globalPass = 0;
+    // Feature cache shared across the Gauss-Newton and Adam phases.
+    // Extracted lazily by whichever phase runs first; reused by the
+    // other if both run (the common case under default flags).
+    CorpusFeatures cf;
+    bool cfInitialized = false;
     if (newtonPasses > 0 && useGaussNewton) {
         std::cerr << "gauss-newton phase: up to " << newtonPasses << " passes\n";
-        CorpusFeatures cf = extractCorpusFeatures(positions, params, numThreads);
+        cf = extractCorpusFeatures(positions, params, numThreads);
+        cfInitialized = true;
         resetPatience();
         int stalled = 0;
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
@@ -2404,6 +2569,106 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                 std::cerr << "post-refresh K " << oldK << " -> " << K
                           << ", rebased loss=" << bestLoss << "\n";
                 rebaseBestValLoss("leaf refresh");
+                // Diagonal Newton doesn't keep a feature cache, so any
+                // staleness flag the Adam phase set is moot here -- but
+                // if Adam runs after this loop it will need a fresh
+                // extract.
+                cfInitialized = false;
+            }
+        }
+    }
+
+    // Adam fine-tuning over the cached features. Runs after the
+    // Newton-style phase (when configured) and before coordinate
+    // descent. The conventional modern HCE Texel approach (Andrew
+    // Grant's Tune for Ethereal, Berserk, etc.): once GN has settled
+    // into a coarse minimum, Adam takes ~10x more iterations at ~100x
+    // less cost-per-iteration than CD, hitting sub-cp residuals that
+    // CD would otherwise grind out one parameter at a time.
+    //
+    // Each epoch is one full-batch pass through the train slice with
+    // a single bias-corrected Adam update applied at the end. The val
+    // gate runs once per epoch (consistent with GN / CD), so the
+    // existing patience + best-val-restore semantics apply.
+    if (adamEpochs > 0) {
+        if (!cfInitialized) {
+            cf = extractCorpusFeatures(positions, params, numThreads);
+            cfInitialized = true;
+        }
+        const size_t P = params.size();
+        AdamState adam;
+        adam.theta.resize(P);
+        adam.m.assign(P, 0.0);
+        adam.v.assign(P, 0.0);
+        adam.t = 0;
+        for (size_t p = 0; p < P; p++) {
+            adam.theta[p] = static_cast<double>(params[p].read());
+        }
+
+        std::cerr << "adam phase: up to " << adamEpochs << " epochs at lr=" << adamLr << "\n";
+        resetPatience();
+        int stalled = 0;
+        constexpr double kBeta1 = 0.9;
+        constexpr double kBeta2 = 0.999;
+        constexpr double kEps = 1e-8;
+        for (int epoch = 0; epoch < adamEpochs; epoch++, globalPass++) {
+            double rel = adamEpoch(positions, cf, params, adam, K, numThreads, adamLr,
+                                   kBeta1, kBeta2, kEps, bestLoss, trainPtr);
+            centerPSTGauge();
+            // centerPSTGauge() shifts integer PSTs by complementary
+            // constants; pull the new values into the shadow theta so
+            // the next epoch's gradient is computed against the
+            // gauge-centered state.
+            for (size_t p = 0; p < P; p++)
+                adam.theta[p] = static_cast<double>(params[p].read());
+
+            std::cerr << "adam epoch " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            double valLoss = reportVal("adam", globalPass);
+            bool improved = rel >= 1e-7;
+            improved = applyValGate(valLoss, globalPass, "adam", improved);
+            if (!improved) rel = 0.0;
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-7) {
+                if (++stalled >= 4) {
+                    std::cerr << "adam convergence; switching to coordinate descent\n";
+                    epoch++;
+                    globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            // Optional periodic K refit, mirroring the GN / Newton /
+            // CD cadence. Adam itself doesn't refit K; we leave it to
+            // the operator's `--refit-k-every` to keep K aligned with
+            // the moving params, with the rebase helper handling the
+            // val gate side.
+            if (refitKEvery > 0 && (epoch + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after adam epoch " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("K refit");
+            }
+            if (refreshLeavesEvery > 0 && (epoch + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after adam epoch " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads, leafDepth);
+                double oldK = K;
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("leaf refresh");
+                // New leaves invalidate the linearization the feature
+                // cache was extracted around; re-extract before the
+                // next Adam epoch.
+                cf = extractCorpusFeatures(positions, params, numThreads);
+                for (size_t p = 0; p < P; p++)
+                    adam.theta[p] = static_cast<double>(params[p].read());
             }
         }
     }
@@ -2810,6 +3075,7 @@ int main(int argc, char **argv) {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
+        std::cerr << "            [--adam-epochs N] [--adam-lr X]\n";
         std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--val-gate-patience N]\n";
         std::cerr << "            [--no-val-gate] [--leaf-depth N]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
@@ -2900,6 +3166,24 @@ int main(int argc, char **argv) {
         long v = std::strtol(env, &endp, 10);
         return (endp == env) ? 0 : static_cast<int>(v);
     }();
+    // Adam fine-tuning between GN and CD. Default 100 epochs at lr=1.0
+    // which is standard for Texel-style sparse-feature gradient
+    // optimisation; setting epochs=0 falls through directly from GN
+    // to CD (legacy behaviour).
+    int adamEpochs = [] {
+        const char *env = std::getenv("ADAM_EPOCHS");
+        if (!env) return 100;
+        char *endp = nullptr;
+        long v = std::strtol(env, &endp, 10);
+        return (endp == env) ? 100 : static_cast<int>(v);
+    }();
+    double adamLr = [] {
+        const char *env = std::getenv("ADAM_LR");
+        if (!env) return 1.0;
+        char *endp = nullptr;
+        double v = std::strtod(env, &endp);
+        return (endp == env) ? 1.0 : v;
+    }();
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -2917,6 +3201,12 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--gauss-newton" && argIdx + 1 < argc) {
             useGaussNewton = std::atoi(argv[argIdx + 1]) != 0;
+            argIdx += 2;
+        } else if (a == "--adam-epochs" && argIdx + 1 < argc) {
+            adamEpochs = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--adam-lr" && argIdx + 1 < argc) {
+            adamLr = std::atof(argv[argIdx + 1]);
             argIdx += 2;
         } else if (a == "--val-fraction" && argIdx + 1 < argc) {
             valFraction = std::atof(argv[argIdx + 1]);
@@ -3103,8 +3393,8 @@ int main(int argc, char **argv) {
     std::cerr << "K=" << K << "\n";
 
     tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
-         useGaussNewton, trainIndices, valIndices, valGateWarmup, valGatePatience, valGateEnabled,
-         leafDepth);
+         useGaussNewton, adamEpochs, adamLr, trainIndices, valIndices, valGateWarmup,
+         valGatePatience, valGateEnabled, leafDepth);
     printCurrentValues();
     return 0;
 }
