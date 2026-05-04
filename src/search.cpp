@@ -680,9 +680,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     // ProbCut: use a shallow search of captures to predict whether a full-depth
-    // search would produce a beta cutoff
-    if (!pvNode && !inCheck && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
-        std::abs(beta) < MATE_SCORE - MAX_PLY) {
+    // search would produce a beta cutoff. Skipped inside a singular search:
+    // ProbCut iterates legal captures including the excluded TT move, and
+    // returning early would let the TT capture itself "verify" that another
+    // move reaches singularBeta, defeating the singular check.
+    if (!pvNode && !inCheck && !hasExcludedMove && depth >= 5 &&
+        beta > -MATE_SCORE + MAX_PLY && std::abs(beta) < MATE_SCORE - MAX_PLY) {
         int probcutBeta = beta + 483 - 145 * improving;
         int probcutDepth = depth - 4;
 
