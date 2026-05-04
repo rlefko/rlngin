@@ -86,6 +86,16 @@ struct SearchParams {
     // into the move-picker's quiet score by dividing by this weight, so a
     // larger value damps the contribution. Default 1 means full weight.
     int PawnHistoryWeight;
+
+    // Singular extension scalars. `singularBeta = ttScore - SingularBetaMul *
+    // depth` controls how far below the TT score a non-TT move has to come up
+    // to "tie" the TT move; lowering it widens the singular window so more
+    // moves get extended. `singularDepth = (depth - 1) / SingularDepthDiv`
+    // controls how shallow the verification search runs; raising it cheapens
+    // the verification but loses signal. Defaults reproduce the prior
+    // hardcoded literals (2, 2).
+    int SingularBetaMul;
+    int SingularDepthDiv;
 };
 
 extern SearchParams searchParams;

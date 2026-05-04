@@ -33,6 +33,8 @@ static const SearchParams kDefaultSearchParams = {
     1,     // LmrThreatEscape (ply discount for evacuating a threatened piece)
     1,     // LmrThreatWalkIn (ply surcharge for walking into a lesser-piece attack)
     1,     // PawnHistoryWeight (divisor on pawn history when folding into the quiet score)
+    2,     // SingularBetaMul (matches the prior hardcoded depth * 2 in singularBeta)
+    2,     // SingularDepthDiv (matches the prior hardcoded (depth - 1) / 2 in singularDepth)
 };
 
 SearchParams searchParams = kDefaultSearchParams;

@@ -163,6 +163,16 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(
         makeIntSpec("PawnHistoryWeight", &searchParams.PawnHistoryWeight, 1, 4, 0.5, 0.25));
 
+    // --- Singular extension shape ---
+    // The two scalars below replace the prior hardcoded literals in the
+    // singular block. SPSA can sweep how aggressively the singular window
+    // widens (lower SingularBetaMul = more extensions) and how shallow the
+    // verification search runs (raising SingularDepthDiv cheapens the
+    // verification at the cost of signal quality). Bounds are tight so the
+    // search space stays meaningful at integer granularity.
+    out.push_back(makeIntSpec("SingularBetaMul", &searchParams.SingularBetaMul, 1, 4, 0.25, 0.1));
+    out.push_back(makeIntSpec("SingularDepthDiv", &searchParams.SingularDepthDiv, 2, 4, 0.25, 0.1));
+
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
     out.push_back(

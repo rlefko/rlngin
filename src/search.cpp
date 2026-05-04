@@ -706,8 +706,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         (ttEntry.flag == TT_LOWER_BOUND || ttEntry.flag == TT_EXACT) &&
         std::abs(ttEntry.score) < MATE_SCORE - MAX_PLY) {
 
-        int singularBeta = ttEntry.score - depth * 2;
-        int singularDepth = (depth - 1) / 2;
+        int singularBeta = ttEntry.score - searchParams.SingularBetaMul * depth;
+        int singularDepth = (depth - 1) / searchParams.SingularDepthDiv;
 
         // Singular search asks "does any non-TT move at shallow depth reach
         // singularBeta". Pass cutNode unchanged so the underlying position's
