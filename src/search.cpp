@@ -572,7 +572,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // depth-8 cut-node with no TT move loses two plies instead of one (the
     // original IIR drops 8 to 7, then this rule drops it to 6).
     if (cutNode && depth >= searchParams.IirCutNodeDepth &&
-        (!ttHit || ttMove.from == 0 || ttEntry.depth + 4 <= depth)) {
+        (!ttHit || (ttMove.from == 0 && ttMove.to == 0) ||
+         ttEntry.depth + 4 <= depth)) {
         depth -= 1;
     }
 
@@ -723,8 +724,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // Restricted singular extensions: if the TT move is much better than all
     // alternatives, extend its search by one ply to resolve critical lines
     int singularExtension = 0;
-    if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove && ttMove.from != 0 &&
-        ttEntry.depth >= depth - 3 &&
+    if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove &&
+        (ttMove.from != 0 || ttMove.to != 0) && ttEntry.depth >= depth - 3 &&
         (ttEntry.flag == TT_LOWER_BOUND || ttEntry.flag == TT_EXACT) &&
         std::abs(ttEntry.score) < MATE_SCORE - MAX_PLY) {
 
