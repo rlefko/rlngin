@@ -38,6 +38,16 @@ set -euo pipefail
 #   NO_VAL_GATE:           1 to disable the val-loss accept gate
 #                          entirely while still emitting the bucketed
 #                          val report each pass (default: 0)
+#   VAL_EPD:               path to an external val corpus EPD that
+#                          overrides the in-corpus split. The tuner
+#                          uses the entire loaded file as the val
+#                          partition (in-corpus self-play stays in
+#                          train). Default: auto-detect
+#                          tuning/val/master_positions.epd if it
+#                          exists; populate it via
+#                          scripts/fetch_val_corpus.sh. Falls back to
+#                          the in-corpus stratified split when no
+#                          file is available.
 #   CURATED_EPD:           path to a small curated EPD pack to mix
 #                          into the training set (default: unset).
 #                          Read by the tuner directly; this script
@@ -105,6 +115,11 @@ if [ "${NO_VAL_GATE:-0}" != "0" ]; then
 else
     echo "  val-gate-warmup:   ${VAL_GATE_WARMUP:-5} pass(es)"
     echo "  val-gate-patience: ${VAL_GATE_PATIENCE:-8} pass(es)"
+fi
+if [ -n "${VAL_EPD:-}" ]; then
+    echo "  val-epd (external): $VAL_EPD"
+elif [ -f "tuning/val/master_positions.epd" ]; then
+    echo "  val-epd (external): tuning/val/master_positions.epd (auto-detected)"
 fi
 if [ -n "${CURATED_EPD:-}" ]; then
     echo "  curated-epd:       $CURATED_EPD (weight=${CURATED_WEIGHT:-5.0})"
