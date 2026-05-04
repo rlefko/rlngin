@@ -2978,14 +2978,89 @@ int main(int argc, char **argv) {
     // game id metadata field.
     assignGameWeights(positions);
 
-    // Held-out validation slice. Splitting by game id keeps every row
-    // from a given game in one partition, so the val loss reflects
-    // generalisation to *unseen games* rather than unseen plies of
-    // games the tuner already saw. valFraction <= 0 disables the
-    // split (all positions go to train, val empty, gate off).
-    auto split = splitCorpus(positions, valFraction, /*seed=*/0xc0ffeeULL);
-    std::vector<size_t> trainIndices = std::move(split.first);
-    std::vector<size_t> valIndices = std::move(split.second);
+    // Held-out validation slice. Two paths:
+    //
+    //   1. **External master val** (preferred): if `VAL_EPD` is set or
+    //      the default file `tuning/val/master_positions.epd` exists,
+    //      load that as the entire val partition. The in-corpus
+    //      self-play stays wholly in train. This tests generalisation
+    //      to a *different distribution* (master games at unseen
+    //      strength), which catches overfitting that in-corpus splits
+    //      cannot -- e.g. an engine that systematically avoids 3.Nc3
+    //      in self-play has zero coverage of the resulting French
+    //      mainlines under any same-distribution split, but a master
+    //      val partition contains them by construction.
+    //
+    //   2. **In-corpus stratified split** (fallback): the (phase x
+    //      result) stratified split, used when no external val EPD is
+    //      available (no internet on first run, fetch script failed,
+    //      etc.). This still tests generalisation to *unseen games*
+    //      within the self-play distribution.
+    //
+    // valFraction <= 0 disables the in-corpus fallback's split (all
+    // positions go to train, val empty, gate off); external val is
+    // unaffected by valFraction.
+    std::vector<size_t> trainIndices;
+    std::vector<size_t> valIndices;
+
+    auto resolveValEpd = [](std::string &out) -> bool {
+        const char *env = std::getenv("VAL_EPD");
+        if (env && *env) {
+            out = env;
+            std::ifstream check(out);
+            return check.good();
+        }
+        // Default location populated by scripts/fetch_val_corpus.sh.
+        const std::string defaultPath = "tuning/val/master_positions.epd";
+        std::ifstream check(defaultPath);
+        if (check.good()) {
+            out = defaultPath;
+            return true;
+        }
+        return false;
+    };
+
+    std::string valEpdPath;
+    if (resolveValEpd(valEpdPath)) {
+        std::cerr << "loading external val corpus from " << valEpdPath << "...\n";
+        auto valCorpus = loadDataset(valEpdPath);
+        if (valCorpus.empty()) {
+            std::cerr << "warning: external val EPD at " << valEpdPath
+                      << " is empty; falling back to in-corpus stratified split\n";
+            auto split = splitCorpus(positions, valFraction, /*seed=*/0xc0ffeeULL);
+            trainIndices = std::move(split.first);
+            valIndices = std::move(split.second);
+        } else {
+            // Per-game inverse weighting on the val corpus so a 200-ply
+            // master draw doesn't out-vote a sharp 25-move tactical
+            // win inside the val partition. Game-ids in master corpora
+            // come from the extract pipeline; no-metadata legacy files
+            // get default weight 1.0 from loadDataset.
+            assignGameWeights(valCorpus);
+
+            const size_t valStart = positions.size();
+            positions.reserve(valStart + valCorpus.size());
+            for (auto &lp : valCorpus) {
+                positions.push_back(std::move(lp));
+            }
+
+            trainIndices.reserve(valStart);
+            for (size_t i = 0; i < valStart; i++) trainIndices.push_back(i);
+            valIndices.reserve(positions.size() - valStart);
+            for (size_t i = valStart; i < positions.size(); i++) valIndices.push_back(i);
+
+            std::cerr << "external val corpus: " << trainIndices.size()
+                      << " train (in-corpus self-play), " << valIndices.size()
+                      << " val (master positions, distribution-shift sanity check)\n";
+        }
+    } else {
+        std::cerr << "no external val corpus found; falling back to in-corpus "
+                     "stratified split (run scripts/fetch_val_corpus.sh to "
+                     "enable external val)\n";
+        auto split = splitCorpus(positions, valFraction, /*seed=*/0xc0ffeeULL);
+        trainIndices = std::move(split.first);
+        valIndices = std::move(split.second);
+    }
 
     // Optional curated EPD pack. CURATED_EPD points to a small balanced
     // position file (same `FEN | result` parser as the main corpus,
