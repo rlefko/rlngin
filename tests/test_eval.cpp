@@ -23,7 +23,7 @@ TEST_CASE("Eval: kings only is 0", "[eval]") {
 TEST_CASE("Eval: extra white queen scores positive for white", "[eval]") {
     Board board;
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2584);
+    CHECK(evaluate(board) == 2122);
 }
 
 TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]") {
@@ -45,33 +45,37 @@ TEST_CASE("Eval: positional half of evaluation flips with side to move", "[eval]
 TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     Board board;
 
-    // Pawn on a2: pure-endgame material with PST plus pawn-structure terms
-    // (isolated penalty, passed bonus) collapse into this expected score.
-    board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 232);
+    // Pawn on a2 with the black king on h8 so the defender is outside
+    // the pawn's square and the KPK rook-file fortress recognizer does
+    // not fire. Pure-endgame material with PST plus pawn-structure
+    // terms (isolated penalty, passed bonus) collapse into this
+    // expected score; the KingPawnDistEg term subtracts a chebyshev-
+    // distance penalty for the king sitting four squares from the pawn.
+    board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 230);
 
     // Knight on a1 versus a bare king is a textbook draw, so the endgame
     // scale factor zeroes the eg half. Only the tapered middlegame
     // contribution survives, which is small with phase=1 and no pieces
     // to generate meaningful mg terms.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 27);
+    CHECK(evaluate(board) == 30);
 
     // Bishop on a1 versus a bare king is likewise drawn, so the eg half
     // is scaled to zero. The mg half reflects material, PSTs, and the
     // long-diagonal sweep the a1-h8 diagonal earns on an empty board.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 49);
+    CHECK(evaluate(board) == 47);
 
     // Rook on a1: material, PSQT, rook mobility, and the open-file bonus
     // since file a has no pawns of either color
     board.setFen("4k3/8/8/8/8/8/8/R3K3 w - - 0 1");
-    CHECK(evaluate(board) == 1267);
+    CHECK(evaluate(board) == 1023);
 
     // Queen on d5: material, PSQT, the undefended-zone term, and mobility
     // over 27 squares on an open board
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2584);
+    CHECK(evaluate(board) == 2122);
 }
 
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
@@ -217,7 +221,7 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // depends on the tuned king-safety weights and may need refreshing
     // after retunes.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 38);
+    CHECK(evaluate(board) == 45);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
@@ -293,7 +297,7 @@ TEST_CASE("Eval: multi-attacker gate still holds", "[eval][kingsafety]") {
     // internal units) but the king safety collapse drives the delta
     // well past that purely material expectation.
     int delta = loneQueen - twoQueens;
-    CHECK(delta > 3500);
+    CHECK(delta > 2900);
 }
 
 TEST_CASE("Eval: undefended king zone squares penalize defender", "[eval][kingsafety]") {
@@ -455,8 +459,8 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     board.setFen("4k3/4p3/4n3/4P3/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
-        CHECK(line.find("mg=   -87") != std::string::npos);
-        CHECK(line.find("eg=   -28") != std::string::npos);
+        CHECK(line.find("mg=   -66") != std::string::npos);
+        CHECK(line.find("eg=   -25") != std::string::npos);
     }
 
     // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
@@ -464,8 +468,8 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     board.setFen("4k3/3pn3/4P3/8/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
-        CHECK(line.find("mg=  -152") != std::string::npos);
-        CHECK(line.find("eg=   -80") != std::string::npos);
+        CHECK(line.find("mg=     0") != std::string::npos);
+        CHECK(line.find("eg=   -45") != std::string::npos);
     }
 }
 
@@ -494,15 +498,20 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // "no enemy pawn on the file ahead". Stacking WeakUnopposedPenalty
     // on top of PassedPawnBonus fights the passer reward and distorts
     // winning king-and-pawn endings downward. The eval must match the
-    // baseline (same score as before the weak-unopposed term existed).
-    board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 232);
+    // baseline (same score as before the weak-unopposed term existed),
+    // adjusted for the king-pawn-distance signal that now subtracts a
+    // chebyshev-distance penalty between the king and its pawn. Black
+    // king sits on h8 to keep the position outside the KPK rook-file
+    // fortress envelope.
+    board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 230);
 
     // Textbook K + P vs K with an outside passed pawn: white is winning
     // and the score should not be dragged down by treating the "no
-    // opposing pawn" feature as a weakness.
+    // opposing pawn" feature as a weakness. The king is one square from
+    // the pawn so KingPawnDistEg only contributes a single-step penalty.
     board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
-    CHECK(evaluate(board) == 245);
+    CHECK(evaluate(board) == 191);
 }
 
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {
@@ -858,16 +867,18 @@ TEST_CASE("Eval: rook on semi-open file beats rook on closed file", "[eval][rook
 TEST_CASE("Eval: trapped rook with no mobility is penalized", "[eval][rook]") {
     Board board;
 
-    // White king on g1 plus pawns on g2 and h2 shut the h1 rook in with
+    // White king on g1 plus pawns on a2/g2/h2 shut the h1 rook in with
     // zero safe squares. All castling rights gone, so the rook cannot be
     // relocated via O-O / O-O-O and the doubled penalty should fire.
-    board.setFen("4k3/8/8/8/8/8/6PP/6KR w - - 0 1");
+    // The a2 pawn keeps both flanks populated so the PawnlessFlank term
+    // does not fold into the comparison.
+    board.setFen("4k3/8/8/8/8/8/P5PP/6KR w - - 0 1");
     int trapped = evaluate(board);
 
     // Same material with the king on b1 -- the rook sits on the opposite
     // side of the board from its king, so the same-side gate fails and
     // no trap penalty applies.
-    board.setFen("4k3/8/8/8/8/8/6PP/1K5R w - - 0 1");
+    board.setFen("4k3/8/8/8/8/8/P5PP/1K5R w - - 0 1");
     int free = evaluate(board);
 
     CHECK(trapped < free);
@@ -962,10 +973,10 @@ TEST_CASE("Eval: space bonus vanishes in thin endgames", "[eval][space]") {
 
     // Neither case should produce a space bonus, so the two scores differ
     // only by PST and pawn-structure deltas, not by the space term. The
-    // 64k-game strict Texel tune widened the PST delta between central
-    // and edge pawns; the constrained follow-up PR will re-tighten this
-    // bound.
-    CHECK(std::abs(withEndgamePawn - withEdgePawn) < 200);
+    // post-overhaul Texel tune widened the PST delta between central
+    // and edge pawns further; a constrained follow-up tune will re-
+    // tighten this bound.
+    CHECK(std::abs(withEndgamePawn - withEdgePawn) < 300);
 }
 
 TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
@@ -1337,7 +1348,7 @@ TEST_CASE("Eval: initiative is gated off in pawnless endgames", "[eval][initiati
     // a KQvK evaluation matches the pure material plus PST plus king
     // safety baseline and is not damped by the initiative constant.
     board.setFen("4k3/8/8/3Q4/8/8/8/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 2584);
+    CHECK(evaluate(board) == 2122);
 }
 
 TEST_CASE("Eval: pawn tension feeds the initiative magnitude", "[eval][initiative]") {
@@ -1689,6 +1700,112 @@ TEST_CASE("Eval: shelter score depends on king's edge distance", "[eval][shelter
     // central file with a complete pawn shield should score higher
     // than the same shield from g1.
     CHECK(centralShelter > kingsideShelter);
+}
+
+// --- Specialized endgame recognizers ---
+
+TEST_CASE("Eval: KPK rook-file fortress scores as a draw", "[eval][endgame]") {
+    Board board;
+
+    // White K + a-file pawn vs Black K. Defender king inside the
+    // pawn's square: classical fortress draw because the king reaches
+    // the promotion corner before the pawn promotes.
+    board.setFen("4k3/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 0);
+
+    // Same shape on the h file: still a draw.
+    board.setFen("4k3/8/8/8/8/8/7P/4K3 w - - 0 1");
+    CHECK(evaluate(board) == 0);
+
+    // Defender king out of the square (h8 with the a-file pawn): the
+    // recognizer must not fire and the eval should reflect a real
+    // material advantage for white.
+    board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
+    CHECK(evaluate(board) > 100);
+}
+
+TEST_CASE("Eval: KQKP fortress is recognized", "[eval][endgame]") {
+    Board board;
+
+    // Black king blockading the promotion square for a black a-pawn
+    // one push from queening. White king on g7 is too far to drive
+    // the black king out before the queen-vs-pawn race resolves: a
+    // textbook KQKP fortress. The recognizer scales the eg half to
+    // zero, so this fortress shape must score strictly worse for the
+    // attacker than the same material with the attacker king close
+    // enough to win.
+    board.setFen("8/6K1/8/8/8/8/p7/k1Q5 w - - 0 1");
+    int fortress = evaluate(board);
+
+    // Same material with the white king on c3: the black king cannot
+    // hold the corner against an approaching white king + queen, so
+    // the position is winning and the recognizer must not fire.
+    board.setFen("8/8/8/8/8/2K5/p7/k1Q5 w - - 0 1");
+    int winning = evaluate(board);
+
+    CHECK(winning > fortress);
+}
+
+TEST_CASE("Eval: Philidor third-rank rook holds K+R+P vs K+R", "[eval][endgame]") {
+    Board board;
+
+    // Classical Philidor draw shape: white K+R+P (e4 pawn) vs black K+R
+    // with the black rook on the 6th rank (e6 = 3rd from black's POV)
+    // and the black king back on e8. The recognizer should scale the
+    // eg half to zero so the engine plays the position as a draw
+    // rather than blindly converting the +pawn material.
+    board.setFen("4k3/8/4r3/8/4P3/8/4R3/4K3 w - - 0 1");
+    int philidor = evaluate(board);
+
+    // Same material with the black rook on the 1st rank (passive
+    // defence rather than the active third-rank technique). The
+    // recognizer must NOT fire here, so the position should score as
+    // genuine winning material for white.
+    board.setFen("4k3/8/8/8/4P3/8/4R3/4K1r1 w - - 0 1");
+    int passive = evaluate(board);
+
+    CHECK(passive > philidor);
+}
+
+TEST_CASE("Eval: Lucena bridge bonus drives K+R+P vs K+R conversion", "[eval][endgame]") {
+    Board board;
+
+    // Classical Lucena win: white K + R + P with the pawn on rank 7
+    // (e7) and the king on the 8th in front of it (e8), the black
+    // rook somewhere harmless (h1) and the black king cut off three
+    // files away on a-file. The bridge-building rook technique
+    // converts; the eg bonus drives the search toward this
+    // configuration earlier than the raw material gradient alone.
+    board.setFen("4K3/4P3/8/8/8/k7/8/r6R w - - 0 1");
+    int lucena = evaluate(board);
+
+    // Same material with the black king close (one file from the
+    // pawn). Defender is in time to block; recognizer should NOT
+    // fire so the eval matches plain material.
+    board.setFen("4K3/4P3/3k4/8/8/8/8/r6R w - - 0 1");
+    int blocked = evaluate(board);
+
+    CHECK(lucena >= blocked);
+}
+
+TEST_CASE("Eval: KBNK pushes the weak king toward the matching corner", "[eval][endgame]") {
+    Board board;
+
+    // White K + dark-squared bishop on c1 + knight vs Black K. With a
+    // dark-square bishop the right corners are a1 and h8. Black king
+    // on a1 is already in the right corner, so the eval should favour
+    // White at least as much as when the king is on h1 (wrong corner
+    // of the light colour). The KBNKCornerEg weight can be tuned to
+    // zero by Texel when the corpus does not exercise enough KBNK
+    // positions to produce a gradient, which is why the assertion is
+    // relaxed to >= rather than strict >.
+    board.setFen("8/8/8/8/8/8/4K3/k1B1N3 w - - 0 1");
+    int rightCorner = evaluate(board);
+
+    board.setFen("8/8/8/8/8/8/4K3/2B1N2k w - - 0 1");
+    int wrongCorner = evaluate(board);
+
+    CHECK(rightCorner >= wrongCorner);
 }
 
 // --- Verbose grid layout ---

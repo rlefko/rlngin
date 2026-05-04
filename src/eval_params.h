@@ -269,6 +269,81 @@ struct EvalParams {
     // Pawn-defended squares are excluded because our attacker is already
     // outvalued there and the recapture is immediate.
     Score RestrictedPiece;
+
+    // Per-square pawn-push threat. For every legal single- or double-push
+    // target, count enemy non-pawn / non-king pieces that the pawn would
+    // attack from that landing square, including pushes that are not safe
+    // today. Distinct from SafePawnPush: the safe variant only fires when
+    // the push itself is supported, while this term credits the latent
+    // double-threat shape (push the pawn or move the piece) regardless of
+    // whether the push lands cleanly. Pieces already attacked by our pawns
+    // in place are excluded so the bonus does not double count with
+    // ThreatByPawn.
+    Score ThreatByPawnPush;
+
+    // Penalty per friendly minor or rook that is under enemy attack
+    // and whose only friendly defender is the queen. Such pieces are
+    // vulnerable to overload and discovery patterns because the queen
+    // has to spend a tempo to recapture, which is strictly worse than
+    // a piece defended by a less-valuable defender. Pawns and the
+    // queen herself are excluded so the term only fires on the minor
+    // / rook material patterns where the discovery loss is
+    // significant. Applied as a negative score so the magnitude lives
+    // in the table itself.
+    Score WeakQueenDefender;
+
+    // Bonus per friendly knight that has at least two safe candidate
+    // squares from which it attacks the enemy queen. Even a single
+    // such square is a real threat in branch-on-recapture, but two or
+    // more candidates make the fork unrecoverable for the defender:
+    // they cannot guard every landing square at once and the knight
+    // wins the race for material on the next move.
+    Score KnightOnQueen;
+
+    // Penalty when our king sits on a flank that has no pawns of
+    // either color. The four-file flank (a..d or e..h, by king file)
+    // captures the surface area an enemy king-side or queen-side
+    // attack would sweep through; with no pawns there the king has
+    // no shelter and no pawn-attack web to slow incoming pieces.
+    // The shelter / storm grids do not capture this case because
+    // they only walk the three shield files immediately around the
+    // king and silently zero out when every shield file is empty.
+    Score PawnlessFlank;
+
+    // Bonus per friendly queen sitting on the enemy half of the board
+    // and not attacked by an enemy pawn or minor piece. Queens parked
+    // safely in the opponent's territory dominate the position because
+    // they cannot be cheaply evicted, so they sustain pressure across
+    // multiple files and ranks at no defender cost.
+    Score QueenInfiltration;
+
+    // Endgame penalty per square of Chebyshev distance from our king
+    // to our nearest pawn. King-and-pawn endings reward the king that
+    // walks toward its pawns to support them; the existing
+    // PassedKingProxBonus only fires for passers, so this term
+    // captures the same signal for non-passer pawns. The mg half is
+    // structurally zero; only the eg half carries a tunable value.
+    Score KingPawnDistEg;
+
+    // KBNK corner-push gradient: in K + B + N vs K endings, the eg
+    // adjustment rewards driving the weak king toward the corner whose
+    // colour matches the strong bishop. The bonus fires per square of
+    // Chebyshev closeness (0..7) so the weak king sees a continuous
+    // pull toward the right corner across the search horizon. Mg half
+    // is structurally zero (KBNK only matters in the eg phase); only
+    // the eg half is tunable.
+    Score KBNKCornerEg;
+
+    // Lucena bridge-building win: in K + R + P vs K + R with the pawn
+    // on rank 6 (attacker's POV), the strong king on rank 7 or 8 in
+    // front of the pawn, and the defender king cut off at least two
+    // files away from the pawn file, the position is a textbook win
+    // by the bridge-building rook technique. The default scale stays
+    // 64 (the material edge already says winning), but a flat eg
+    // bonus drives the search toward this configuration earlier than
+    // the raw material gradient alone would. Mg structurally zero;
+    // only the eg half is tunable.
+    Score LucenaEg;
 };
 
 extern EvalParams evalParams;

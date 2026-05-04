@@ -10,8 +10,13 @@ the average of every observed game outcome from that position. The
 emitted FEN is the first occurrence seen, so the eval still reads a
 real halfmove counter from the game.
 
-Output is one ``FEN | result`` line per unique position, with
-``result`` in [0, 1] from White's perspective.
+Output is one ``FEN | result | gameIds`` line per unique position,
+with ``result`` in [0, 1] from White's perspective and ``gameIds`` a
+comma-separated list of source game indices (one per occurrence so a
+position seen N times in 5 different games carries 5 ids). The third
+field is parsed by the tuner for per-game inverse weighting and the
+train/val split; older corpora without it still load (the C++
+loader treats the field as optional).
 """
 import argparse
 import re
@@ -43,10 +48,23 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
             mate_filter: bool):
     raw_positions = 0
     games = 0
+    next_game_id = 0
     skipped_games = 0
     mate_filtered = 0
+    # Slot layout: [count, label_total, repr_fen, game_id_list].
+    # game_id_list collects every source game id that produced this
+    # FEN (with multiplicity, so a position seen twice in one game
+    # appears twice in the list). The tuner uses the list both for
+    # per-game inverse weighting and for the by-game train / val
+    # split.
     fen_stats: dict = {}
-    with open(pgn_path) as f_in:
+    # PGN files in the wild are a mix of UTF-8 (modern engine self-play
+    # output) and latin-1 / windows-1252 (TWIC archives, historical
+    # databases). Open with `errors="replace"` so a stray 0xa0 in a
+    # comment or player name does not abort the whole extract; the
+    # python-chess parser only cares about the ASCII syntax, so the
+    # replacement codepoints in non-ASCII tags are harmless.
+    with open(pgn_path, encoding="utf-8", errors="replace") as f_in:
         while True:
             game = chess.pgn.read_game(f_in)
             if game is None:
@@ -57,6 +75,8 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
                 skipped_games += 1
                 continue
             label = RESULT_MAP[result]
+            game_id = next_game_id
+            next_game_id += 1
 
             # Walk the mainline as a node sequence so each step
             # exposes both the move and the engine comment that
@@ -85,10 +105,11 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
                         key = fen.rsplit(" ", 2)[0]
                         slot = fen_stats.get(key)
                         if slot is None:
-                            fen_stats[key] = [1, label, fen]
+                            fen_stats[key] = [1, label, fen, [game_id]]
                         else:
                             slot[0] += 1
                             slot[1] += label
+                            slot[3].append(game_id)
                         raw_positions += 1
                 board.push(move)
 
@@ -99,8 +120,9 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
 
     unique = len(fen_stats)
     with open(out_path, "w") as f_out:
-        for _key, (count, total, repr_fen) in fen_stats.items():
-            f_out.write(f"{repr_fen} | {total / count}\n")
+        for _key, (count, total, repr_fen, game_ids) in fen_stats.items():
+            ids_field = ",".join(str(g) for g in game_ids)
+            f_out.write(f"{repr_fen} | {total / count} | {ids_field}\n")
     dup_pct = (100.0 * (raw_positions - unique) / raw_positions
                if raw_positions else 0.0)
     print(f"done: {games} games, {raw_positions} raw positions, "

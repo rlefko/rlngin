@@ -876,6 +876,36 @@ static void evaluateKingSafety(const Board &board, const EvalContext &ctx, Score
             int egPen = kingDangerEg / KingDangerDivEg;
             scores[us] -= S(mgPen, egPen);
         }
+
+        // Pawnless flank: when every file on our king's half of the
+        // board (a..d if king is on the queenside, e..h otherwise) is
+        // pawnless, the king sits in open territory the shelter / storm
+        // grids cannot represent. Fold the penalty in unconditionally;
+        // the magnitude already accounts for how often this shape
+        // appears with the king still in the middlegame.
+        Bitboard ourFlank = (kingFile < 4) ? (FileABB | FileBBB | FileCBB | FileDBB)
+                                           : (FileEBB | FileFBB | FileGBB | FileHBB);
+        if (!(board.byPiece[Pawn] & ourFlank)) {
+            scores[us] += evalParams.PawnlessFlank;
+        }
+
+        // Endgame king to pawn distance: penalty per square of
+        // Chebyshev distance from our king to our nearest pawn.
+        // Captures the K+P endgame fundamental that the king must
+        // walk toward its pawns to support them, without limiting the
+        // signal to passers the way PassedKingProxBonus does. Eg-only
+        // by construction; the mg half stays zero in the table.
+        Bitboard ourPawnsKpd = board.byPiece[Pawn] & board.byColor[us];
+        if (ourPawnsKpd) {
+            int minDist = 8;
+            Bitboard iter = ourPawnsKpd;
+            while (iter) {
+                int psq = popLsb(iter);
+                int d = chebyshev(kingSq, psq);
+                if (d < minDist) minDist = d;
+            }
+            scores[us] += S(0, eg_value(evalParams.KingPawnDistEg) * minDist);
+        }
     }
 }
 
@@ -1199,7 +1229,240 @@ static int scaleFactor(const Board &board) {
         }
     }
 
+    // Rule-based KPK rook-file fortress: strong side has K + a single
+    // pawn on the a or h file, weak side has K only. The defender holds
+    // the draw if the weak king reaches the promotion corner before the
+    // pawn queens. Mirrors the wrong-bishop fortress logic above for the
+    // pawn-only case (no bishop required).
+    for (int c = 0; c < 2; c++) {
+        Color us = static_cast<Color>(c);
+        Color them = static_cast<Color>(c ^ 1);
+        if (board.pieceCount[us][Pawn] != 1) continue;
+        if (board.pieceCount[us][Knight] || board.pieceCount[us][Bishop] ||
+            board.pieceCount[us][Rook] || board.pieceCount[us][Queen])
+            continue;
+        if (board.pieceCount[them][Pawn] || board.pieceCount[them][Knight] ||
+            board.pieceCount[them][Bishop] || board.pieceCount[them][Rook] ||
+            board.pieceCount[them][Queen])
+            continue;
+
+        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
+        Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
+        if (rookFilePawns != ourPawns) continue;
+
+        bool onA = (ourPawns & FileABB) != 0;
+        int promoSq = onA ? (us == White ? 56 : 0) : (us == White ? 63 : 7);
+        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
+        if (!theirKingBB) continue;
+        int theirKingSq = lsb(theirKingBB);
+
+        int pawnSq = lsb(ourPawns);
+        int pawnRank = squareRank(pawnSq);
+        int pushes = (us == White) ? (7 - pawnRank) : pawnRank;
+        // Pawn at its starting rank can use the two-square initial push
+        // to save one tempo. Without this adjustment the recognizer
+        // over-claims fortress in positions where the attacker actually
+        // promotes ahead of the defender's race to the corner.
+        bool atInitialRank = (us == White) ? (pawnRank == 1) : (pawnRank == 6);
+        if (atInitialRank) pushes--;
+        // Defender to move gets one extra king step before the pawn race
+        // resolves, attacker to move gets none (defender plays K turns
+        // counting the post-promotion queen capture).
+        if (board.sideToMove == them) pushes++;
+        if (chebyshev(theirKingSq, promoSq) <= pushes) return 0;
+    }
+
+    // Rule-based KQKP fortress: defender has K + 1 pawn one push from
+    // promotion on the a or h file with the defender king blockading on
+    // the promotion square, attacker has K + Q only and the attacking
+    // king is too far to help. The known-draw shape is narrow but
+    // recurs in practice and the search cannot resolve it within the
+    // 50-move horizon without help.
+    for (int c = 0; c < 2; c++) {
+        Color weak = static_cast<Color>(c);
+        Color strong = static_cast<Color>(c ^ 1);
+        if (board.pieceCount[weak][Pawn] != 1) continue;
+        if (board.pieceCount[weak][Knight] || board.pieceCount[weak][Bishop] ||
+            board.pieceCount[weak][Rook] || board.pieceCount[weak][Queen])
+            continue;
+        if (board.pieceCount[strong][Queen] != 1) continue;
+        if (board.pieceCount[strong][Pawn] || board.pieceCount[strong][Knight] ||
+            board.pieceCount[strong][Bishop] || board.pieceCount[strong][Rook])
+            continue;
+
+        Bitboard weakPawn = board.byPiece[Pawn] & board.byColor[weak];
+        Bitboard rookFilePawn = weakPawn & (FileABB | FileHBB);
+        if (rookFilePawn != weakPawn) continue;
+
+        int pawnSq = lsb(weakPawn);
+        int relRank = (weak == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+        if (relRank != 6) continue; // one push from promotion
+
+        bool onA = (weakPawn & FileABB) != 0;
+        int promoSq = onA ? (weak == White ? 56 : 0) : (weak == White ? 63 : 7);
+        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
+        Bitboard strongKingBB = board.byPiece[King] & board.byColor[strong];
+        if (!weakKingBB || !strongKingBB) continue;
+
+        int weakKingSq = lsb(weakKingBB);
+        int strongKingSq = lsb(strongKingBB);
+        // Defender king blockades on the promotion square or its
+        // immediate neighbour.
+        if (chebyshev(weakKingSq, promoSq) > 1) continue;
+        // Attacker king must be far enough that it cannot drive the
+        // defender out before the queen-vs-pawn race resolves.
+        if (chebyshev(strongKingSq, promoSq) <= 3) continue;
+
+        return 0;
+    }
+
+    // Philidor third-rank defence: defender holds K + R against K + R + P
+    // when its rook sits on the third rank from its perspective (the
+    // attacker's fifth rank) and the attacker's pawn is still far enough
+    // back that pushing it past the rook line is not yet possible. The
+    // defender king hangs back near the promotion square so the attacker
+    // king cannot outflank, and the rook controls the rank the attacker
+    // king would have to cross to support the pawn. Recognising this
+    // shape as scale 0 stops the engine from converting K+R+P vs K+R as
+    // a stock material win when it is in fact a textbook draw.
+    for (int c = 0; c < 2; c++) {
+        Color strong = static_cast<Color>(c);
+        Color weak = static_cast<Color>(c ^ 1);
+        if (board.pieceCount[strong][Pawn] != 1) continue;
+        if (board.pieceCount[strong][Rook] != 1) continue;
+        if (board.pieceCount[strong][Knight] || board.pieceCount[strong][Bishop] ||
+            board.pieceCount[strong][Queen])
+            continue;
+        if (board.pieceCount[weak][Rook] != 1) continue;
+        if (board.pieceCount[weak][Pawn] || board.pieceCount[weak][Knight] ||
+            board.pieceCount[weak][Bishop] || board.pieceCount[weak][Queen])
+            continue;
+
+        Bitboard strongPawn = board.byPiece[Pawn] & board.byColor[strong];
+        int pawnSq = lsb(strongPawn);
+        int pawnRank = (strong == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+        // Pawn must still be on rank 4 or earlier (attacker's POV) so the
+        // defender's rook on rank 5 (attacker's POV) is not yet attacked
+        // by the pawn from the same rank.
+        if (pawnRank < 1 || pawnRank > 4) continue;
+
+        Bitboard weakRook = board.byPiece[Rook] & board.byColor[weak];
+        int weakRookSq = lsb(weakRook);
+        int weakRookRank =
+            (strong == White) ? squareRank(weakRookSq) : (7 - squareRank(weakRookSq));
+        if (weakRookRank != 5) continue;
+
+        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
+        if (!weakKingBB) continue;
+        int weakKingSq = lsb(weakKingBB);
+        int weakKingRank =
+            (strong == White) ? squareRank(weakKingSq) : (7 - squareRank(weakKingSq));
+        // Defender king must be on the back two ranks so it can step in
+        // front of the pawn when it eventually pushes.
+        if (weakKingRank < 6) continue;
+
+        return 0;
+    }
+
     return 64;
+}
+
+// Endgame-only score adjustment in white-perspective eg units. Applied
+// in evaluate() before the scale factor multiplies the eg half. Encodes
+// the few specialized endgame patterns where the rest of the eval has
+// no useful gradient: KBNK pushes the weak king toward the corner the
+// bishop attacks. Returns 0 for everything else.
+static int endgameEgAdjust(const Board &board) {
+    // KBNK: strong side has K + B + N exactly, weak side has K only.
+    // Drive the weak king toward the corner whose colour matches the
+    // strong bishop. Without this gradient the search cannot distinguish
+    // the right corner from the wrong one inside the 50-move horizon.
+    // The per-square eg weight is tunable via KBNKCornerEg so SPSA /
+    // Texel can refine the magnitude against the rest of the eval.
+    for (int c = 0; c < 2; c++) {
+        Color strong = static_cast<Color>(c);
+        Color weak = static_cast<Color>(c ^ 1);
+        if (board.pieceCount[strong][Bishop] != 1) continue;
+        if (board.pieceCount[strong][Knight] != 1) continue;
+        if (board.pieceCount[strong][Pawn] || board.pieceCount[strong][Rook] ||
+            board.pieceCount[strong][Queen])
+            continue;
+        if (board.pieceCount[weak][Pawn] || board.pieceCount[weak][Knight] ||
+            board.pieceCount[weak][Bishop] || board.pieceCount[weak][Rook] ||
+            board.pieceCount[weak][Queen])
+            continue;
+
+        Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strong];
+        bool bishopLight = (strongBishop & LightSquaresBB) != 0;
+        // Square colour: (file + rank) parity. The light-coloured
+        // corners are h1 (sq 7) and a8 (sq 56); the dark-coloured
+        // corners are a1 (sq 0) and h8 (sq 63). The mating side
+        // pushes the lone king to whichever same-colour corner it can
+        // reach faster, so we score the closer of the two.
+        int corner1 = bishopLight ? 7 : 0;
+        int corner2 = bishopLight ? 56 : 63;
+
+        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
+        if (!weakKingBB) continue;
+        int weakKingSq = lsb(weakKingBB);
+        int dist = std::min(chebyshev(weakKingSq, corner1), chebyshev(weakKingSq, corner2));
+        int closeness = 7 - dist;
+        int bonus = closeness * eg_value(evalParams.KBNKCornerEg);
+        return (strong == White) ? bonus : -bonus;
+    }
+
+    // Lucena bridge-building win: K + R + P vs K + R with the pawn on
+    // rank 6 (attacker's POV), the strong king parked on rank 7 or 8
+    // in front of the pawn, and the defender king cut off at least
+    // two files away. The pawn cannot sit on the a or h file because
+    // the corner stalemate trap kills the bridge. Material already
+    // says winning; the eg bonus drives the search toward this
+    // configuration so the conversion plan surfaces earlier than the
+    // raw material gradient alone allows.
+    for (int c = 0; c < 2; c++) {
+        Color strong = static_cast<Color>(c);
+        Color weak = static_cast<Color>(c ^ 1);
+        if (board.pieceCount[strong][Pawn] != 1) continue;
+        if (board.pieceCount[strong][Rook] != 1) continue;
+        if (board.pieceCount[strong][Knight] || board.pieceCount[strong][Bishop] ||
+            board.pieceCount[strong][Queen])
+            continue;
+        if (board.pieceCount[weak][Rook] != 1) continue;
+        if (board.pieceCount[weak][Pawn] || board.pieceCount[weak][Knight] ||
+            board.pieceCount[weak][Bishop] || board.pieceCount[weak][Queen])
+            continue;
+
+        Bitboard strongPawn = board.byPiece[Pawn] & board.byColor[strong];
+        int pawnSq = lsb(strongPawn);
+        int pawnFile = squareFile(pawnSq);
+        // Rook-file pawn falls into the corner-stalemate trap; the
+        // bridge does not work there.
+        if (pawnFile == 0 || pawnFile == 7) continue;
+        int pawnRank = (strong == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
+        if (pawnRank != 6) continue;
+
+        Bitboard strongKingBB = board.byPiece[King] & board.byColor[strong];
+        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
+        if (!strongKingBB || !weakKingBB) continue;
+        int strongKingSq = lsb(strongKingBB);
+        int weakKingSq = lsb(weakKingBB);
+
+        int strongKingRank =
+            (strong == White) ? squareRank(strongKingSq) : (7 - squareRank(strongKingSq));
+        // Strong king must be on rank 7 or 8 in front of the pawn,
+        // within one file of the pawn so it actually blocks promotion.
+        if (strongKingRank < 7) continue;
+        if (std::abs(squareFile(strongKingSq) - pawnFile) > 1) continue;
+
+        // Defender king cut off: at least two files away from the pawn
+        // file. With closer king, the defender is in time to block.
+        if (std::abs(squareFile(weakKingSq) - pawnFile) < 2) continue;
+
+        int bonus = eg_value(evalParams.LucenaEg);
+        return (strong == White) ? bonus : -bonus;
+    }
+
+    return 0;
 }
 
 // Reward pieces we attack with a less-valuable attacker, hanging pieces,
@@ -1331,6 +1594,91 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard pushVictims =
             pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
         scores[us] += evalParams.SafePawnPush * popcount(pushVictims);
+
+        // Per-square pawn-push threat: walk every push target (safe or
+        // not) and tally each (push square, victim piece) pair where the
+        // push lands attacking an enemy non-pawn / non-king. Pushes the
+        // opponent must address with a tempo even when capturing the
+        // pawn is on the board, so the signal is distinct from
+        // SafePawnPush. Already-pawn-attacked victims are filtered out
+        // to keep the bonus orthogonal to ThreatByPawn.
+        int pushSquareThreats = 0;
+        Bitboard pushIter = pushes;
+        while (pushIter) {
+            int psq = popLsb(pushIter);
+            Bitboard victims = PawnAttacks[us][psq] & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
+            pushSquareThreats += popcount(victims);
+        }
+        scores[us] += evalParams.ThreatByPawnPush * pushSquareThreats;
+
+        // Weak-piece-protected-only-by-queen: any friendly non-pawn
+        // minor or rook under enemy attack whose only defender is the
+        // queen. The queen's defense is tempo-fragile because every
+        // recapture trades down a major for a minor or pawn, so a
+        // piece that only the queen defends carries a structurally
+        // worse risk profile than one a less-valuable piece protects.
+        // Pawns and the queen herself are excluded: pawns get queen-
+        // defended in routine endgame patterns where the term would
+        // just misfire, and a queen defending herself is not the
+        // discovery / overload signal we want to capture.
+        Bitboard ourMinorsAndRooks =
+            board.byColor[us] &
+            (board.byPiece[Knight] | board.byPiece[Bishop] | board.byPiece[Rook]);
+        Bitboard underAttack = ourMinorsAndRooks & ctx.allAttacks[them];
+        Bitboard nonQueenDefense = ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] |
+                                   ctx.attackedBy[us][Bishop] | ctx.attackedBy[us][Rook] |
+                                   ctx.attackedBy[us][King];
+        Bitboard onlyQueenDef = underAttack & ctx.attackedBy[us][Queen] & ~nonQueenDefense;
+        scores[us] += evalParams.WeakQueenDefender * popcount(onlyQueenDef);
+
+        // Knight on queen: each friendly knight that has two or more
+        // safe candidate squares from which it would attack the enemy
+        // queen earns a bonus. "Safe" means the candidate square is
+        // not occupied by us and not attacked by any enemy piece
+        // (queen attacks count as enemy attacks even though the queen
+        // is the target -- if the queen is the only enemy defender,
+        // recapturing the knight loses the queen too, but we cannot
+        // tell that without a SEE walk, so the strict filter avoids
+        // claiming forks the simple version cannot prove are real).
+        // Iterate over every enemy queen so a promoted second queen
+        // also feeds the fork-threat tally; a knight that
+        // simultaneously forks two queens scores twice, which matches
+        // the pressure both threats exert on the defender's tempo
+        // budget.
+        if (enemyQueens) {
+            Bitboard ourKnightsBase = board.byPiece[Knight] & board.byColor[us];
+            Bitboard safeForKnight = ~board.byColor[us] & ~ctx.allAttacks[them];
+            int knightForks = 0;
+            Bitboard queensIter = enemyQueens;
+            while (queensIter) {
+                int queenSq = popLsb(queensIter);
+                Bitboard forkSquares = KnightAttacks[queenSq];
+                Bitboard knightsIter = ourKnightsBase;
+                while (knightsIter) {
+                    int nsq = popLsb(knightsIter);
+                    Bitboard candidates = KnightAttacks[nsq] & forkSquares & safeForKnight;
+                    if (popcount(candidates) >= 2) knightForks++;
+                }
+            }
+            scores[us] += evalParams.KnightOnQueen * knightForks;
+        }
+
+        // Queen infiltration: our queen sits on the enemy half of the
+        // board on a square neither an enemy pawn nor an enemy minor
+        // attacks. Such a queen cannot be cheaply evicted and exerts
+        // sustained pressure across files and ranks: it picks up any
+        // weak target the rest of the eval flags without taking the
+        // recapture-risk hit a queen normally pays for foraying past
+        // the midline.
+        Bitboard ourQueensInf = board.byPiece[Queen] & board.byColor[us];
+        if (ourQueensInf) {
+            Bitboard enemyHalf = (us == White) ? (Rank5BB | Rank6BB | Rank7BB | Rank8BB)
+                                               : (Rank1BB | Rank2BB | Rank3BB | Rank4BB);
+            Bitboard safeForQueen = ~ctx.pawnAttacks[them] & ~ctx.attackedBy[them][Knight] &
+                                    ~ctx.attackedBy[them][Bishop];
+            int infiltrated = popcount(ourQueensInf & enemyHalf & safeForQueen);
+            scores[us] += evalParams.QueenInfiltration * infiltrated;
+        }
     }
 }
 
@@ -1366,6 +1714,9 @@ int evaluate(const Board &board) {
     scores[White] += matScores[White];
     scores[Black] += matScores[Black];
 
+    int mgPhase = std::min(gamePhase, 24);
+    int egPhase = 24 - mgPhase;
+
     Score pawnScore = 0;
     Bitboard passers[2] = {0, 0};
     evaluatePawns(board, pawnScore, passers, nullptr);
@@ -1393,15 +1744,16 @@ int evaluate(const Board &board) {
     int mg = mg_value(total);
     int eg = eg_value(total);
 
-    int mgPhase = std::min(gamePhase, 24);
-    int egPhase = 24 - mgPhase;
-
     // Drawish endings scale the endgame half toward zero before blending.
     // Gated on genuine endgame phase so transient opposite-colored-bishop
     // configurations that pop up in the middlegame search tree do not
     // have their eg half distorted; in a true endgame the term still
-    // correctly pushes drawish material toward a draw.
+    // correctly pushes drawish material toward a draw. Specialized
+    // endgame patterns (KBNK corner-push) inject an additive eg
+    // adjustment ahead of the scale so the gradient survives even when
+    // the scaled eg would otherwise flatline.
     if (mgPhase <= 10) {
+        eg += endgameEgAdjust(board);
         int scale = scaleFactor(board);
         eg = eg * scale / 64;
     }
@@ -1509,9 +1861,11 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
 
     int scale = 64;
     int scaledEg = eg;
+    int egAdjust = 0;
     if (mgPhase <= 10) {
+        egAdjust = endgameEgAdjust(board);
         scale = scaleFactor(board);
-        scaledEg = eg * scale / 64;
+        scaledEg = (eg + egAdjust) * scale / 64;
     }
     int blended = (mg * mgPhase + scaledEg * egPhase) / 24;
 

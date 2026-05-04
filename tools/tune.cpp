@@ -24,18 +24,22 @@
 #include <fstream>
 #include <functional>
 #include <iostream>
+#include <limits>
 #include <regex>
 #include <sstream>
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace {
 
 struct LabeledPosition {
     Board board;
-    double result; // 1.0 / 0.5 / 0.0 from White POV
+    double result;                    // 1.0 / 0.5 / 0.0 from White POV
+    std::vector<uint32_t> gameIds;    // every source game that produced this row
+    double weight = 1.0;              // per game inverse weight, normalised post load
 };
 
 // Inclusive integer bounds for a parameter half. The wide defaults are
@@ -121,6 +125,17 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("Hanging", &evalParams.Hanging, boundsNonNegative());
     addMgEgConstr("WeakQueen", &evalParams.WeakQueen, boundsNonNegative());
     addMgEgConstr("SafePawnPush", &evalParams.SafePawnPush, boundsNonNegative());
+    addMgEgConstr("ThreatByPawnPush", &evalParams.ThreatByPawnPush, boundsNonNegative());
+    addMgEgConstr("WeakQueenDefender", &evalParams.WeakQueenDefender, boundsNonPositive());
+    addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsNonNegative());
+    addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, boundsNonPositive());
+    addMgEgConstr("QueenInfiltration", &evalParams.QueenInfiltration, boundsNonNegative());
+    out.push_back(
+        {"KingPawnDistEg.eg", &evalParams.KingPawnDistEg, false, boundsNonPositive()});
+    out.push_back(
+        {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsNonNegative()});
+    out.push_back(
+        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsNonNegative()});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -254,23 +269,45 @@ static std::vector<ParamRef> collectParams() {
     // unconstrained because the lowest counts (a knight with 0..2 moves)
     // legitimately carry a negative contribution.
     static const int mobilityCounts[7] = {0, 0, 9, 14, 15, 28, 0};
+    // Per piece slope caps on the mobility chain. The non decreasing
+    // prior alone lets the tuner spike a single count by 50+ cp when a
+    // recurring corpus motif rewards exactly that count. Capping the
+    // delta between adjacent counts keeps the curve readable as a
+    // smooth gradient instead of a step function. Values are loose
+    // enough that real diminishing return shifts are still expressible
+    // (knight mobility goes from 0 to 9 counts over 350 cp at the
+    // extreme; capping per step at 40 still permits a 360 cp span).
+    static const int mobilitySlopeMax[7] = {0, 0, 40, 35, 30, 25, 0};
     for (int pt = Knight; pt <= Queen; pt++) {
         const int n = mobilityCounts[pt];
+        const int maxStep = mobilitySlopeMax[pt];
         for (int i = 0; i < n; i++) {
-            auto mgChain = [pt, i, n] {
+            auto mgChain = [pt, i, n, maxStep] {
                 Bounds b;
-                if (i > 0)
-                    b.lo = std::max(b.lo, mg_value(evalParams.MobilityBonus[pt][i - 1]));
-                if (i < n - 1)
-                    b.hi = std::min(b.hi, mg_value(evalParams.MobilityBonus[pt][i + 1]));
+                if (i > 0) {
+                    int prev = mg_value(evalParams.MobilityBonus[pt][i - 1]);
+                    b.lo = std::max(b.lo, prev);
+                    b.hi = std::min(b.hi, prev + maxStep);
+                }
+                if (i < n - 1) {
+                    int next = mg_value(evalParams.MobilityBonus[pt][i + 1]);
+                    b.hi = std::min(b.hi, next);
+                    b.lo = std::max(b.lo, next - maxStep);
+                }
                 return b;
             };
-            auto egChain = [pt, i, n] {
+            auto egChain = [pt, i, n, maxStep] {
                 Bounds b;
-                if (i > 0)
-                    b.lo = std::max(b.lo, eg_value(evalParams.MobilityBonus[pt][i - 1]));
-                if (i < n - 1)
-                    b.hi = std::min(b.hi, eg_value(evalParams.MobilityBonus[pt][i + 1]));
+                if (i > 0) {
+                    int prev = eg_value(evalParams.MobilityBonus[pt][i - 1]);
+                    b.lo = std::max(b.lo, prev);
+                    b.hi = std::min(b.hi, prev + maxStep);
+                }
+                if (i < n - 1) {
+                    int next = eg_value(evalParams.MobilityBonus[pt][i + 1]);
+                    b.hi = std::min(b.hi, next);
+                    b.lo = std::max(b.lo, next - maxStep);
+                }
                 return b;
             };
             std::string base =
@@ -575,6 +612,14 @@ static std::vector<ParamRef> collectParams() {
     return out;
 }
 
+// Strip leading and trailing whitespace from a string in place.
+static void trim(std::string &s) {
+    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r'))
+        s.erase(s.begin());
+    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r'))
+        s.pop_back();
+}
+
 static std::vector<LabeledPosition> loadDataset(const std::string &path) {
     std::vector<LabeledPosition> out;
     std::ifstream in(path);
@@ -584,38 +629,439 @@ static std::vector<LabeledPosition> loadDataset(const std::string &path) {
     }
     std::string line;
     while (std::getline(in, line)) {
-        auto sep = line.find('|');
-        if (sep == std::string::npos) continue;
-        std::string fen = line.substr(0, sep);
-        std::string result = line.substr(sep + 1);
-        while (!fen.empty() && fen.back() == ' ')
-            fen.pop_back();
-        while (!result.empty() && (result.front() == ' '))
-            result.erase(result.begin());
+        // Format: "{FEN} | {result}" (legacy) or
+        //         "{FEN} | {result} | {gameId,gameId,...}" (current).
+        auto sep1 = line.find('|');
+        if (sep1 == std::string::npos) continue;
+        auto sep2 = line.find('|', sep1 + 1);
+
+        std::string fen = line.substr(0, sep1);
+        std::string result = (sep2 == std::string::npos)
+                                 ? line.substr(sep1 + 1)
+                                 : line.substr(sep1 + 1, sep2 - sep1 - 1);
+        std::string gameIdsField =
+            (sep2 == std::string::npos) ? std::string() : line.substr(sep2 + 1);
+        trim(fen);
+        trim(result);
+        trim(gameIdsField);
+
         LabeledPosition lp;
         lp.board.setFen(fen);
         lp.result = std::stod(result);
+        if (!gameIdsField.empty()) {
+            size_t pos = 0;
+            while (pos < gameIdsField.size()) {
+                size_t comma = gameIdsField.find(',', pos);
+                std::string token = (comma == std::string::npos)
+                                        ? gameIdsField.substr(pos)
+                                        : gameIdsField.substr(pos, comma - pos);
+                if (!token.empty()) {
+                    lp.gameIds.push_back(static_cast<uint32_t>(std::stoul(token)));
+                }
+                if (comma == std::string::npos) break;
+                pos = comma + 1;
+            }
+        }
         out.push_back(std::move(lp));
     }
     return out;
+}
+
+// Compute per game inverse weights for every position. A position
+// extracted from games {a, b, c} where game a contributed 80
+// positions, game b 40, and game c 60 receives weight
+// 1/80 + 1/40 + 1/60. After all per position weights are populated
+// the corpus is renormalised so the average weight is 1.0, which
+// keeps absolute loss numbers comparable to the unweighted
+// pipeline (so K refit and the relative-improvement gate stay
+// calibrated).
+static void assignGameWeights(std::vector<LabeledPosition> &positions) {
+    std::unordered_map<uint32_t, uint64_t> gameSizes;
+    for (const auto &lp : positions) {
+        for (uint32_t gid : lp.gameIds) {
+            gameSizes[gid] += 1;
+        }
+    }
+    if (gameSizes.empty()) {
+        // Legacy corpus with no game id metadata: every position
+        // already has weight 1.0 from default-construction; no
+        // renormalisation needed.
+        return;
+    }
+    double totalWeight = 0.0;
+    for (auto &lp : positions) {
+        if (lp.gameIds.empty()) {
+            lp.weight = 1.0;
+        } else {
+            double w = 0.0;
+            for (uint32_t gid : lp.gameIds) {
+                auto it = gameSizes.find(gid);
+                if (it != gameSizes.end() && it->second > 0) {
+                    w += 1.0 / static_cast<double>(it->second);
+                }
+            }
+            lp.weight = w;
+        }
+        totalWeight += lp.weight;
+    }
+    if (totalWeight <= 0.0) return;
+    double scale = static_cast<double>(positions.size()) / totalWeight;
+    for (auto &lp : positions) {
+        lp.weight *= scale;
+    }
+    std::cerr << "assignGameWeights: " << gameSizes.size() << " games, "
+              << positions.size() << " positions, mean weight 1.000\n";
+}
+
+// Stable splitmix64-flavoured hash; used to bucket game ids into the
+// train / val partitions deterministically. Mixing the seed lets the
+// operator try multiple splits without changing the corpus on disk.
+static uint64_t splitHash(uint32_t key, uint64_t seed) {
+    uint64_t x = static_cast<uint64_t>(key) ^ seed;
+    x = (x ^ (x >> 30)) * 0xbf58476d1ce4e5b9ULL;
+    x = (x ^ (x >> 27)) * 0x94d049bb133111ebULL;
+    x = x ^ (x >> 31);
+    return x;
+}
+
+// Partition the corpus into a training slice and a held-out validation
+// slice using stratified sampling over (phase, result) buckets.
+//
+// Why stratified: a flat random-by-game split holds out approximately
+// `valFraction` of every position type *in expectation*, but the
+// realised bucket coverage varies. Bucketed val reporting then sees
+// noisy per-cell loss numbers driven by sample-size variance instead
+// of real signal differences, and rare buckets (e.g. opposite-colour
+// bishop endgames, KQK with a passed pawn) can land severely
+// under-covered.
+//
+// Algorithm: classify every position into nine cells = three phases
+// (mgPhase >= 18 / 8..17 / < 8) crossed with three result classes
+// (win 1.0 / draw 0.5 / loss 0.0), matching the reportValidation
+// bucket layout exactly so the per-cell coverage we engineer here
+// shows up directly in that reporter's output. Then for each cell,
+// hash the games contributing to it (game id XOR cell-salt), sort
+// deterministically, and pull games into the val partition until the
+// cell's coverage hits `valFraction * cell_size`. Crucially, each
+// game's full position contribution lands in val regardless of which
+// cell selected it -- a game can only be wholly val or wholly train,
+// preserving the no-spans-both-partitions invariant. So most cells
+// reach their target organically from games already chosen for
+// larger neighbouring cells.
+//
+// Legacy corpora without game-id metadata fall back to the previous
+// per-position-index split. valFraction edge cases preserved:
+//   * 0.0: every position goes to train (val empty, val gate disabled).
+//   * 1.0: every position goes to val (only useful for diagnostics).
+static std::pair<std::vector<size_t>, std::vector<size_t>>
+splitCorpus(const std::vector<LabeledPosition> &positions, double valFraction,
+            uint64_t seed) {
+    std::vector<size_t> train;
+    std::vector<size_t> val;
+    train.reserve(positions.size());
+    if (valFraction <= 0.0) {
+        for (size_t i = 0; i < positions.size(); i++)
+            train.push_back(i);
+        std::cerr << "splitCorpus: " << train.size() << " train, 0 val (val gate off)\n";
+        return {std::move(train), std::move(val)};
+    }
+    if (valFraction >= 1.0) {
+        for (size_t i = 0; i < positions.size(); i++)
+            val.push_back(i);
+        std::cerr << "splitCorpus: 0 train, " << val.size()
+                  << " val (training disabled, diagnostics only)\n";
+        return {std::move(train), std::move(val)};
+    }
+
+    // Inline phase / result bucketing so this function stays
+    // self-contained at the file's ordering. Must match
+    // reportValidation's classifications exactly.
+    static const int phaseInc[7] = {0, 0, 1, 1, 2, 4, 0};
+    auto phaseBucketOf = [&](const Board &b) -> int {
+        int p = 0;
+        for (int pt = Knight; pt <= Queen; pt++) {
+            p += phaseInc[pt] * (b.pieceCount[White][pt] + b.pieceCount[Black][pt]);
+        }
+        if (p > 24) p = 24;
+        return p >= 18 ? 0 : (p >= 8 ? 1 : 2);
+    };
+    auto resultBucketOf = [](double r) -> int {
+        if (r > 0.75) return 0;  // win
+        if (r < 0.25) return 2;  // loss
+        return 1;                // draw
+    };
+
+    constexpr int N_BUCKETS = 9;
+    static const char *bucketLabels[N_BUCKETS] = {
+        "open-win",  "open-draw", "open-loss",
+        "mid-win",   "mid-draw",  "mid-loss",
+        "end-win",   "end-draw",  "end-loss",
+    };
+
+    // First pass: assign each position to a (phase, result) cell, count
+    // cell sizes, and detect whether any game-id metadata exists.
+    std::vector<uint8_t> posBucket(positions.size());
+    std::array<size_t, N_BUCKETS> bucketSize{};
+    bool anyMetadata = false;
+    for (size_t i = 0; i < positions.size(); i++) {
+        const auto &lp = positions[i];
+        int b = phaseBucketOf(lp.board) * 3 + resultBucketOf(lp.result);
+        posBucket[i] = static_cast<uint8_t>(b);
+        bucketSize[b]++;
+        if (!lp.gameIds.empty()) anyMetadata = true;
+    }
+
+    // Legacy fallback: corpus has no game-id metadata, so we cannot
+    // honour the no-game-spans-partitions invariant. Fall back to a
+    // deterministic per-position-index hash split.
+    if (!anyMetadata) {
+        constexpr uint64_t bucketScale = 1ULL << 16;
+        uint64_t valCutoff = static_cast<uint64_t>(valFraction * bucketScale);
+        for (size_t i = 0; i < positions.size(); i++) {
+            uint64_t h = splitHash(static_cast<uint32_t>(i), seed);
+            if ((h % bucketScale) < valCutoff) val.push_back(i);
+            else train.push_back(i);
+        }
+        std::cerr << "splitCorpus: " << train.size() << " train, " << val.size()
+                  << " val (by position index, no metadata, target val fraction "
+                  << valFraction << ")\n";
+        return {std::move(train), std::move(val)};
+    }
+
+    // Per-game contribution table: gameContrib[gid][b] is the count of
+    // positions from game `gid` that fell into cell `b`.
+    std::unordered_map<uint32_t, std::array<uint32_t, N_BUCKETS>> gameContrib;
+    for (size_t i = 0; i < positions.size(); i++) {
+        if (positions[i].gameIds.empty()) continue;
+        uint32_t gid = positions[i].gameIds.front();
+        gameContrib[gid][posBucket[i]]++;
+    }
+
+    // Greedy stratified game selection. Each cell salts the hash with
+    // its bucket index so neighbouring cells walk games in different
+    // orders, but every game's val/train decision is final on first
+    // selection -- a game already chosen by an earlier cell is skipped
+    // for later cells (its contribution still counts toward those
+    // cells' coverage thanks to the running tally).
+    std::unordered_set<uint32_t> valGames;
+    std::array<uint32_t, N_BUCKETS> bucketCoverage{};
+    for (int b = 0; b < N_BUCKETS; b++) {
+        if (bucketSize[b] == 0) continue;
+        uint64_t target = static_cast<uint64_t>(bucketSize[b] * valFraction);
+        if (target == 0 || bucketCoverage[b] >= target) continue;
+
+        std::vector<std::pair<uint64_t, uint32_t>> sortedGames;
+        sortedGames.reserve(gameContrib.size());
+        for (const auto &kv : gameContrib) {
+            if (kv.second[b] > 0) {
+                uint64_t h = splitHash(kv.first, seed ^ static_cast<uint64_t>(b + 1));
+                sortedGames.emplace_back(h, kv.first);
+            }
+        }
+        std::sort(sortedGames.begin(), sortedGames.end());
+
+        for (const auto &entry : sortedGames) {
+            uint32_t gid = entry.second;
+            if (valGames.count(gid)) continue;
+            valGames.insert(gid);
+            const auto &c = gameContrib[gid];
+            for (int bb = 0; bb < N_BUCKETS; bb++) {
+                bucketCoverage[bb] += c[bb];
+            }
+            if (bucketCoverage[b] >= target) break;
+        }
+    }
+
+    // Final partition: walk the corpus and route each position based
+    // on whether its first game id was selected for val. Positions
+    // without metadata in an otherwise-tagged corpus default to
+    // training so they cannot dilute the held-out slice.
+    for (size_t i = 0; i < positions.size(); i++) {
+        const auto &lp = positions[i];
+        if (!lp.gameIds.empty() && valGames.count(lp.gameIds.front())) {
+            val.push_back(i);
+        } else {
+            train.push_back(i);
+        }
+    }
+
+    std::cerr << "splitCorpus (stratified by phase x result): " << train.size()
+              << " train, " << val.size() << " val (target " << valFraction
+              << ", " << valGames.size() << "/" << gameContrib.size()
+              << " games held out)\n";
+    for (int b = 0; b < N_BUCKETS; b++) {
+        if (bucketSize[b] == 0) continue;
+        double cov = 100.0 * static_cast<double>(bucketCoverage[b]) /
+                     static_cast<double>(bucketSize[b]);
+        std::cerr << "  " << bucketLabels[b] << ": " << bucketCoverage[b]
+                  << "/" << bucketSize[b] << " val (" << cov << "%)\n";
+    }
+    return {std::move(train), std::move(val)};
 }
 
 static double sigmoid(double x, double K) {
     return 1.0 / (1.0 + std::exp(-K * x));
 }
 
-static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
-                          int numThreads) {
-    // Positions here already hold qsearch-resolved leaf boards, so the
-    // inner loop only needs static evaluate(). The pawn and material
-    // hashes are now thread_local; each std::thread we spawn below gets
-    // a freshly-initialized empty table on first use inside that thread
-    // and the table is destroyed when the thread exits at the end of
-    // this loss eval. So no clearing is needed and no two threads ever
-    // touch the same hash entry, removing the race that previously sat
-    // under our 1e-8 acceptance threshold.
-    size_t n = positions.size();
+// Per piece smoothness weights for the PST L2 regulariser. The pawn
+// PST is full board (file structure matters) and the king eg is the
+// term that most often picks up corpus motifs (corners drift away
+// from the center on rare endgames), so those two carry the heaviest
+// weights. Knight values are second priority because the corner /
+// edge cells typically capture rare-attack motifs. Queen smoothness
+// is intentionally lighter because the queen's tactical reach
+// genuinely produces sharp local jumps. Index by piece type.
+static const double PstSmoothMg[7] = {0.0, 1.0, 0.6, 0.5, 0.4, 0.3, 0.4};
+static const double PstSmoothEg[7] = {0.0, 1.0, 0.6, 0.5, 0.4, 0.3, 1.0};
+
+// Read tunable env vars once on program start so subsequent loss
+// evaluations do not pay the getenv / strtod cost.
+//
+// The PST smoothness penalty sums squared adjacent-cell differences
+// over every PST. With typical 50 cp adjacent diffs that sum lands
+// around 2.5e2 to 3e2 cp^2 even on a tuned snapshot, while the data
+// MSE on a Texel corpus sits around 5e-2 to 1e-1. Default lambda
+// 1e-9 puts the regulariser at a few percent of the data loss; the
+// previous 1e-4 default was wildly over-scaled and let the regulariser
+// dominate every accept gate. PST_SMOOTH_LAMBDA in the env still
+// dials it in or out without rebuilding when the operator wants
+// stronger smoothness pressure.
+static double pstSmoothLambda() {
+    static const double cached = [] {
+        const char *env = std::getenv("PST_SMOOTH_LAMBDA");
+        if (!env) return 1e-9;
+        char *endp = nullptr;
+        double v = std::strtod(env, &endp);
+        return (endp == env) ? 1e-9 : v;
+    }();
+    return cached;
+}
+
+// Pawn PST mirror prior magnitude. Non-pawn PSTs are stored half
+// board so they are mirror-identical by construction, but the pawn
+// PST is full board because pawn structure is genuinely asymmetric
+// (g and h pawns play differently from a and b pawns once castling
+// directions matter). A soft mirror prior caps how far the tuner
+// can drift the two halves apart from corpus signal alone.
+//
+// Mirror penalty is naturally smaller than the smoothness penalty
+// because there are fewer pairs (24 vs hundreds), so a slightly
+// looser default (1e-8) keeps the prior at a similar fraction of
+// the data loss. Previous default 1e-4 was over-scaled.
+static double pawnMirrorLambda() {
+    static const double cached = [] {
+        const char *env = std::getenv("PAWN_MIRROR_LAMBDA");
+        if (!env) return 1e-8;
+        char *endp = nullptr;
+        double v = std::strtod(env, &endp);
+        return (endp == env) ? 1e-8 : v;
+    }();
+    return cached;
+}
+
+// Sum of squared file-mirror differences across the pawn PST. Skips
+// the back ranks (forced zero). Each pair contributes once.
+static double pawnMirrorPenalty() {
+    double total = 0.0;
+    auto sqr = [](double x) { return x * x; };
+    for (int rank = 1; rank <= 6; rank++) {
+        for (int file = 0; file < 4; file++) {
+            int sq = rank * 8 + file;
+            int mirror = rank * 8 + (7 - file);
+            total += sqr(mg_value(evalParams.PawnPST[sq]) -
+                         mg_value(evalParams.PawnPST[mirror]));
+            total += sqr(eg_value(evalParams.PawnPST[sq]) -
+                         eg_value(evalParams.PawnPST[mirror]));
+        }
+    }
+    return total;
+}
+
+// Sum of squared differences between adjacent squares in every PST,
+// scaled by per piece weights. Adjacency for the pawn 64-entry PST
+// is the standard 8x8 grid (rank +/- 1 same file, or file +/- 1 same
+// rank). Adjacency for the 32-entry half-board PSTs is over (rank,
+// fileIdx) where fileIdx in [0..3]. Only the rank 2..7 region of the
+// pawn PST is walked because the back ranks are forced to zero.
+static double pstSmoothnessPenalty() {
+    double total = 0.0;
+
+    auto sqr = [](double x) { return x * x; };
+
+    // Pawn full-board (skip rank 0 and rank 7; both are forced zero).
+    for (int rank = 1; rank <= 6; rank++) {
+        for (int file = 0; file < 8; file++) {
+            int sq = rank * 8 + file;
+            if (file < 7) {
+                int neighbour = sq + 1;
+                int rankNeighbour = neighbour / 8;
+                if (rankNeighbour >= 1 && rankNeighbour <= 6) {
+                    total += PstSmoothMg[Pawn] *
+                             sqr(mg_value(evalParams.PawnPST[sq]) -
+                                 mg_value(evalParams.PawnPST[neighbour]));
+                    total += PstSmoothEg[Pawn] *
+                             sqr(eg_value(evalParams.PawnPST[sq]) -
+                                 eg_value(evalParams.PawnPST[neighbour]));
+                }
+            }
+            if (rank < 6) {
+                int neighbour = sq + 8;
+                total += PstSmoothMg[Pawn] *
+                         sqr(mg_value(evalParams.PawnPST[sq]) -
+                             mg_value(evalParams.PawnPST[neighbour]));
+                total += PstSmoothEg[Pawn] *
+                         sqr(eg_value(evalParams.PawnPST[sq]) -
+                             eg_value(evalParams.PawnPST[neighbour]));
+            }
+        }
+    }
+
+    // Non-pawn half-board PSTs: index = (rank << 2) | fileIdx where
+    // fileIdx in [0..3]. Adjacency over the half-board grid.
+    auto walkHalfBoard = [&](const Score *pst, int pieceType) {
+        const double wmg = PstSmoothMg[pieceType];
+        const double weg = PstSmoothEg[pieceType];
+        for (int rank = 0; rank < 8; rank++) {
+            for (int fIdx = 0; fIdx < 4; fIdx++) {
+                int idx = (rank << 2) | fIdx;
+                if (fIdx < 3) {
+                    int neighbour = idx + 1;
+                    total += wmg * sqr(mg_value(pst[idx]) - mg_value(pst[neighbour]));
+                    total += weg * sqr(eg_value(pst[idx]) - eg_value(pst[neighbour]));
+                }
+                if (rank < 7) {
+                    int neighbour = idx + 4;
+                    total += wmg * sqr(mg_value(pst[idx]) - mg_value(pst[neighbour]));
+                    total += weg * sqr(eg_value(pst[idx]) - eg_value(pst[neighbour]));
+                }
+            }
+        }
+    };
+    walkHalfBoard(evalParams.KnightPST, Knight);
+    walkHalfBoard(evalParams.BishopPST, Bishop);
+    walkHalfBoard(evalParams.RookPST, Rook);
+    walkHalfBoard(evalParams.QueenPST, Queen);
+    walkHalfBoard(evalParams.KingPST, King);
+
+    return total;
+}
+
+// Pure data MSE. The inner loop walks an explicit index list when one
+// is supplied so the train and val partitions can each take their own
+// loss without touching the other half of the corpus. Positions here
+// already hold qsearch-resolved leaf boards, so we only need a static
+// evaluate(). The pawn and material hashes are thread_local: each
+// std::thread spawned below gets a fresh empty table on first use and
+// destroys it on exit, so no clearing is needed and no two threads
+// ever touch the same hash entry. That removes the race that
+// previously sat under our 1e-8 acceptance threshold.
+static double computeDataLoss(const std::vector<LabeledPosition> &positions, double K,
+                              int numThreads,
+                              const std::vector<size_t> *indices = nullptr) {
+    size_t n = indices ? indices->size() : positions.size();
+    if (n == 0) return 0.0;
     std::vector<double> partial(numThreads, 0.0);
+    std::vector<double> partialWeight(numThreads, 0.0);
     std::vector<std::thread> threads;
     threads.reserve(numThreads);
     for (int t = 0; t < numThreads; t++) {
@@ -623,8 +1069,10 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
         size_t end = (n * (t + 1)) / numThreads;
         threads.emplace_back([&, start, end, t]() {
             double sum = 0.0;
+            double sumWeight = 0.0;
             for (size_t i = start; i < end; i++) {
-                Board board = positions[i].board;
+                size_t pi = indices ? (*indices)[i] : i;
+                Board board = positions[pi].board;
                 int raw = evaluate(board);
                 // evaluate returns side-to-move relative; convert to
                 // White POV so the tuner can compare to the White-POV
@@ -633,34 +1081,273 @@ static double computeLoss(const std::vector<LabeledPosition> &positions, double 
                 // during qsearch.
                 if (board.sideToMove == Black) raw = -raw;
                 double pred = sigmoid(static_cast<double>(raw), K);
-                double err = pred - positions[i].result;
-                sum += err * err;
+                double err = pred - positions[pi].result;
+                double w = positions[pi].weight;
+                sum += w * err * err;
+                sumWeight += w;
             }
             partial[t] = sum;
+            partialWeight[t] = sumWeight;
         });
     }
     for (auto &th : threads)
         th.join();
     double total = 0.0;
-    for (double p : partial)
-        total += p;
-    return total / static_cast<double>(n);
+    double totalWeight = 0.0;
+    for (int t = 0; t < numThreads; t++) {
+        total += partial[t];
+        totalWeight += partialWeight[t];
+    }
+    // assignGameWeights renormalises the corpus so the sum of weights
+    // equals position count, but legacy corpora and edge cases may
+    // leave totalWeight at zero; fall back to position count.
+    return totalWeight > 0.0 ? total / totalWeight : total / static_cast<double>(n);
 }
 
-// Replace each training position's root board with its qsearch-resolved
-// leaf so the loss loop can use a fast static evaluate() call. Runs
-// sequentially because qsearchLeafBoard clears and rewrites the global
-// TT per position.
-static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThreads) {
-    std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions on "
-              << numThreads << " threads...\n";
+// Total loss including the parameter-only PST smoothness and pawn
+// mirror priors. Used for the training-side accept gate so that a step
+// which makes the data loss slightly worse but reduces an outsize
+// regulariser by enough to net out is still allowed -- the priors are
+// designed to shape parameters, not just measure them.
+//
+// PST_SMOOTH_LAMBDA / PAWN_MIRROR_LAMBDA env vars control the prior
+// strength without rebuilding. The regularisers are constant over the
+// corpus (parameter-only) so they cancel out of any indices-based
+// difference; we still include them so the training loss stays in the
+// same units regardless of which slice it is computed on.
+static double computeLoss(const std::vector<LabeledPosition> &positions, double K,
+                          int numThreads,
+                          const std::vector<size_t> *indices = nullptr) {
+    double dataLoss = computeDataLoss(positions, K, numThreads, indices);
+    double regLoss = pstSmoothLambda() * pstSmoothnessPenalty();
+    regLoss += pawnMirrorLambda() * pawnMirrorPenalty();
+    return dataLoss + regLoss;
+}
+
+// Phase increments mirror the engine's `GamePhaseInc` (see eval.cpp)
+// so the reporter buckets val positions by the same opening / middle /
+// endgame definition the search uses.
+static const int TunerPhaseInc[7] = {0, 0, 1, 1, 2, 4, 0};
+
+// Compute the same `mgPhase` value the engine clamps to [0, 24]. Used
+// purely for val bucketing; the engine still does its own phase work
+// during evaluate().
+static int phaseFromBoard(const Board &board) {
+    int phase = 0;
+    for (int pt = Knight; pt <= Queen; pt++) {
+        phase += TunerPhaseInc[pt] * (board.pieceCount[White][pt] + board.pieceCount[Black][pt]);
+    }
+    return phase > 24 ? 24 : phase;
+}
+
+// Signed material delta from White's POV in pawn units. Used as a
+// rough material-imbalance bucket for the val reporter (sign tells us
+// who's ahead; magnitude buckets balanced / one-pawn / one-minor /
+// rook-or-better).
+static int materialDeltaCpFromBoard(const Board &board) {
+    static const int valueCp[7] = {0, 100, 320, 320, 500, 900, 0};
+    int delta = 0;
+    for (int pt = Pawn; pt <= Queen; pt++) {
+        delta += valueCp[pt] * (board.pieceCount[White][pt] - board.pieceCount[Black][pt]);
+    }
+    return delta;
+}
+
+// One bucket of (weight, weighted MSE numerator, count). Buckets merge
+// over threads by simple field-wise add.
+struct BucketStat {
+    double sumWeight = 0.0;
+    double sumWErr2 = 0.0;
+    size_t count = 0;
+    void operator+=(const BucketStat &o) {
+        sumWeight += o.sumWeight;
+        sumWErr2 += o.sumWErr2;
+        count += o.count;
+    }
+    double meanLoss() const { return sumWeight > 0.0 ? sumWErr2 / sumWeight : 0.0; }
+};
+
+// Categorical bucket buckets for the val reporter. Indices are kept
+// stable so the log lines stay machine-greppable.
+namespace bucket {
+constexpr int PhaseOpen = 0; // mgPhase >= 18
+constexpr int PhaseMid = 1;  // 8 <= mgPhase < 18
+constexpr int PhaseEnd = 2;  // mgPhase < 8
+constexpr int PhaseN = 3;
+
+constexpr int ResultWin = 0;  // 1.0
+constexpr int ResultDraw = 1; // 0.5
+constexpr int ResultLoss = 2; // 0.0
+constexpr int ResultN = 3;
+
+// Material delta from White's POV in cp:
+//   < -300  : down a minor or worse
+//   [-300, -50] : down a pawn-ish (pawn or fragmentary)
+//   [-50, 50]   : balanced (within +/- half a pawn)
+//   [50, 300]   : up a pawn-ish
+//   > 300       : up a minor or better
+constexpr int MatDownMinor = 0;
+constexpr int MatDownPawn = 1;
+constexpr int MatBalanced = 2;
+constexpr int MatUpPawn = 3;
+constexpr int MatUpMinor = 4;
+constexpr int MatN = 5;
+
+// Eval magnitude buckets in cp (post side-to-move flip, White POV):
+//   <= -300, (-300, 0], (0, 300], > 300
+constexpr int EvalDeep = 0;     // <= -300
+constexpr int EvalNegSmall = 1; // (-300, 0]
+constexpr int EvalPosSmall = 2; // (0, 300]
+constexpr int EvalDeepPos = 3;  // > 300
+constexpr int EvalN = 4;
+} // namespace bucket
+
+// Per-pass bucketed val reporter. Walks the val partition once,
+// classifying each position by phase, result, signed material delta,
+// and signed eval magnitude. Output goes to std::cerr in a stable
+// machine-greppable layout so the log can be diffed pass over pass.
+//
+// Uses the same threaded loop pattern as computeDataLoss so per-pass
+// overhead scales with thread count. Heavy lambda body but the loop
+// is bound by static evaluate() so the wins are linear.
+//
+// Returns the overall val loss (data MSE on the held-out slice). The
+// val gate uses this number directly, so the bucketed walk doubles
+// as the gate's val measurement -- one pass over the slice instead
+// of two.
+static double reportValidation(const std::vector<LabeledPosition> &positions,
+                               const std::vector<size_t> &valIndices, double K, int numThreads,
+                               double trainLoss, int globalPass, const std::string &tag) {
+    if (valIndices.empty()) return 0.0;
+    const size_t n = valIndices.size();
+    struct ThreadAcc {
+        std::array<BucketStat, bucket::PhaseN> phase{};
+        std::array<BucketStat, bucket::ResultN> result{};
+        std::array<BucketStat, bucket::MatN> material{};
+        std::array<BucketStat, bucket::EvalN> evalMag{};
+        BucketStat overall{};
+    };
+    std::vector<ThreadAcc> tacc(numThreads);
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++) {
+        size_t start = (n * t) / numThreads;
+        size_t end = (n * (t + 1)) / numThreads;
+        threads.emplace_back([&, start, end, t]() {
+            auto &acc = tacc[t];
+            for (size_t i = start; i < end; i++) {
+                size_t pi = valIndices[i];
+                const auto &lp = positions[pi];
+                Board board = lp.board;
+                int raw = evaluate(board);
+                if (board.sideToMove == Black) raw = -raw;
+                double pred = sigmoid(static_cast<double>(raw), K);
+                double err = pred - lp.result;
+                double w = lp.weight;
+                double w_err2 = w * err * err;
+                BucketStat sample{w, w_err2, 1};
+                acc.overall += sample;
+
+                int phase = phaseFromBoard(board);
+                int phaseIdx;
+                if (phase >= 18) phaseIdx = bucket::PhaseOpen;
+                else if (phase >= 8) phaseIdx = bucket::PhaseMid;
+                else phaseIdx = bucket::PhaseEnd;
+                acc.phase[phaseIdx] += sample;
+
+                int resultIdx;
+                if (lp.result > 0.75) resultIdx = bucket::ResultWin;
+                else if (lp.result < 0.25) resultIdx = bucket::ResultLoss;
+                else resultIdx = bucket::ResultDraw;
+                acc.result[resultIdx] += sample;
+
+                int matDelta = materialDeltaCpFromBoard(board);
+                int matIdx;
+                if (matDelta < -300) matIdx = bucket::MatDownMinor;
+                else if (matDelta < -50) matIdx = bucket::MatDownPawn;
+                else if (matDelta <= 50) matIdx = bucket::MatBalanced;
+                else if (matDelta <= 300) matIdx = bucket::MatUpPawn;
+                else matIdx = bucket::MatUpMinor;
+                acc.material[matIdx] += sample;
+
+                int evalIdx;
+                if (raw <= -300) evalIdx = bucket::EvalDeep;
+                else if (raw <= 0) evalIdx = bucket::EvalNegSmall;
+                else if (raw <= 300) evalIdx = bucket::EvalPosSmall;
+                else evalIdx = bucket::EvalDeepPos;
+                acc.evalMag[evalIdx] += sample;
+            }
+        });
+    }
+    for (auto &th : threads)
+        th.join();
+
+    ThreadAcc total;
+    for (int t = 0; t < numThreads; t++) {
+        for (int i = 0; i < bucket::PhaseN; i++) total.phase[i] += tacc[t].phase[i];
+        for (int i = 0; i < bucket::ResultN; i++) total.result[i] += tacc[t].result[i];
+        for (int i = 0; i < bucket::MatN; i++) total.material[i] += tacc[t].material[i];
+        for (int i = 0; i < bucket::EvalN; i++) total.evalMag[i] += tacc[t].evalMag[i];
+        total.overall += tacc[t].overall;
+    }
+
+    auto fmt = [](const BucketStat &b) {
+        std::ostringstream os;
+        os << b.meanLoss() << "(" << b.count << ")";
+        return os.str();
+    };
+
+    std::cerr << "  " << tag << " pass " << globalPass << " train_loss=" << trainLoss
+              << " val_loss=" << total.overall.meanLoss() << "\n";
+    std::cerr << "    by_phase open=" << fmt(total.phase[bucket::PhaseOpen])
+              << " mid=" << fmt(total.phase[bucket::PhaseMid])
+              << " end=" << fmt(total.phase[bucket::PhaseEnd]) << "\n";
+    std::cerr << "    by_result win=" << fmt(total.result[bucket::ResultWin])
+              << " draw=" << fmt(total.result[bucket::ResultDraw])
+              << " loss=" << fmt(total.result[bucket::ResultLoss]) << "\n";
+    std::cerr << "    by_material down_minor=" << fmt(total.material[bucket::MatDownMinor])
+              << " down_pawn=" << fmt(total.material[bucket::MatDownPawn])
+              << " balanced=" << fmt(total.material[bucket::MatBalanced])
+              << " up_pawn=" << fmt(total.material[bucket::MatUpPawn])
+              << " up_minor=" << fmt(total.material[bucket::MatUpMinor]) << "\n";
+    std::cerr << "    by_eval [<=-300]=" << fmt(total.evalMag[bucket::EvalDeep])
+              << " [-300,0]=" << fmt(total.evalMag[bucket::EvalNegSmall])
+              << " [0,300]=" << fmt(total.evalMag[bucket::EvalPosSmall])
+              << " [>300]=" << fmt(total.evalMag[bucket::EvalDeepPos]) << "\n";
+    return total.overall.meanLoss();
+}
+
+// Replace each training position's root board with its quiet leaf so
+// the loss loop can use a fast static evaluate() call. Two modes:
+//
+//   leafDepth = 0 : pure qsearch leaf (existing default). Handles
+//                   capture chains but cannot see one-ply tactics.
+//   leafDepth > 0 : run a fixed-depth alpha-beta search and follow
+//                   the PV to its terminal, then qsearch from there.
+//                   Resolves more tactical noise (Andrew-Grant style
+//                   PV-terminal corpus) at the cost of a noticeably
+//                   longer precompute -- a depth-6 walk over 5M
+//                   positions on 14 threads is several minutes on
+//                   top of the qsearch-only baseline.
+//
+// Both modes use thread_local TTs inside the leaf function so the
+// outer worker pool can run concurrently without contention.
+static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThreads,
+                             int leafDepth = 0) {
+    if (leafDepth > 0) {
+        std::cerr << "precomputing PV-terminal leaves (depth=" << leafDepth << ") for "
+                  << positions.size() << " positions on " << numThreads << " threads...\n";
+    } else {
+        std::cerr << "precomputing qsearch leaves for " << positions.size() << " positions on "
+                  << numThreads << " threads...\n";
+    }
     resetQsearchLeafCounters();
 
     // Workers share an atomic cursor so any uneven per-position cost
     // (some leaves walk a long capture chain, others stand-pat at the
     // root) load-balances naturally. Each worker has its own
-    // thread_local TT inside qsearchLeafBoard, so there is no
-    // contention on the table itself.
+    // thread_local TT inside qsearchLeafBoard / pvLeafBoard, so there
+    // is no contention on the table itself.
     std::atomic<size_t> nextIndex{0};
     std::atomic<size_t> nextReport{50000};
     const size_t total = positions.size();
@@ -669,7 +1356,9 @@ static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThr
         while (true) {
             size_t i = nextIndex.fetch_add(1, std::memory_order_relaxed);
             if (i >= total) break;
-            positions[i].board = qsearchLeafBoard(positions[i].board);
+            positions[i].board = leafDepth > 0
+                                     ? pvLeafBoard(positions[i].board, leafDepth)
+                                     : qsearchLeafBoard(positions[i].board);
             size_t threshold = nextReport.load(std::memory_order_relaxed);
             if (i + 1 >= threshold) {
                 if (nextReport.compare_exchange_strong(threshold, threshold + 50000)) {
@@ -692,16 +1381,19 @@ static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThr
               << stats.cappedIterations << " hit iteration cap\n";
 }
 
-static double findBestK(const std::vector<LabeledPosition> &positions, int numThreads) {
+static double findBestK(const std::vector<LabeledPosition> &positions, int numThreads,
+                        const std::vector<size_t> *indices = nullptr) {
     // Golden-section-style bracket search. Internal scale is ~228 per
     // pawn, so K in the range [0.0005, 0.01] covers the plausible span
-    // of Texel scaling constants.
+    // of Texel scaling constants. When `indices` is non-null the fit
+    // runs on the training partition only so the val slice never
+    // contributes to the sigmoid scale.
     double lo = 0.0005, hi = 0.02;
     for (int iter = 0; iter < 40; iter++) {
         double m1 = lo + (hi - lo) / 3.0;
         double m2 = hi - (hi - lo) / 3.0;
-        double l1 = computeLoss(positions, m1, numThreads);
-        double l2 = computeLoss(positions, m2, numThreads);
+        double l1 = computeLoss(positions, m1, numThreads, indices);
+        double l2 = computeLoss(positions, m2, numThreads, indices);
         if (l1 < l2)
             hi = m2;
         else
@@ -1137,8 +1829,9 @@ static bool choleskySolveSymmetric(std::vector<double> &A, std::vector<double> &
 // repeated engine evaluations of the same corpus.
 static double computeLossFromFeatures(const std::vector<LabeledPosition> &positions,
                                       const CorpusFeatures &cf, const std::vector<int> &theta,
-                                      double K, int numThreads) {
-    const size_t N = positions.size();
+                                      double K, int numThreads,
+                                      const std::vector<size_t> *indices = nullptr) {
+    const size_t N = indices ? indices->size() : positions.size();
     const size_t P = theta.size();
 
     std::vector<int> deltaTheta(P);
@@ -1146,6 +1839,7 @@ static double computeLossFromFeatures(const std::vector<LabeledPosition> &positi
         deltaTheta[j] = theta[j] - cf.theta0[j];
 
     std::vector<double> partial(numThreads, 0.0);
+    std::vector<double> partialWeight(numThreads, 0.0);
     std::vector<std::thread> threads;
     threads.reserve(numThreads);
     for (int t = 0; t < numThreads; t++) {
@@ -1153,23 +1847,31 @@ static double computeLossFromFeatures(const std::vector<LabeledPosition> &positi
         size_t end = (N * (t + 1)) / numThreads;
         threads.emplace_back([&, start, end, t]() {
             double sum = 0.0;
+            double sumWeight = 0.0;
             for (size_t i = start; i < end; i++) {
-                int64_t eval = cf.baseline[i];
-                for (const auto &fe : cf.rows[i])
+                size_t pi = indices ? (*indices)[i] : i;
+                int64_t eval = cf.baseline[pi];
+                for (const auto &fe : cf.rows[pi])
                     eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
                 double pred = sigmoid(static_cast<double>(eval), K);
-                double err = pred - positions[i].result;
-                sum += err * err;
+                double err = pred - positions[pi].result;
+                double w = positions[pi].weight;
+                sum += w * err * err;
+                sumWeight += w;
             }
             partial[t] = sum;
+            partialWeight[t] = sumWeight;
         });
     }
     for (auto &th : threads)
         th.join();
     double total = 0.0;
-    for (double p : partial)
-        total += p;
-    return total / static_cast<double>(N);
+    double totalWeight = 0.0;
+    for (int t = 0; t < numThreads; t++) {
+        total += partial[t];
+        totalWeight += partialWeight[t];
+    }
+    return totalWeight > 0.0 ? total / totalWeight : total / static_cast<double>(N);
 }
 
 // One full Gauss-Newton iteration over the parameter vector. With
@@ -1195,8 +1897,9 @@ static double computeLossFromFeatures(const std::vector<LabeledPosition> &positi
 // otherwise.
 static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
                               const CorpusFeatures &cf, std::vector<ParamRef> &params, double K,
-                              int numThreads, double &bestLoss) {
-    const size_t N = positions.size();
+                              int numThreads, double &bestLoss,
+                              const std::vector<size_t> *trainIndices = nullptr) {
+    const size_t N = trainIndices ? trainIndices->size() : positions.size();
     const size_t P = params.size();
 
     constexpr int maxStepPerParam = 32;
@@ -1227,15 +1930,21 @@ static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
                 auto &JtJ = threadJtJ[t];
                 auto &Jtr = threadJtr[t];
                 for (size_t i = start; i < end; i++) {
-                    int64_t eval = cf.baseline[i];
-                    const auto &row = cf.rows[i];
+                    size_t pi = trainIndices ? (*trainIndices)[i] : i;
+                    int64_t eval = cf.baseline[pi];
+                    const auto &row = cf.rows[pi];
                     for (const auto &fe : row)
                         eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
                     double pred = sigmoid(static_cast<double>(eval), K);
-                    double residual = pred - positions[i].result;
+                    double residual = pred - positions[pi].result;
                     double sigprime = pred * (1.0 - pred);
-                    double weightR = K * sigprime * residual;
-                    double weightH = K * K * sigprime * sigprime;
+                    double w = positions[pi].weight;
+                    // Per-position weights enter the weighted least-
+                    // squares normal equations symmetrically: each
+                    // residual contributes w * sigprime^2 * f f^T to
+                    // J^T J and w * sigprime * residual * f to J^T r.
+                    double weightR = w * K * sigprime * residual;
+                    double weightH = w * K * K * sigprime * sigprime;
                     const size_t M = row.size();
                     for (size_t a = 0; a < M; a++) {
                         int idxA = row[a].paramIdx;
@@ -1306,7 +2015,7 @@ static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
     static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
     for (double scale : backtrackScales) {
         applyScaled(scale);
-        double L = computeLoss(positions, K, numThreads);
+        double L = computeLoss(positions, K, numThreads, trainIndices);
         if (L0 - L > acceptThreshold) {
             bestLoss = L;
             std::cerr << "  gauss-newton accepted scale=" << scale << " loss=" << L << "\n";
@@ -1336,7 +2045,8 @@ static double gaussNewtonPass(const std::vector<LabeledPosition> &positions,
 // `bestLoss` in place when an improvement is accepted.
 static double newtonPass(std::vector<LabeledPosition> &positions,
                          std::vector<ParamRef> &params, double K, int numThreads,
-                         double &bestLoss) {
+                         double &bestLoss,
+                         const std::vector<size_t> *trainIndices = nullptr) {
     constexpr int delta = 1;             // finite-difference step size
     constexpr int maxStep = 16;          // per-parameter clip
     constexpr double minHessian = 1e-12; // floor for Newton division
@@ -1361,11 +2071,11 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
         double Lm = L0;
         if (canPlus) {
             p.write(orig + delta);
-            Lp = computeLoss(positions, K, numThreads);
+            Lp = computeLoss(positions, K, numThreads, trainIndices);
         }
         if (canMinus) {
             p.write(orig - delta);
-            Lm = computeLoss(positions, K, numThreads);
+            Lm = computeLoss(positions, K, numThreads, trainIndices);
         }
         p.write(orig); // restore for the next parameter and the line search
 
@@ -1409,7 +2119,7 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
     static const std::array<double, 3> backtrackScales = {1.0, 0.5, 0.25};
     for (double scale : backtrackScales) {
         applyScaled(scale);
-        double L = computeLoss(positions, K, numThreads);
+        double L = computeLoss(positions, K, numThreads, trainIndices);
         if (L0 - L > acceptThreshold) {
             bestLoss = L;
             std::cerr << "  newton accepted scale=" << scale << " loss=" << L << "\n";
@@ -1421,18 +2131,592 @@ static double newtonPass(std::vector<LabeledPosition> &positions,
     return 0.0;
 }
 
+// Adam optimiser state. We carry a real-valued shadow parameter vector
+// because Adam updates are sub-cp by design and the integer params
+// would otherwise round most of them to zero. The shadow vector is
+// rounded to integers, written to params, projected to constraints,
+// then synced back so the next epoch sees the in-bounds values.
+struct AdamState {
+    std::vector<double> theta;  // real-valued shadow params
+    std::vector<double> m;      // first moment, size P
+    std::vector<double> v;      // second moment, size P
+    int t = 0;                  // step counter for bias correction
+};
+
+// One full-batch Adam epoch over the cached corpus features. Computes
+// the gradient of the data MSE in parallel across `numThreads` workers
+// (each with a P-sized local accumulator, merged serially), applies a
+// bias-corrected Adam update to the shadow theta, rounds + writes the
+// integer params, projects onto the constraint region, and resyncs the
+// shadow theta from the projected values.
+//
+// Concurrency: per-thread P-sized gradient accumulator (~6 KB at P=791,
+// fits in L1). Final merge is O(P * numThreads), negligible compared
+// to the O(N * sparse-features) main loop. Loss + total weight are
+// reduced in the same pass to avoid a second corpus walk.
+//
+// Why no regulariser gradient: Gauss-Newton's normal equations don't
+// include the regulariser either, and at our default lambdas
+// (1e-9 / 1e-8) the data MSE gradient dominates by 6+ orders of
+// magnitude. Keeping Adam pure-data-gradient lets it converge
+// alongside GN consistently, and the next CD ladder cleans up any
+// residual regulariser-driven motion.
+//
+// Returns relative loss decrease; updates `bestLoss` in place.
+static double adamEpoch(std::vector<LabeledPosition> &positions, const CorpusFeatures &cf,
+                        std::vector<ParamRef> &params, AdamState &adam, double K, int numThreads,
+                        double lr, double beta1, double beta2, double eps, double &bestLoss,
+                        const std::vector<size_t> *trainIndices = nullptr) {
+    const size_t N = trainIndices ? trainIndices->size() : positions.size();
+    const size_t P = params.size();
+
+    adam.t++;
+    const double L0 = bestLoss;
+
+    // Build deltaTheta in feature-cache units. We round the shadow
+    // theta to integers before forming deltaTheta so the linearised
+    // eval matches what an integer-rounded write+evaluate would give.
+    std::vector<int> deltaTheta(P);
+    for (size_t p = 0; p < P; p++) {
+        int rounded = static_cast<int>(std::lround(adam.theta[p]));
+        deltaTheta[p] = rounded - cf.theta0[p];
+    }
+
+    // Threaded gradient + loss accumulation. Each worker walks its
+    // slice and accumulates into a private gradient vector + scalar
+    // loss / weight totals.
+    std::vector<std::vector<double>> threadGrad(numThreads, std::vector<double>(P, 0.0));
+    std::vector<double> threadLoss(numThreads, 0.0);
+    std::vector<double> threadWeight(numThreads, 0.0);
+    {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            size_t start = (N * t) / numThreads;
+            size_t end = (N * (t + 1)) / numThreads;
+            threads.emplace_back([&, start, end, t]() {
+                auto &grad = threadGrad[t];
+                double lossSum = 0.0;
+                double weightSum = 0.0;
+                for (size_t i = start; i < end; i++) {
+                    size_t pi = trainIndices ? (*trainIndices)[i] : i;
+                    int64_t eval = cf.baseline[pi];
+                    const auto &row = cf.rows[pi];
+                    for (const auto &fe : row)
+                        eval += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                    double pred = sigmoid(static_cast<double>(eval), K);
+                    double residual = pred - positions[pi].result;
+                    double sigprime = pred * (1.0 - pred);
+                    double w = positions[pi].weight;
+                    lossSum += w * residual * residual;
+                    weightSum += w;
+                    // Gradient contribution: partial of (w * residual^2)
+                    // with respect to theta_p is 2 * w * residual *
+                    // K * sigprime * coef_p. We omit the leading 2 to
+                    // mirror the Gauss-Newton residual scaling, which
+                    // means the effective Adam learning rate is in
+                    // GN-comparable units.
+                    double scale = K * sigprime * residual * w;
+                    for (const auto &fe : row) {
+                        grad[fe.paramIdx] += scale * static_cast<double>(fe.coef);
+                    }
+                }
+                threadLoss[t] = lossSum;
+                threadWeight[t] = weightSum;
+            });
+        }
+        for (auto &th : threads)
+            th.join();
+    }
+
+    std::vector<double> grad(P, 0.0);
+    double dataLoss = 0.0;
+    double totalWeight = 0.0;
+    for (int t = 0; t < numThreads; t++) {
+        const auto &g = threadGrad[t];
+        for (size_t p = 0; p < P; p++)
+            grad[p] += g[p];
+        dataLoss += threadLoss[t];
+        totalWeight += threadWeight[t];
+    }
+    if (totalWeight > 0.0) {
+        const double inv = 1.0 / totalWeight;
+        dataLoss *= inv;
+        for (size_t p = 0; p < P; p++)
+            grad[p] *= inv;
+    } else if (N > 0) {
+        const double inv = 1.0 / static_cast<double>(N);
+        dataLoss *= inv;
+        for (size_t p = 0; p < P; p++)
+            grad[p] *= inv;
+    }
+
+    // Adam update with bias correction. The two precomputed factors
+    // (1 - beta^t) approach 1 quickly; for small t they keep the
+    // first-step magnitude calibrated.
+    const double oneMinusBeta1T = 1.0 - std::pow(beta1, adam.t);
+    const double oneMinusBeta2T = 1.0 - std::pow(beta2, adam.t);
+    const double biasInv1 = oneMinusBeta1T > 0.0 ? 1.0 / oneMinusBeta1T : 1.0;
+    const double biasInv2 = oneMinusBeta2T > 0.0 ? 1.0 / oneMinusBeta2T : 1.0;
+    for (size_t p = 0; p < P; p++) {
+        adam.m[p] = beta1 * adam.m[p] + (1.0 - beta1) * grad[p];
+        adam.v[p] = beta2 * adam.v[p] + (1.0 - beta2) * grad[p] * grad[p];
+        double mHat = adam.m[p] * biasInv1;
+        double vHat = adam.v[p] * biasInv2;
+        adam.theta[p] -= lr * mHat / (std::sqrt(vHat) + eps);
+    }
+
+    // Round, write, project, resync. Projection may snap chain entries
+    // and slope-cap violators; we copy the projected integer values
+    // back into the shadow theta so the next epoch's linearization
+    // and Adam state stay consistent with the in-bounds parameters.
+    for (size_t p = 0; p < P; p++) {
+        int newVal = static_cast<int>(std::lround(adam.theta[p]));
+        params[p].write(params[p].clampToBounds(newVal));
+    }
+    projectToConstraints(params);
+    for (size_t p = 0; p < P; p++) {
+        adam.theta[p] = static_cast<double>(params[p].read());
+    }
+
+    // Total loss includes the parameter-only regulariser so the val
+    // gate's bestLoss tracking stays in the same units used by
+    // computeLoss elsewhere in the tuner.
+    double regLoss = pstSmoothLambda() * pstSmoothnessPenalty();
+    regLoss += pawnMirrorLambda() * pawnMirrorPenalty();
+    double totalLoss = dataLoss + regLoss;
+    bestLoss = totalLoss;
+
+    return L0 > 0.0 ? (L0 - totalLoss) / L0 : 0.0;
+}
+
+// ============================================================================
+// Feature-cached coordinate descent
+//
+// Standard CD calls computeLoss() per step attempt -- a full corpus walk
+// (~240ms on 14 threads / 11M positions). With the corpus feature cache we
+// can do ~80x better on sparse params and ~5-10x better in aggregate by:
+//
+//   1. Maintaining per-position cached state: eval[i] (current eval),
+//      residual[i] = sigmoid(K*eval[i]) - target[i], plus the global
+//      data MSE that those residuals sum to.
+//   2. Building an inverted index (param -> list of positions whose
+//      feature row contains that param, plus the per-pair coef).
+//   3. For a CD step on param p with delta d, only the positions in
+//      paramPositions[p] need recomputation -- their eval shifts by
+//      d * coef, residual is recomputed, and the per-position weighted
+//      err^2 contribution to the MSE is updated incrementally.
+//   4. The regulariser is recomputed in full each step (cheap; just
+//      walks PST cells, no corpus pass), since one PST cell change
+//      perturbs every adjacent-pair / mirror-pair it participates in.
+//
+// Memory: inverted index is ~6 bytes per (position, feature) pair using
+// SoA. For an 11M-position corpus with ~100 features each, that's ~7 GB.
+// We free cf.rows immediately after the index is built so peak memory
+// during the GN/Adam->CD transition stays bounded by max(cf.rows,
+// inverted-index) plus eval/residual state (~200 MB).
+//
+// Concurrency: the inner loop over paramPositions[p] is threaded across
+// `numThreads` workers when |positions(p)| is large enough to amortize
+// thread setup overhead (~50 us). Below the threshold we go
+// single-threaded since per-call cost is already < 1 ms. The state
+// arrays are only written for accepted steps and the writes never
+// overlap across threads (each thread owns a contiguous slice of the
+// inverted index for the current param), so there are no locks or
+// atomics anywhere in the hot path.
+
+struct CDInvertedIndex {
+    // CSR-style layout. For param p, the active (position, coef) pairs
+    // live in [rowStart[p], rowStart[p+1]) inside `positions` /
+    // `coefs`. Indexed positions are train-slice-relative (0..nTrain).
+    std::vector<uint64_t> rowStart;  // size = numParams + 1
+    std::vector<uint32_t> positions; // train-slice indices
+    std::vector<int16_t> coefs;
+};
+
+struct CDFeatureState {
+    size_t nTrain = 0;
+    double K = 0.0;
+
+    // Per-train-slice cached state. Each is size nTrain.
+    std::vector<double> eval;       // current eval = baseline + sum(delta_theta * coef)
+    std::vector<double> residual;   // sigmoid(K * eval) - target
+    std::vector<double> targets;    // result label per train position
+    std::vector<double> weights;    // assignGameWeights output
+
+    double totalWeight = 0.0;
+    double dataLoss = 0.0;          // weighted MSE over train
+    double regLoss = 0.0;           // PST smoothness + pawn mirror
+    double totalLoss = 0.0;         // dataLoss + regLoss
+
+    CDInvertedIndex inv;
+};
+
+// Build the inverted index from cf.rows over the train slice. Two-pass
+// CSR construction: first pass counts entries per param to size the
+// flat arrays; second pass fills them via a writePos cursor per param.
+// Both passes are serial -- index build is one-time and 5 sec single-
+// threaded on the 11M-position corpus is fine.
+static void buildInvertedIndex(CDInvertedIndex &inv, const CorpusFeatures &cf,
+                               const std::vector<size_t> &trainIndices, size_t numParams) {
+    const size_t nTrain = trainIndices.size();
+    inv.rowStart.assign(numParams + 1, 0);
+
+    for (size_t i = 0; i < nTrain; i++) {
+        const auto &row = cf.rows[trainIndices[i]];
+        for (const auto &fe : row) {
+            inv.rowStart[fe.paramIdx + 1]++;
+        }
+    }
+    for (size_t p = 0; p < numParams; p++) {
+        inv.rowStart[p + 1] += inv.rowStart[p];
+    }
+    const uint64_t totalEntries = inv.rowStart[numParams];
+    inv.positions.assign(totalEntries, 0);
+    inv.coefs.assign(totalEntries, 0);
+
+    std::vector<uint64_t> writePos = inv.rowStart;
+    for (size_t i = 0; i < nTrain; i++) {
+        const auto &row = cf.rows[trainIndices[i]];
+        for (const auto &fe : row) {
+            uint64_t w = writePos[fe.paramIdx]++;
+            inv.positions[w] = static_cast<uint32_t>(i);
+            inv.coefs[w] = fe.coef;
+        }
+    }
+}
+
+// Initialize the per-position eval/residual cache from cf.baseline +
+// the current parameter values. Threaded over the train slice; each
+// worker walks a contiguous range and accumulates into a private
+// loss / weight pair, merged serially.
+static void initCDFeatureState(CDFeatureState &state, const std::vector<LabeledPosition> &positions,
+                               const CorpusFeatures &cf, std::vector<ParamRef> &params, double K,
+                               int numThreads, const std::vector<size_t> &trainIndices) {
+    const size_t nTrain = trainIndices.size();
+    const size_t P = params.size();
+
+    state.nTrain = nTrain;
+    state.K = K;
+    state.eval.assign(nTrain, 0.0);
+    state.residual.assign(nTrain, 0.0);
+    state.targets.assign(nTrain, 0.0);
+    state.weights.assign(nTrain, 0.0);
+
+    std::vector<int> deltaTheta(P);
+    for (size_t p = 0; p < P; p++) {
+        deltaTheta[p] = params[p].read() - cf.theta0[p];
+    }
+
+    std::vector<double> partialLoss(numThreads, 0.0);
+    std::vector<double> partialWeight(numThreads, 0.0);
+    std::vector<std::thread> threads;
+    threads.reserve(numThreads);
+    for (int t = 0; t < numThreads; t++) {
+        size_t start = (nTrain * t) / numThreads;
+        size_t end = (nTrain * (t + 1)) / numThreads;
+        threads.emplace_back([&, start, end, t]() {
+            double sumLoss = 0.0;
+            double sumWeight = 0.0;
+            for (size_t i = start; i < end; i++) {
+                size_t pi = trainIndices[i];
+                int64_t evalI = cf.baseline[pi];
+                for (const auto &fe : cf.rows[pi])
+                    evalI += static_cast<int64_t>(deltaTheta[fe.paramIdx]) * fe.coef;
+                double evalF = static_cast<double>(evalI);
+                state.eval[i] = evalF;
+                double pred = sigmoid(evalF, K);
+                double target = positions[pi].result;
+                state.targets[i] = target;
+                double res = pred - target;
+                state.residual[i] = res;
+                double w = positions[pi].weight;
+                state.weights[i] = w;
+                sumLoss += w * res * res;
+                sumWeight += w;
+            }
+            partialLoss[t] = sumLoss;
+            partialWeight[t] = sumWeight;
+        });
+    }
+    for (auto &th : threads)
+        th.join();
+
+    state.totalWeight = 0.0;
+    state.dataLoss = 0.0;
+    for (int t = 0; t < numThreads; t++) {
+        state.dataLoss += partialLoss[t];
+        state.totalWeight += partialWeight[t];
+    }
+    if (state.totalWeight > 0.0) {
+        state.dataLoss /= state.totalWeight;
+    } else if (nTrain > 0) {
+        state.dataLoss /= static_cast<double>(nTrain);
+    }
+    state.regLoss = pstSmoothLambda() * pstSmoothnessPenalty();
+    state.regLoss += pawnMirrorLambda() * pawnMirrorPenalty();
+    state.totalLoss = state.dataLoss + state.regLoss;
+}
+
+// Try a CD step on `paramIdx` with `delta` cp added to the live
+// parameter (the caller has already done `param.write(new_value)`).
+// Computes the proposed new total loss using only the positions in
+// the inverted index for this param; if the improvement clears the
+// caller's threshold, commits the per-position eval/residual updates
+// and returns true. On rejection, leaves state unchanged and returns
+// false; the caller restores the parameter via `param.write(original)`.
+//
+// Threading: when the param touches more than `kThreadingThreshold`
+// positions the inner loops are split across `numThreads`. Below that
+// threshold the thread setup overhead dominates so we go
+// single-threaded.
+static bool cdFeatureTryStep(CDFeatureState &state, int paramIdx, int delta, double threshold,
+                             int numThreads) {
+    const auto &inv = state.inv;
+    const uint64_t lo = inv.rowStart[paramIdx];
+    const uint64_t hi = inv.rowStart[paramIdx + 1];
+    const uint64_t span = hi - lo;
+    constexpr uint64_t kThreadingThreshold = 100000;
+    const double K = state.K;
+    const double *targets = state.targets.data();
+    const double *weights = state.weights.data();
+    const uint32_t *invPos = inv.positions.data();
+    const int16_t *invCoef = inv.coefs.data();
+    double *evalArr = state.eval.data();
+    double *resArr = state.residual.data();
+
+    auto computeDelta = [&](uint64_t s, uint64_t e) -> double {
+        double sum = 0.0;
+        for (uint64_t k = s; k < e; k++) {
+            uint32_t i = invPos[k];
+            double newEval = evalArr[i] + static_cast<double>(delta) * invCoef[k];
+            double newPred = sigmoid(newEval, K);
+            double newRes = newPred - targets[i];
+            sum += weights[i] * (newRes * newRes - resArr[i] * resArr[i]);
+        }
+        return sum;
+    };
+    auto applyCommit = [&](uint64_t s, uint64_t e) {
+        for (uint64_t k = s; k < e; k++) {
+            uint32_t i = invPos[k];
+            evalArr[i] += static_cast<double>(delta) * invCoef[k];
+            resArr[i] = sigmoid(evalArr[i], K) - targets[i];
+        }
+    };
+
+    double deltaWErr2 = 0.0;
+    if (span < kThreadingThreshold || numThreads <= 1) {
+        deltaWErr2 = computeDelta(lo, hi);
+    } else {
+        std::vector<double> partial(numThreads, 0.0);
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            uint64_t s = lo + (span * t) / numThreads;
+            uint64_t e = lo + (span * (t + 1)) / numThreads;
+            threads.emplace_back([&, s, e, t]() { partial[t] = computeDelta(s, e); });
+        }
+        for (auto &th : threads)
+            th.join();
+        for (double p : partial)
+            deltaWErr2 += p;
+    }
+
+    const double newDataLoss = state.dataLoss + deltaWErr2 / state.totalWeight;
+    const double newRegLoss = pstSmoothLambda() * pstSmoothnessPenalty()
+                              + pawnMirrorLambda() * pawnMirrorPenalty();
+    const double newTotalLoss = newDataLoss + newRegLoss;
+
+    if (state.totalLoss - newTotalLoss <= threshold) {
+        return false;
+    }
+
+    if (span < kThreadingThreshold || numThreads <= 1) {
+        applyCommit(lo, hi);
+    } else {
+        std::vector<std::thread> threads;
+        threads.reserve(numThreads);
+        for (int t = 0; t < numThreads; t++) {
+            uint64_t s = lo + (span * t) / numThreads;
+            uint64_t e = lo + (span * (t + 1)) / numThreads;
+            threads.emplace_back([&, s, e]() { applyCommit(s, e); });
+        }
+        for (auto &th : threads)
+            th.join();
+    }
+
+    state.dataLoss = newDataLoss;
+    state.regLoss = newRegLoss;
+    state.totalLoss = newTotalLoss;
+    return true;
+}
+
+// Resync the eval/residual cache from current params after an event
+// that wrote params outside of `cdFeatureTryStep` -- gauge centering
+// (PSTs shifted by complementary constants, eval is bit-identical so
+// state.eval would still be correct in theory but rounding makes it
+// safer to reinit), constraint projection that snapped chain
+// violators, etc. Cheap: one threaded pass over the train slice. The
+// inverted index is unchanged.
+static void resyncCDFeatureState(CDFeatureState &state,
+                                 const std::vector<LabeledPosition> &positions,
+                                 const CorpusFeatures &cf, std::vector<ParamRef> &params,
+                                 int numThreads, const std::vector<size_t> &trainIndices) {
+    initCDFeatureState(state, positions, cf, params, state.K, numThreads, trainIndices);
+}
+
 static void tune(std::vector<LabeledPosition> &positions, double K, int numThreads,
                  int maxPasses, int refitKEvery, int refreshLeavesEvery, int newtonPasses,
-                 bool useGaussNewton) {
+                 bool useGaussNewton, int adamEpochs, double adamLr,
+                 const std::vector<size_t> &trainIndices,
+                 const std::vector<size_t> &valIndices,
+                 int valGateWarmup, int valGatePatience, bool valGateEnabled,
+                 int leafDepth) {
     auto params = collectParams();
-    std::cerr << "tuning " << params.size() << " scalars across " << positions.size()
-              << " positions with " << numThreads << " threads, K=" << K << "\n";
+    const std::vector<size_t> *trainPtr = trainIndices.empty() ? nullptr : &trainIndices;
+    const std::vector<size_t> *valPtr = valIndices.empty() ? nullptr : &valIndices;
+    std::cerr << "tuning " << params.size() << " scalars across "
+              << (trainPtr ? trainIndices.size() : positions.size())
+              << " train positions";
+    if (valPtr) std::cerr << " (" << valIndices.size() << " val held out)";
+    std::cerr << " with " << numThreads << " threads, K=" << K << "\n";
+    if (valPtr) {
+        if (valGateEnabled) {
+            std::cerr << "val gate: on, warmup=" << valGateWarmup
+                      << " passes, patience=" << valGatePatience
+                      << " consecutive non-improvements\n";
+        } else {
+            std::cerr << "val gate: off (diagnostics only)\n";
+        }
+    }
 
     projectToConstraints(params);
     validateConstraints(params);
 
-    double bestLoss = computeLoss(positions, K, numThreads);
-    std::cerr << "initial loss: " << bestLoss << "\n";
+    double bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+
+    auto snapshotParams = [&]() {
+        std::vector<int> snap(params.size());
+        for (size_t i = 0; i < params.size(); i++) snap[i] = params[i].read();
+        return snap;
+    };
+    auto restoreParams = [&](const std::vector<int> &snap) {
+        for (size_t i = 0; i < params.size(); i++) params[i].write(snap[i]);
+    };
+
+    // Best-val tracking. We never revert mid-run -- coordinate descent
+    // is deterministic given the params, so a mid-run revert would
+    // just replay the same step ladder and revert again. Instead we
+    // remember the param vector at the lowest val loss seen so far,
+    // let training continue (so a noisy bad pass cannot prematurely
+    // stop the trajectory), and at the end of tune() restore the
+    // final params to the best-val snapshot. That captures the most
+    // generalising point along the trajectory rather than wherever
+    // the run happened to terminate.
+    double bestValLoss = std::numeric_limits<double>::infinity();
+    std::vector<int> bestValSnapshot;
+    int noValImprovement = 0;
+    if (valPtr) {
+        bestValLoss = computeDataLoss(positions, K, numThreads, valPtr);
+        bestValSnapshot = snapshotParams();
+    }
+    std::cerr << "initial loss: " << bestLoss;
+    if (valPtr) std::cerr << " val_loss=" << bestValLoss;
+    std::cerr << "\n";
+
+    // Bucketed val report; returns the overall val loss so the caller
+    // can feed the gate without paying the per-position pass twice.
+    auto reportVal = [&](const std::string &tag, int pass) -> double {
+        if (!valPtr) return 0.0;
+        return reportValidation(positions, valIndices, K, numThreads, bestLoss, pass, tag);
+    };
+
+    // Best-val accept gate. Three cases per pass:
+    //
+    //   * Val improved (new minimum): update bestValLoss and snapshot
+    //     the current params as the best-val state. Reset the
+    //     consecutive-non-improvement counter. Also write a
+    //     `checkpoint_bestval.txt` so the operator has an on-disk
+    //     copy of the best-val state if the run is interrupted.
+    //   * Val did not improve: log the counter and let training
+    //     continue. We do NOT revert the pass, because mid-run
+    //     reverts replay the same deterministic CD step ladder and
+    //     just produce the same regression next pass. Other
+    //     parameters in the same pass might genuinely have improved
+    //     even if the aggregate val measurement happened to land
+    //     above the previous best -- not chopping them off lets the
+    //     trajectory continue exploring.
+    //   * Patience exceeded (post-warmup, `noValImprovement >=
+    //     patience`): break the loop. The end-of-tune handler will
+    //     restore params to the best-val snapshot regardless of
+    //     where the loop exits.
+    //
+    // Returns the (possibly overridden) `improved` flag the outer
+    // loop should believe: true if training should continue, false
+    // if patience hit.
+    auto applyValGate = [&](double valLoss, int pass, const std::string &tag,
+                            bool improved) -> bool {
+        if (!valPtr || !valGateEnabled) return improved;
+        if (valLoss < bestValLoss * (1.0 - 1e-6)) {
+            bestValLoss = valLoss;
+            bestValSnapshot = snapshotParams();
+            noValImprovement = 0;
+            std::cerr << "  " << tag << " pass " << pass
+                      << " new best val_loss=" << valLoss << "\n";
+            writeCheckpoint("tuning/checkpoint_bestval.txt", params);
+            return improved;
+        }
+        if (pass < valGateWarmup) return improved;
+        noValImprovement++;
+        std::cerr << "  " << tag << " pass " << pass
+                  << " no val improvement (" << noValImprovement << "/"
+                  << valGatePatience << " toward patience limit, best_val_loss="
+                  << bestValLoss << ")\n";
+        if (noValImprovement >= valGatePatience) {
+            std::cerr << "  " << tag << " pass " << pass
+                      << " val gate stop: " << valGatePatience
+                      << " consecutive passes without val improvement\n";
+            return false;
+        }
+        return improved;
+    };
+
+    // Reset the patience counter at the start of each phase. GN /
+    // Newton / CD-ladder / CD-finalizer each explore the loss
+    // landscape differently, so a phase that exhausts patience
+    // without progress should not pre-empt the next phase from
+    // running at all.
+    auto resetPatience = [&]() { noValImprovement = 0; };
+
+    // Rebase bestValLoss after a K refit or leaf refresh. Both events
+    // deliberately reshape the loss surface (sigmoid scale change for
+    // K refit, eval-target redistribution for leaf refresh), so the
+    // existing bestValLoss scalar -- measured under the old surface
+    // -- is no longer a valid baseline for the patience gate. Without
+    // a rebase, the very first post-refresh val measurement looks
+    // worse than the stale baseline by construction, the patience
+    // counter trips immediately, and the rest of the tune is wasted.
+    //
+    // We re-evaluate bestValLoss by temporarily restoring
+    // bestValSnapshot (the params at the historical best val), so the
+    // new baseline reflects how that same snapshot scores under the
+    // new K and new leaves -- preserving the "is the current point
+    // better than the historical best?" semantics across the surface
+    // shift. The patience counter is reset because the previous
+    // non-improvements were measured against the obsolete baseline.
+    //
+    // No-op when val tracking is off, the gate is disabled, or no
+    // best snapshot has been recorded yet.
+    auto rebaseBestValLoss = [&](const std::string &reason) {
+        if (!valPtr || !valGateEnabled || bestValSnapshot.empty()) return;
+        std::vector<int> live = snapshotParams();
+        restoreParams(bestValSnapshot);
+        bestValLoss = computeDataLoss(positions, K, numThreads, valPtr);
+        restoreParams(live);
+        noValImprovement = 0;
+        std::cerr << "  rebased bestValLoss=" << bestValLoss
+                  << " (after " << reason << ", patience reset)\n";
+    };
 
     // Optional Newton-style initial phase. Two flavors share the same
     // pass-count budget and the same K-refit / leaf-refresh cadences:
@@ -1455,17 +2739,32 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     // drops below 1e-6. After Newton-style passes finish, the
     // coordinate-descent ladder below picks up any residual.
     int globalPass = 0;
+    // Feature cache shared across the Gauss-Newton and Adam phases.
+    // Extracted lazily by whichever phase runs first; reused by the
+    // other if both run (the common case under default flags).
+    CorpusFeatures cf;
+    bool cfInitialized = false;
     if (newtonPasses > 0 && useGaussNewton) {
         std::cerr << "gauss-newton phase: up to " << newtonPasses << " passes\n";
-        CorpusFeatures cf = extractCorpusFeatures(positions, params, numThreads);
+        cf = extractCorpusFeatures(positions, params, numThreads);
+        cfInitialized = true;
+        resetPatience();
         int stalled = 0;
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
             std::cerr << "gauss-newton pass " << globalPass << " starting (loss=" << bestLoss
                       << ")\n";
-            double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss);
+            double rel = gaussNewtonPass(positions, cf, params, K, numThreads, bestLoss, trainPtr);
             centerPSTGauge();
             std::cerr << "gauss-newton pass " << globalPass << " done, loss=" << bestLoss
                       << " rel-improvement=" << rel << "\n";
+            double valLoss = reportVal("gauss-newton", globalPass);
+            bool improved = rel >= 1e-6;
+            improved = applyValGate(valLoss, globalPass, "gauss-newton", improved);
+            // If the gate signalled patience-exhaustion, treat as a
+            // stalled pass for the train-side convergence check too
+            // so the existing "two stalled passes -> exit" path runs
+            // in lockstep with the val gate.
+            if (!improved) rel = 0.0;
             writeCheckpoint("tuning/checkpoint.txt", params);
 
             if (rel < 1e-6) {
@@ -1482,18 +2781,20 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
                 std::cerr << "refit K after gauss-newton pass " << globalPass << "\n";
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("K refit");
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after gauss-newton pass " << globalPass << "\n";
-                precomputeLeaves(positions, numThreads);
+                precomputeLeaves(positions, numThreads, leafDepth);
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "post-refresh K " << oldK << " -> " << K
                           << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("leaf refresh");
                 // Re-extract features against the new qsearch leaves.
                 // Without this the Newton step would optimize against
                 // stale linearizations.
@@ -1502,13 +2803,18 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         }
     } else if (newtonPasses > 0) {
         std::cerr << "newton phase: up to " << newtonPasses << " passes\n";
+        resetPatience();
         int stalled = 0;
         for (int pass = 0; pass < newtonPasses; pass++, globalPass++) {
             std::cerr << "newton pass " << globalPass << " starting (loss=" << bestLoss << ")\n";
-            double rel = newtonPass(positions, params, K, numThreads, bestLoss);
+            double rel = newtonPass(positions, params, K, numThreads, bestLoss, trainPtr);
             centerPSTGauge();
             std::cerr << "newton pass " << globalPass << " done, loss=" << bestLoss
                       << " rel-improvement=" << rel << "\n";
+            double valLoss = reportVal("newton", globalPass);
+            bool improved = rel >= 1e-6;
+            improved = applyValGate(valLoss, globalPass, "newton", improved);
+            if (!improved) rel = 0.0;
             writeCheckpoint("tuning/checkpoint.txt", params);
 
             if (rel < 1e-6) {
@@ -1524,18 +2830,120 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
                 std::cerr << "refit K after newton pass " << globalPass << "\n";
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("K refit");
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after newton pass " << globalPass << "\n";
-                precomputeLeaves(positions, numThreads);
+                precomputeLeaves(positions, numThreads, leafDepth);
                 double oldK = K;
-                K = findBestK(positions, numThreads);
-                bestLoss = computeLoss(positions, K, numThreads);
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "post-refresh K " << oldK << " -> " << K
                           << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("leaf refresh");
+                // Diagonal Newton doesn't keep a feature cache, so any
+                // staleness flag the Adam phase set is moot here -- but
+                // if Adam runs after this loop it will need a fresh
+                // extract.
+                cfInitialized = false;
+            }
+        }
+    }
+
+    // Adam fine-tuning over the cached features. Runs after the
+    // Newton-style phase (when configured) and before coordinate
+    // descent. The conventional modern HCE Texel approach (Andrew
+    // Grant's Tune for Ethereal, Berserk, etc.): once GN has settled
+    // into a coarse minimum, Adam takes ~10x more iterations at ~100x
+    // less cost-per-iteration than CD, hitting sub-cp residuals that
+    // CD would otherwise grind out one parameter at a time.
+    //
+    // Each epoch is one full-batch pass through the train slice with
+    // a single bias-corrected Adam update applied at the end. The val
+    // gate runs once per epoch (consistent with GN / CD), so the
+    // existing patience + best-val-restore semantics apply.
+    if (adamEpochs > 0) {
+        if (!cfInitialized) {
+            cf = extractCorpusFeatures(positions, params, numThreads);
+            cfInitialized = true;
+        }
+        const size_t P = params.size();
+        AdamState adam;
+        adam.theta.resize(P);
+        adam.m.assign(P, 0.0);
+        adam.v.assign(P, 0.0);
+        adam.t = 0;
+        for (size_t p = 0; p < P; p++) {
+            adam.theta[p] = static_cast<double>(params[p].read());
+        }
+
+        std::cerr << "adam phase: up to " << adamEpochs << " epochs at lr=" << adamLr << "\n";
+        resetPatience();
+        int stalled = 0;
+        constexpr double kBeta1 = 0.9;
+        constexpr double kBeta2 = 0.999;
+        constexpr double kEps = 1e-8;
+        for (int epoch = 0; epoch < adamEpochs; epoch++, globalPass++) {
+            double rel = adamEpoch(positions, cf, params, adam, K, numThreads, adamLr,
+                                   kBeta1, kBeta2, kEps, bestLoss, trainPtr);
+            centerPSTGauge();
+            // centerPSTGauge() shifts integer PSTs by complementary
+            // constants; pull the new values into the shadow theta so
+            // the next epoch's gradient is computed against the
+            // gauge-centered state.
+            for (size_t p = 0; p < P; p++)
+                adam.theta[p] = static_cast<double>(params[p].read());
+
+            std::cerr << "adam epoch " << globalPass << " done, loss=" << bestLoss
+                      << " rel-improvement=" << rel << "\n";
+            double valLoss = reportVal("adam", globalPass);
+            bool improved = rel >= 1e-7;
+            improved = applyValGate(valLoss, globalPass, "adam", improved);
+            if (!improved) rel = 0.0;
+            writeCheckpoint("tuning/checkpoint.txt", params);
+
+            if (rel < 1e-7) {
+                if (++stalled >= 4) {
+                    std::cerr << "adam convergence; switching to coordinate descent\n";
+                    epoch++;
+                    globalPass++;
+                    break;
+                }
+            } else {
+                stalled = 0;
+            }
+
+            // Optional periodic K refit, mirroring the GN / Newton /
+            // CD cadence. Adam itself doesn't refit K; we leave it to
+            // the operator's `--refit-k-every` to keep K aligned with
+            // the moving params, with the rebase helper handling the
+            // val gate side.
+            if (refitKEvery > 0 && (epoch + 1) % refitKEvery == 0) {
+                std::cerr << "refit K after adam epoch " << globalPass << "\n";
+                double oldK = K;
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+                std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("K refit");
+            }
+            if (refreshLeavesEvery > 0 && (epoch + 1) % refreshLeavesEvery == 0) {
+                std::cerr << "refresh leaves after adam epoch " << globalPass << "\n";
+                precomputeLeaves(positions, numThreads, leafDepth);
+                double oldK = K;
+                K = findBestK(positions, numThreads, trainPtr);
+                bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+                std::cerr << "post-refresh K " << oldK << " -> " << K
+                          << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("leaf refresh");
+                // New leaves invalidate the linearization the feature
+                // cache was extracted around; re-extract before the
+                // next Adam epoch.
+                cf = extractCorpusFeatures(positions, params, numThreads);
+                for (size_t p = 0; p < P; p++)
+                    adam.theta[p] = static_cast<double>(params[p].read());
             }
         }
     }
@@ -1561,6 +2969,50 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     const double relThresholdDeterministic = 1e-8;
     static const std::array<int, 4> stepLadder = {8, 4, 2, 1};
 
+    // Feature-cached CD state. Built once before the CD ladder and
+    // reused across both the ladder and the finalizer. Replaces the
+    // full-corpus computeLoss() per step attempt with an O(|positions
+    // touching this param|) delta-loss computation -- ~5-10x speedup
+    // in aggregate, ~80x for sparse params.
+    //
+    // We use the feature cache only when it's available (Gauss-Newton
+    // or Adam ran beforehand and we have a populated cf). For the
+    // legacy path where neither phase is configured, the cache is
+    // built on-demand below; that costs one extra
+    // extractCorpusFeatures call (~5 min on the full corpus) but
+    // pays back many times over in CD speedup.
+    if (!cfInitialized) {
+        cf = extractCorpusFeatures(positions, params, numThreads);
+        cfInitialized = true;
+    }
+    // Resolve the train slice once. When the corpus has no
+    // train/val split (`trainPtr == nullptr`) we fall back to an
+    // identity index over the full corpus so the rest of the cached
+    // path can treat the slice uniformly.
+    std::vector<size_t> identityTrain;
+    auto cdSliceRef = [&]() -> const std::vector<size_t> & {
+        if (trainPtr) return trainIndices;
+        if (identityTrain.empty()) {
+            identityTrain.resize(positions.size());
+            for (size_t i = 0; i < positions.size(); i++) identityTrain[i] = i;
+        }
+        return identityTrain;
+    };
+    CDFeatureState cdState;
+    {
+        const std::vector<size_t> &slice = cdSliceRef();
+        std::cerr << "building CD feature cache (" << slice.size() << " train positions x "
+                  << params.size() << " params)\n";
+        buildInvertedIndex(cdState.inv, cf, slice, params.size());
+        std::cerr << "  inverted index: " << cdState.inv.positions.size()
+                  << " (position, coef) entries\n";
+        initCDFeatureState(cdState, positions, cf, params, K, numThreads, slice);
+        // Sanity: cdState.totalLoss should match the bestLoss the
+        // val gate / Newton phases computed via the engine path. Any
+        // drift here would be a feature-cache bug, not a tuner bug.
+        bestLoss = cdState.totalLoss;
+    }
+
     // Per-pass body. Returns true iff at least one scalar moved. The
     // log line format is identical to the prior strict CPW output so
     // `--replay` keeps reconstructing checkpoints from a tune.log
@@ -1577,35 +3029,38 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             for (int step : stepLadder) {
                 if (p.allow(original + step)) {
                     p.write(original + step);
-                    double loss = computeLoss(positions, K, passNumThreads);
-                    if (bestLoss - loss > threshold) {
-                        bestLoss = loss;
+                    if (cdFeatureTryStep(cdState, static_cast<int>(pi), step, threshold,
+                                         passNumThreads)) {
+                        bestLoss = cdState.totalLoss;
                         improved = true;
                         accepted = true;
                         std::cerr << "  pass " << pass << " " << p.name << ": " << original
                                   << " -> " << (original + step) << " loss=" << bestLoss << "\n";
                         break;
                     }
+                    p.write(original);
                 }
                 if (p.allow(original - step)) {
                     p.write(original - step);
-                    double loss = computeLoss(positions, K, passNumThreads);
-                    if (bestLoss - loss > threshold) {
-                        bestLoss = loss;
+                    if (cdFeatureTryStep(cdState, static_cast<int>(pi), -step, threshold,
+                                         passNumThreads)) {
+                        bestLoss = cdState.totalLoss;
                         improved = true;
                         accepted = true;
                         std::cerr << "  pass " << pass << " " << p.name << ": " << original
                                   << " -> " << (original - step) << " loss=" << bestLoss << "\n";
                         break;
                     }
+                    p.write(original);
                 }
             }
 
-            if (!accepted) p.write(original);
+            (void)accepted;
         }
         return improved;
     };
 
+    resetPatience();
     for (int pass = 0; pass < maxPasses; pass++, globalPass++) {
         bool improved = runPass(globalPass, numThreads, relThresholdThreaded);
         // Canonicalize PST/material gauge so the per-term values stay
@@ -1614,6 +3069,8 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         centerPSTGauge();
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
+        double valLoss = reportVal("cd", globalPass);
+        improved = applyValGate(valLoss, globalPass, "cd", improved);
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
 
@@ -1625,9 +3082,16 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         if (refitKEvery > 0 && (pass + 1) % refitKEvery == 0) {
             std::cerr << "refit K after pass " << globalPass << "\n";
             double oldK = K;
-            K = findBestK(positions, numThreads);
-            bestLoss = computeLoss(positions, K, numThreads);
+            K = findBestK(positions, numThreads, trainPtr);
+            bestLoss = computeLoss(positions, K, numThreads, trainPtr);
             std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            rebaseBestValLoss("K refit");
+            // K refit changes the sigmoid scale, so every cached
+            // residual in the CD state is wrong under the new K.
+            // Resync rebuilds eval / residual / dataLoss from scratch
+            // -- cheap (one threaded corpus walk).
+            initCDFeatureState(cdState, positions, cf, params, K, numThreads, cdSliceRef());
+            bestLoss = cdState.totalLoss;
         }
 
         // Periodic leaf refresh: qsearch's path through stand-pat and
@@ -1638,13 +3102,21 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         // precompute over the whole corpus), so default off.
         if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
             std::cerr << "refresh leaves after pass " << globalPass << "\n";
-            precomputeLeaves(positions, numThreads);
+            precomputeLeaves(positions, numThreads, leafDepth);
             // Re-fit K against the new leaves and rebase loss.
             double oldK = K;
-            K = findBestK(positions, numThreads);
-            bestLoss = computeLoss(positions, K, numThreads);
+            K = findBestK(positions, numThreads, trainPtr);
+            bestLoss = computeLoss(positions, K, numThreads, trainPtr);
             std::cerr << "post-refresh K " << oldK << " -> " << K << ", rebased loss=" << bestLoss
                       << "\n";
+            rebaseBestValLoss("leaf refresh");
+            // New leaves invalidate cf (the linearization was around
+            // the old leaves) and the CD state. Re-extract cf, rebuild
+            // the inverted index, and resync state from scratch.
+            cf = extractCorpusFeatures(positions, params, numThreads);
+            buildInvertedIndex(cdState.inv, cf, cdSliceRef(), params.size());
+            initCDFeatureState(cdState, positions, cf, params, K, numThreads, cdSliceRef());
+            bestLoss = cdState.totalLoss;
         }
     }
 
@@ -1660,8 +3132,13 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     // valid.
     std::cerr << "tight-threshold finalizer at " << relThresholdDeterministic
               << " (numThreads=" << numThreads << ")\n";
-    bestLoss = computeLoss(positions, K, numThreads);
+    // The CD state's totalLoss is already authoritative for the
+    // current params (incrementally maintained through every accepted
+    // step in the ladder). Reuse it instead of paying for another
+    // full-corpus computeLoss().
+    bestLoss = cdState.totalLoss;
     std::cerr << "finalizer baseline loss: " << bestLoss << "\n";
+    resetPatience();
     for (int finalPass = 0; finalPass < maxPasses; finalPass++, globalPass++) {
         bool improved = runPass(globalPass, numThreads, relThresholdDeterministic);
         // Canonicalize PST/material gauge so the per-term values stay
@@ -1670,8 +3147,38 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
         centerPSTGauge();
         std::cerr << "pass " << globalPass << " done, loss=" << bestLoss
                   << (improved ? " (improved)" : " (no change)") << "\n";
+        double valLoss = reportVal("cd-final", globalPass);
+        improved = applyValGate(valLoss, globalPass, "cd-final", improved);
         writeCheckpoint("tuning/checkpoint.txt", params);
         if (!improved) break;
+    }
+
+    // End-of-tune: restore the param vector to the best-val snapshot
+    // we observed along the trajectory, re-center the gauge, and
+    // overwrite the live checkpoint so the dump that follows reflects
+    // the most-generalising point rather than wherever the last pass
+    // happened to land. No-op when val tracking was off (legacy
+    // pipeline) or when the very first val measurement was the best
+    // (params already match the snapshot).
+    if (valPtr && valGateEnabled && !bestValSnapshot.empty()) {
+        bool needsRestore = false;
+        for (size_t i = 0; i < params.size(); i++) {
+            if (params[i].read() != bestValSnapshot[i]) {
+                needsRestore = true;
+                break;
+            }
+        }
+        if (needsRestore) {
+            restoreParams(bestValSnapshot);
+            centerPSTGauge();
+            bestLoss = computeLoss(positions, K, numThreads, trainPtr);
+            std::cerr << "tune complete: restored params to best-val snapshot, val_loss="
+                      << bestValLoss << " train_loss=" << bestLoss << "\n";
+            writeCheckpoint("tuning/checkpoint.txt", params);
+        } else {
+            std::cerr << "tune complete: final params already match best-val snapshot, val_loss="
+                      << bestValLoss << "\n";
+        }
     }
 }
 
@@ -1888,6 +3395,14 @@ static void printCurrentValues() {
               << ", // SliderOnQueenBishop\n";
     std::cout << "    " << fmtScore(evalParams.SliderOnQueenRook) << ", // SliderOnQueenRook\n";
     std::cout << "    " << fmtScore(evalParams.RestrictedPiece) << ", // RestrictedPiece\n";
+    std::cout << "    " << fmtScore(evalParams.ThreatByPawnPush) << ", // ThreatByPawnPush\n";
+    std::cout << "    " << fmtScore(evalParams.WeakQueenDefender) << ", // WeakQueenDefender\n";
+    std::cout << "    " << fmtScore(evalParams.KnightOnQueen) << ", // KnightOnQueen\n";
+    std::cout << "    " << fmtScore(evalParams.PawnlessFlank) << ", // PawnlessFlank\n";
+    std::cout << "    " << fmtScore(evalParams.QueenInfiltration) << ", // QueenInfiltration\n";
+    std::cout << "    " << fmtScore(evalParams.KingPawnDistEg) << ", // KingPawnDistEg\n";
+    std::cout << "    " << fmtScore(evalParams.KBNKCornerEg) << ", // KBNKCornerEg\n";
+    std::cout << "    " << fmtScore(evalParams.LucenaEg) << ", // LucenaEg\n";
     std::cout << "};\n";
 }
 
@@ -1898,6 +3413,9 @@ int main(int argc, char **argv) {
         std::cerr << "usage: tune [--from <ckpt>] [--refit-k-every N] "
                      "[--refresh-leaves-every N]\n";
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
+        std::cerr << "            [--adam-epochs N] [--adam-lr X]\n";
+        std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--val-gate-patience N]\n";
+        std::cerr << "            [--no-val-gate] [--leaf-depth N]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
@@ -1946,10 +3464,64 @@ int main(int argc, char **argv) {
     // Optional flag prefixes before the positional <dataset> arg. Each
     // is independently optional and order-insensitive among themselves.
     std::string fromCheckpoint;
-    int refitKEvery = 5;        // refit K every N completed passes; 0 disables
+    int refitKEvery = 0;        // refit K every N completed passes; 0 disables
     int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
     int newtonPasses = 0;       // run N Newton-style passes before CD; 0 disables
     bool useGaussNewton = true; // true: Gauss-Newton, false: diagonal Newton
+    double valFraction = 0.10;  // game-id-based train / val split fraction
+    // Default warmup: VAL_GATE_WARMUP env var, else 5 passes. The
+    // warmup window lets the initial coarse moves settle before the
+    // gate's patience counter starts ticking on non-improving passes.
+    int valGateWarmup = [] {
+        const char *env = std::getenv("VAL_GATE_WARMUP");
+        if (!env) return 5;
+        char *endp = nullptr;
+        long v = std::strtol(env, &endp, 10);
+        return (endp == env) ? 5 : static_cast<int>(v);
+    }();
+    // Patience: number of consecutive post-warmup passes without val
+    // improvement before the loop breaks. Default 8 so a couple of
+    // noisy passes do not chop off real later improvements; the
+    // best-val snapshot is restored on exit regardless of where the
+    // loop terminated.
+    int valGatePatience = [] {
+        const char *env = std::getenv("VAL_GATE_PATIENCE");
+        if (!env) return 8;
+        char *endp = nullptr;
+        long v = std::strtol(env, &endp, 10);
+        return (endp == env) ? 8 : static_cast<int>(v);
+    }();
+    bool valGateEnabled = true;
+    // PV walk depth for the leaf precompute. Default 0 keeps the
+    // existing qsearch-only behaviour; positive values re-enter
+    // alpha-beta from the root and walk the PV to its terminal
+    // before falling into qsearch. Read once from CLI / env var so
+    // the operator does not have to recompile to swap modes.
+    int leafDepth = [] {
+        const char *env = std::getenv("LEAF_DEPTH");
+        if (!env) return 0;
+        char *endp = nullptr;
+        long v = std::strtol(env, &endp, 10);
+        return (endp == env) ? 0 : static_cast<int>(v);
+    }();
+    // Adam fine-tuning between GN and CD. Default 100 epochs at lr=1.0
+    // which is standard for Texel-style sparse-feature gradient
+    // optimisation; setting epochs=0 falls through directly from GN
+    // to CD (legacy behaviour).
+    int adamEpochs = [] {
+        const char *env = std::getenv("ADAM_EPOCHS");
+        if (!env) return 100;
+        char *endp = nullptr;
+        long v = std::strtol(env, &endp, 10);
+        return (endp == env) ? 100 : static_cast<int>(v);
+    }();
+    double adamLr = [] {
+        const char *env = std::getenv("ADAM_LR");
+        if (!env) return 1.0;
+        char *endp = nullptr;
+        double v = std::strtod(env, &endp);
+        return (endp == env) ? 1.0 : v;
+    }();
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -1967,6 +3539,27 @@ int main(int argc, char **argv) {
             argIdx += 2;
         } else if (a == "--gauss-newton" && argIdx + 1 < argc) {
             useGaussNewton = std::atoi(argv[argIdx + 1]) != 0;
+            argIdx += 2;
+        } else if (a == "--adam-epochs" && argIdx + 1 < argc) {
+            adamEpochs = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--adam-lr" && argIdx + 1 < argc) {
+            adamLr = std::atof(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--val-fraction" && argIdx + 1 < argc) {
+            valFraction = std::atof(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--val-gate-warmup" && argIdx + 1 < argc) {
+            valGateWarmup = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--val-gate-patience" && argIdx + 1 < argc) {
+            valGatePatience = std::atoi(argv[argIdx + 1]);
+            argIdx += 2;
+        } else if (a == "--no-val-gate") {
+            valGateEnabled = false;
+            argIdx += 1;
+        } else if (a == "--leaf-depth" && argIdx + 1 < argc) {
+            leafDepth = std::atoi(argv[argIdx + 1]);
             argIdx += 2;
         } else {
             break;
@@ -2005,15 +3598,141 @@ int main(int argc, char **argv) {
     std::cerr << "loading " << dataset << "...\n";
     auto positions = loadDataset(dataset);
     std::cerr << "loaded " << positions.size() << " positions\n";
+    // Per-game inverse weighting so a 250-ply draw stops out-voting a
+    // sharp 30-move win in coordinate descent. Renormalises the corpus
+    // so the sum of weights equals position count, keeping K refit and
+    // absolute loss numbers comparable to the unweighted pipeline.
+    // No-op (every weight stays 1.0) on legacy corpora that lack the
+    // game id metadata field.
+    assignGameWeights(positions);
 
-    precomputeLeaves(positions, numThreads);
+    // Held-out validation slice. Two paths:
+    //
+    //   1. **External master val** (preferred): if `VAL_EPD` is set or
+    //      the default file `tuning/val/master_positions.epd` exists,
+    //      load that as the entire val partition. The in-corpus
+    //      self-play stays wholly in train. This tests generalisation
+    //      to a *different distribution* (master games at unseen
+    //      strength), which catches overfitting that in-corpus splits
+    //      cannot -- e.g. an engine that systematically avoids 3.Nc3
+    //      in self-play has zero coverage of the resulting French
+    //      mainlines under any same-distribution split, but a master
+    //      val partition contains them by construction.
+    //
+    //   2. **In-corpus stratified split** (fallback): the (phase x
+    //      result) stratified split, used when no external val EPD is
+    //      available (no internet on first run, fetch script failed,
+    //      etc.). This still tests generalisation to *unseen games*
+    //      within the self-play distribution.
+    //
+    // valFraction <= 0 disables the in-corpus fallback's split (all
+    // positions go to train, val empty, gate off); external val is
+    // unaffected by valFraction.
+    std::vector<size_t> trainIndices;
+    std::vector<size_t> valIndices;
+
+    auto resolveValEpd = [](std::string &out) -> bool {
+        const char *env = std::getenv("VAL_EPD");
+        if (env && *env) {
+            out = env;
+            std::ifstream check(out);
+            return check.good();
+        }
+        // Default location populated by scripts/fetch_val_corpus.sh.
+        const std::string defaultPath = "tuning/val/master_positions.epd";
+        std::ifstream check(defaultPath);
+        if (check.good()) {
+            out = defaultPath;
+            return true;
+        }
+        return false;
+    };
+
+    std::string valEpdPath;
+    if (resolveValEpd(valEpdPath)) {
+        std::cerr << "loading external val corpus from " << valEpdPath << "...\n";
+        auto valCorpus = loadDataset(valEpdPath);
+        if (valCorpus.empty()) {
+            std::cerr << "warning: external val EPD at " << valEpdPath
+                      << " is empty; falling back to in-corpus stratified split\n";
+            auto split = splitCorpus(positions, valFraction, /*seed=*/0xc0ffeeULL);
+            trainIndices = std::move(split.first);
+            valIndices = std::move(split.second);
+        } else {
+            // Per-game inverse weighting on the val corpus so a 200-ply
+            // master draw doesn't out-vote a sharp 25-move tactical
+            // win inside the val partition. Game-ids in master corpora
+            // come from the extract pipeline; no-metadata legacy files
+            // get default weight 1.0 from loadDataset.
+            assignGameWeights(valCorpus);
+
+            const size_t valStart = positions.size();
+            positions.reserve(valStart + valCorpus.size());
+            for (auto &lp : valCorpus) {
+                positions.push_back(std::move(lp));
+            }
+
+            trainIndices.reserve(valStart);
+            for (size_t i = 0; i < valStart; i++) trainIndices.push_back(i);
+            valIndices.reserve(positions.size() - valStart);
+            for (size_t i = valStart; i < positions.size(); i++) valIndices.push_back(i);
+
+            std::cerr << "external val corpus: " << trainIndices.size()
+                      << " train (in-corpus self-play), " << valIndices.size()
+                      << " val (master positions, distribution-shift sanity check)\n";
+        }
+    } else {
+        std::cerr << "no external val corpus found; falling back to in-corpus "
+                     "stratified split (run scripts/fetch_val_corpus.sh to "
+                     "enable external val)\n";
+        auto split = splitCorpus(positions, valFraction, /*seed=*/0xc0ffeeULL);
+        trainIndices = std::move(split.first);
+        valIndices = std::move(split.second);
+    }
+
+    // Optional curated EPD pack. CURATED_EPD points to a small balanced
+    // position file (same `FEN | result` parser as the main corpus,
+    // game-id metadata not expected). Curated rows always go to the
+    // training set -- never the validation slice -- because the whole
+    // point is to bias the gradient toward positions the operator
+    // hand-selected. Per-position weight defaults to 5.0 so a 100-row
+    // pack punches above its row count without dominating a 5M
+    // corpus; CURATED_WEIGHT in the env raises or lowers that.
+    if (const char *curatedPath = std::getenv("CURATED_EPD")) {
+        if (*curatedPath) {
+            double curatedWeight = 5.0;
+            if (const char *wEnv = std::getenv("CURATED_WEIGHT")) {
+                char *endp = nullptr;
+                double v = std::strtod(wEnv, &endp);
+                if (endp != wEnv) curatedWeight = v;
+            }
+            std::cerr << "loading curated pack from " << curatedPath << "...\n";
+            auto curated = loadDataset(curatedPath);
+            const size_t baseIdx = positions.size();
+            for (auto &lp : curated) {
+                lp.gameIds.clear();
+                lp.weight = curatedWeight;
+                positions.push_back(std::move(lp));
+            }
+            for (size_t i = baseIdx; i < positions.size(); i++) {
+                trainIndices.push_back(i);
+            }
+            std::cerr << "loaded " << (positions.size() - baseIdx) << " curated positions"
+                      << ", weight=" << curatedWeight << " each (training only)\n";
+        }
+    }
+
+    precomputeLeaves(positions, numThreads, leafDepth);
 
     std::cerr << "finding K...\n";
-    double K = findBestK(positions, numThreads);
+    const std::vector<size_t> *trainPtr =
+        trainIndices.empty() ? nullptr : &trainIndices;
+    double K = findBestK(positions, numThreads, trainPtr);
     std::cerr << "K=" << K << "\n";
 
     tune(positions, K, numThreads, maxPasses, refitKEvery, refreshLeavesEvery, newtonPasses,
-         useGaussNewton);
+         useGaussNewton, adamEpochs, adamLr, trainIndices, valIndices, valGateWarmup,
+         valGatePatience, valGateEnabled, leafDepth);
     printCurrentValues();
     return 0;
 }

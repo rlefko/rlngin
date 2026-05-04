@@ -69,8 +69,8 @@ echo "  tune-threads:   $TUNE_THREADS"
 echo "  tune-passes:    $TUNE_PASSES"
 echo "  newton-passes:  ${NEWTON_PASSES:-10}"
 echo "  gauss-newton:   ${USE_GAUSS_NEWTON:-1}"
-echo "  refit-K:        every ${REFIT_K_EVERY:-4} pass(es)"
-echo "  refresh-leaves: every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
+echo "  refit-K:        every ${REFIT_K_EVERY:-0} pass(es)"
+echo "  refresh-leaves: every ${REFRESH_LEAVES_EVERY:-0} pass(es)"
 echo "  output:         $OUTPUT"
 echo "  force:          $FORCE"
 [ "$WAIT_PID" != "0" ] && echo "  wait-pid:       $WAIT_PID"
@@ -114,6 +114,35 @@ if [ "$FORCE" = "1" ] || [ ! -f "$EPD" ]; then
     echo "[$(stamp)] extract finished"
 else
     echo "[$(stamp)] $EPD exists; skipping extract (set FORCE=1 to redo)"
+fi
+
+# --- Stage 2.5: fetch external val corpus ---------------------------------
+#
+# Pulls a small master-games corpus from a public source (TWIC by
+# default; see scripts/fetch_val_corpus.sh) and parks it at
+# tuning/val/master_positions.epd. The tuner picks that file up
+# automatically and uses it as the entire val partition, replacing
+# the in-corpus stratified split. If the fetch fails (offline, 404,
+# rate limited, etc.) the tuner silently falls back to the in-corpus
+# split, so this stage is best-effort and never blocks the pipeline.
+
+VAL_EPD_DEFAULT="tuning/val/master_positions.epd"
+if [ -z "${VAL_EPD:-}" ]; then
+    if [ ! -f "$VAL_EPD_DEFAULT" ]; then
+        echo "[$(stamp)] fetching external master val corpus"
+        if ./scripts/fetch_val_corpus.sh; then
+            export VAL_EPD="$VAL_EPD_DEFAULT"
+            echo "[$(stamp)] external val corpus ready at $VAL_EPD"
+        else
+            echo "[$(stamp)] no external val corpus (offline or fetch failed); " \
+                 "falling back to in-corpus stratified val split"
+        fi
+    else
+        export VAL_EPD="$VAL_EPD_DEFAULT"
+        echo "[$(stamp)] reusing existing val corpus at $VAL_EPD"
+    fi
+else
+    echo "[$(stamp)] VAL_EPD set explicitly to $VAL_EPD"
 fi
 
 # --- Stage 3: tune --------------------------------------------------------
