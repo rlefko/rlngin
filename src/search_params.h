@@ -81,6 +81,11 @@ struct SearchParams {
     // sub-unit perturbations would never cross a reduction boundary.
     int LmrThreatEscape;
     int LmrThreatWalkIn;
+
+    // Pawn history dampening. The pawn-keyed quiet history term is folded
+    // into the move-picker's quiet score by dividing by this weight, so a
+    // larger value damps the contribution. Default 1 means full weight.
+    int PawnHistoryWeight;
 };
 
 extern SearchParams searchParams;

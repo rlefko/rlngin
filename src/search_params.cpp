@@ -32,6 +32,7 @@ static const SearchParams kDefaultSearchParams = {
     32768, // ThreatWalkInPenalty (symmetric walk-into-threat quiet penalty)
     1,     // LmrThreatEscape (ply discount for evacuating a threatened piece)
     1,     // LmrThreatWalkIn (ply surcharge for walking into a lesser-piece attack)
+    1,     // PawnHistoryWeight (divisor on pawn history when folding into the quiet score)
 };
 
 SearchParams searchParams = kDefaultSearchParams;
