@@ -868,11 +868,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
         int extBudget = 2 * state.rootDepth - state.extensionsOnPath[ply];
         if (extBudget <= 0) {
-            moveExtension = 0;
+            moveExtension = std::min(moveExtension, 0);
         } else if (moveExtension > extBudget) {
             moveExtension = extBudget;
         }
-        state.extensionsOnPath[ply + 1] = state.extensionsOnPath[ply] + moveExtension;
+        // Only positive extensions consume the per-path budget. Letting a
+        // negative extension decrement the tracker would credit forcing
+        // lines with extra room for later +1 / +2 extensions, which is the
+        // opposite of the budget's purpose. Stockfish accumulates only
+        // positive extensions for the same reason.
+        state.extensionsOnPath[ply + 1] =
+            state.extensionsOnPath[ply] + std::max(0, moveExtension);
 
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
