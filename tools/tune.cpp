@@ -3126,7 +3126,7 @@ int main(int argc, char **argv) {
     // Optional flag prefixes before the positional <dataset> arg. Each
     // is independently optional and order-insensitive among themselves.
     std::string fromCheckpoint;
-    int refitKEvery = 5;        // refit K every N completed passes; 0 disables
+    int refitKEvery = 0;        // refit K every N completed passes; 0 disables
     int refreshLeavesEvery = 0; // recompute leaves every N passes; 0 disables
     int newtonPasses = 0;       // run N Newton-style passes before CD; 0 disables
     bool useGaussNewton = true; // true: Gauss-Newton, false: diagonal Newton

@@ -102,8 +102,8 @@ if [ -n "${FROM_CHECKPOINT:-}" ]; then
     fi
     ARGS+=(--from "$FROM_CHECKPOINT")
 fi
-ARGS+=(--refit-k-every "${REFIT_K_EVERY:-4}")
-ARGS+=(--refresh-leaves-every "${REFRESH_LEAVES_EVERY:-8}")
+ARGS+=(--refit-k-every "${REFIT_K_EVERY:-0}")
+ARGS+=(--refresh-leaves-every "${REFRESH_LEAVES_EVERY:-0}")
 ARGS+=(--newton-passes "${NEWTON_PASSES:-10}")
 ARGS+=(--gauss-newton "${USE_GAUSS_NEWTON:-1}")
 ARGS+=(--adam-epochs "${ADAM_EPOCHS:-100}")
@@ -123,8 +123,8 @@ echo "  newton-passes:     ${NEWTON_PASSES:-10}"
 echo "  gauss-newton:      ${USE_GAUSS_NEWTON:-1}"
 echo "  adam-epochs:       ${ADAM_EPOCHS:-100}"
 echo "  adam-lr:           ${ADAM_LR:-1.0}"
-echo "  refit-K:           every ${REFIT_K_EVERY:-4} pass(es)"
-echo "  refresh-leaves:    every ${REFRESH_LEAVES_EVERY:-8} pass(es)"
+echo "  refit-K:           every ${REFIT_K_EVERY:-0} pass(es)"
+echo "  refresh-leaves:    every ${REFRESH_LEAVES_EVERY:-0} pass(es)"
 echo "  leaf-depth:        ${LEAF_DEPTH:-0}"
 echo "  val-fraction:      ${VAL_FRACTION:-0.10}"
 if [ "${NO_VAL_GATE:-0}" != "0" ]; then
