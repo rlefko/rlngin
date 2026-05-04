@@ -30,6 +30,7 @@
 #include <string>
 #include <thread>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 namespace {
@@ -724,17 +725,32 @@ static uint64_t splitHash(uint32_t key, uint64_t seed) {
 }
 
 // Partition the corpus into a training slice and a held-out validation
-// slice. The split is by game id, not by position: every position
-// whose first source game id hashes into the val bucket goes to val,
-// the rest go to train. Position-level dedup keeps the first
-// occurrence's game id as `gameIds.front()`, so this is stable across
-// reloads of the same corpus.
+// slice using stratified sampling over (phase, result) buckets.
 //
-// Legacy corpora without game-id metadata fall back to a deterministic
-// per-position-index split, which is weaker (a 250-ply draw can
-// straddle both partitions) but better than no split at all.
+// Why stratified: a flat random-by-game split holds out approximately
+// `valFraction` of every position type *in expectation*, but the
+// realised bucket coverage varies. Bucketed val reporting then sees
+// noisy per-cell loss numbers driven by sample-size variance instead
+// of real signal differences, and rare buckets (e.g. opposite-colour
+// bishop endgames, KQK with a passed pawn) can land severely
+// under-covered.
 //
-// `valFraction` is clamped to [0, 1]. Edge cases:
+// Algorithm: classify every position into nine cells = three phases
+// (mgPhase >= 18 / 8..17 / < 8) crossed with three result classes
+// (win 1.0 / draw 0.5 / loss 0.0), matching the reportValidation
+// bucket layout exactly so the per-cell coverage we engineer here
+// shows up directly in that reporter's output. Then for each cell,
+// hash the games contributing to it (game id XOR cell-salt), sort
+// deterministically, and pull games into the val partition until the
+// cell's coverage hits `valFraction * cell_size`. Crucially, each
+// game's full position contribution lands in val regardless of which
+// cell selected it -- a game can only be wholly val or wholly train,
+// preserving the no-spans-both-partitions invariant. So most cells
+// reach their target organically from games already chosen for
+// larger neighbouring cells.
+//
+// Legacy corpora without game-id metadata fall back to the previous
+// per-position-index split. valFraction edge cases preserved:
 //   * 0.0: every position goes to train (val empty, val gate disabled).
 //   * 1.0: every position goes to val (only useful for diagnostics).
 static std::pair<std::vector<size_t>, std::vector<size_t>>
@@ -756,24 +772,130 @@ splitCorpus(const std::vector<LabeledPosition> &positions, double valFraction,
                   << " val (training disabled, diagnostics only)\n";
         return {std::move(train), std::move(val)};
     }
-    constexpr uint64_t bucketScale = 1ULL << 16;
-    uint64_t valBucket = static_cast<uint64_t>(valFraction * bucketScale);
+
+    // Inline phase / result bucketing so this function stays
+    // self-contained at the file's ordering. Must match
+    // reportValidation's classifications exactly.
+    static const int phaseInc[7] = {0, 0, 1, 1, 2, 4, 0};
+    auto phaseBucketOf = [&](const Board &b) -> int {
+        int p = 0;
+        for (int pt = Knight; pt <= Queen; pt++) {
+            p += phaseInc[pt] * (b.pieceCount[White][pt] + b.pieceCount[Black][pt]);
+        }
+        if (p > 24) p = 24;
+        return p >= 18 ? 0 : (p >= 8 ? 1 : 2);
+    };
+    auto resultBucketOf = [](double r) -> int {
+        if (r > 0.75) return 0;  // win
+        if (r < 0.25) return 2;  // loss
+        return 1;                // draw
+    };
+
+    constexpr int N_BUCKETS = 9;
+    static const char *bucketLabels[N_BUCKETS] = {
+        "open-win",  "open-draw", "open-loss",
+        "mid-win",   "mid-draw",  "mid-loss",
+        "end-win",   "end-draw",  "end-loss",
+    };
+
+    // First pass: assign each position to a (phase, result) cell, count
+    // cell sizes, and detect whether any game-id metadata exists.
+    std::vector<uint8_t> posBucket(positions.size());
+    std::array<size_t, N_BUCKETS> bucketSize{};
     bool anyMetadata = false;
     for (size_t i = 0; i < positions.size(); i++) {
         const auto &lp = positions[i];
-        uint64_t h;
-        if (lp.gameIds.empty()) {
-            h = splitHash(static_cast<uint32_t>(i), seed);
-        } else {
-            anyMetadata = true;
-            h = splitHash(lp.gameIds.front(), seed);
-        }
-        if ((h % bucketScale) < valBucket) val.push_back(i);
-        else train.push_back(i);
+        int b = phaseBucketOf(lp.board) * 3 + resultBucketOf(lp.result);
+        posBucket[i] = static_cast<uint8_t>(b);
+        bucketSize[b]++;
+        if (!lp.gameIds.empty()) anyMetadata = true;
     }
-    std::cerr << "splitCorpus: " << train.size() << " train, " << val.size() << " val ("
-              << (anyMetadata ? "by game id" : "by position index, no metadata")
-              << ", target val fraction " << valFraction << ")\n";
+
+    // Legacy fallback: corpus has no game-id metadata, so we cannot
+    // honour the no-game-spans-partitions invariant. Fall back to a
+    // deterministic per-position-index hash split.
+    if (!anyMetadata) {
+        constexpr uint64_t bucketScale = 1ULL << 16;
+        uint64_t valCutoff = static_cast<uint64_t>(valFraction * bucketScale);
+        for (size_t i = 0; i < positions.size(); i++) {
+            uint64_t h = splitHash(static_cast<uint32_t>(i), seed);
+            if ((h % bucketScale) < valCutoff) val.push_back(i);
+            else train.push_back(i);
+        }
+        std::cerr << "splitCorpus: " << train.size() << " train, " << val.size()
+                  << " val (by position index, no metadata, target val fraction "
+                  << valFraction << ")\n";
+        return {std::move(train), std::move(val)};
+    }
+
+    // Per-game contribution table: gameContrib[gid][b] is the count of
+    // positions from game `gid` that fell into cell `b`.
+    std::unordered_map<uint32_t, std::array<uint32_t, N_BUCKETS>> gameContrib;
+    for (size_t i = 0; i < positions.size(); i++) {
+        if (positions[i].gameIds.empty()) continue;
+        uint32_t gid = positions[i].gameIds.front();
+        gameContrib[gid][posBucket[i]]++;
+    }
+
+    // Greedy stratified game selection. Each cell salts the hash with
+    // its bucket index so neighbouring cells walk games in different
+    // orders, but every game's val/train decision is final on first
+    // selection -- a game already chosen by an earlier cell is skipped
+    // for later cells (its contribution still counts toward those
+    // cells' coverage thanks to the running tally).
+    std::unordered_set<uint32_t> valGames;
+    std::array<uint32_t, N_BUCKETS> bucketCoverage{};
+    for (int b = 0; b < N_BUCKETS; b++) {
+        if (bucketSize[b] == 0) continue;
+        uint64_t target = static_cast<uint64_t>(bucketSize[b] * valFraction);
+        if (target == 0 || bucketCoverage[b] >= target) continue;
+
+        std::vector<std::pair<uint64_t, uint32_t>> sortedGames;
+        sortedGames.reserve(gameContrib.size());
+        for (const auto &kv : gameContrib) {
+            if (kv.second[b] > 0) {
+                uint64_t h = splitHash(kv.first, seed ^ static_cast<uint64_t>(b + 1));
+                sortedGames.emplace_back(h, kv.first);
+            }
+        }
+        std::sort(sortedGames.begin(), sortedGames.end());
+
+        for (const auto &entry : sortedGames) {
+            uint32_t gid = entry.second;
+            if (valGames.count(gid)) continue;
+            valGames.insert(gid);
+            const auto &c = gameContrib[gid];
+            for (int bb = 0; bb < N_BUCKETS; bb++) {
+                bucketCoverage[bb] += c[bb];
+            }
+            if (bucketCoverage[b] >= target) break;
+        }
+    }
+
+    // Final partition: walk the corpus and route each position based
+    // on whether its first game id was selected for val. Positions
+    // without metadata in an otherwise-tagged corpus default to
+    // training so they cannot dilute the held-out slice.
+    for (size_t i = 0; i < positions.size(); i++) {
+        const auto &lp = positions[i];
+        if (!lp.gameIds.empty() && valGames.count(lp.gameIds.front())) {
+            val.push_back(i);
+        } else {
+            train.push_back(i);
+        }
+    }
+
+    std::cerr << "splitCorpus (stratified by phase x result): " << train.size()
+              << " train, " << val.size() << " val (target " << valFraction
+              << ", " << valGames.size() << "/" << gameContrib.size()
+              << " games held out)\n";
+    for (int b = 0; b < N_BUCKETS; b++) {
+        if (bucketSize[b] == 0) continue;
+        double cov = 100.0 * static_cast<double>(bucketCoverage[b]) /
+                     static_cast<double>(bucketSize[b]);
+        std::cerr << "  " << bucketLabels[b] << ": " << bucketCoverage[b]
+                  << "/" << bucketSize[b] << " val (" << cov << "%)\n";
+    }
     return {std::move(train), std::move(val)};
 }
 
