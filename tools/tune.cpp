@@ -2132,6 +2132,36 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
     // running at all.
     auto resetPatience = [&]() { noValImprovement = 0; };
 
+    // Rebase bestValLoss after a K refit or leaf refresh. Both events
+    // deliberately reshape the loss surface (sigmoid scale change for
+    // K refit, eval-target redistribution for leaf refresh), so the
+    // existing bestValLoss scalar -- measured under the old surface
+    // -- is no longer a valid baseline for the patience gate. Without
+    // a rebase, the very first post-refresh val measurement looks
+    // worse than the stale baseline by construction, the patience
+    // counter trips immediately, and the rest of the tune is wasted.
+    //
+    // We re-evaluate bestValLoss by temporarily restoring
+    // bestValSnapshot (the params at the historical best val), so the
+    // new baseline reflects how that same snapshot scores under the
+    // new K and new leaves -- preserving the "is the current point
+    // better than the historical best?" semantics across the surface
+    // shift. The patience counter is reset because the previous
+    // non-improvements were measured against the obsolete baseline.
+    //
+    // No-op when val tracking is off, the gate is disabled, or no
+    // best snapshot has been recorded yet.
+    auto rebaseBestValLoss = [&](const std::string &reason) {
+        if (!valPtr || !valGateEnabled || bestValSnapshot.empty()) return;
+        std::vector<int> live = snapshotParams();
+        restoreParams(bestValSnapshot);
+        bestValLoss = computeDataLoss(positions, K, numThreads, valPtr);
+        restoreParams(live);
+        noValImprovement = 0;
+        std::cerr << "  rebased bestValLoss=" << bestValLoss
+                  << " (after " << reason << ", patience reset)\n";
+    };
+
     // Optional Newton-style initial phase. Two flavors share the same
     // pass-count budget and the same K-refit / leaf-refresh cadences:
     //
@@ -2192,6 +2222,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                 K = findBestK(positions, numThreads, trainPtr);
                 bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("K refit");
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after gauss-newton pass " << globalPass << "\n";
@@ -2201,6 +2232,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                 bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "post-refresh K " << oldK << " -> " << K
                           << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("leaf refresh");
                 // Re-extract features against the new qsearch leaves.
                 // Without this the Newton step would optimize against
                 // stale linearizations.
@@ -2239,6 +2271,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                 K = findBestK(positions, numThreads, trainPtr);
                 bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("K refit");
             }
             if (refreshLeavesEvery > 0 && (pass + 1) % refreshLeavesEvery == 0) {
                 std::cerr << "refresh leaves after newton pass " << globalPass << "\n";
@@ -2248,6 +2281,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
                 bestLoss = computeLoss(positions, K, numThreads, trainPtr);
                 std::cerr << "post-refresh K " << oldK << " -> " << K
                           << ", rebased loss=" << bestLoss << "\n";
+                rebaseBestValLoss("leaf refresh");
             }
         }
     }
@@ -2343,6 +2377,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             K = findBestK(positions, numThreads, trainPtr);
             bestLoss = computeLoss(positions, K, numThreads, trainPtr);
             std::cerr << "K " << oldK << " -> " << K << ", rebased loss=" << bestLoss << "\n";
+            rebaseBestValLoss("K refit");
         }
 
         // Periodic leaf refresh: qsearch's path through stand-pat and
@@ -2360,6 +2395,7 @@ static void tune(std::vector<LabeledPosition> &positions, double K, int numThrea
             bestLoss = computeLoss(positions, K, numThreads, trainPtr);
             std::cerr << "post-refresh K " << oldK << " -> " << K << ", rebased loss=" << bestLoss
                       << "\n";
+            rebaseBestValLoss("leaf refresh");
         }
     }
 
