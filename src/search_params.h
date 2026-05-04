@@ -96,6 +96,12 @@ struct SearchParams {
     // hardcoded literals (2, 2).
     int SingularBetaMul;
     int SingularDepthDiv;
+    // Double-extension trigger: when the singular search fails low by more
+    // than this margin against `singularBeta`, the TT move is treated as
+    // sharply better than every alternative and gets extended by two plies
+    // instead of one. Gated to non-PV nodes so the double extension never
+    // stacks with PV check or recapture extensions on the same move.
+    int SingularDoubleMargin;
 };
 
 extern SearchParams searchParams;

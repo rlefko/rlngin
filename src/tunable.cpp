@@ -172,6 +172,8 @@ std::vector<TunableSpec> buildRegistry() {
     // search space stays meaningful at integer granularity.
     out.push_back(makeIntSpec("SingularBetaMul", &searchParams.SingularBetaMul, 1, 4, 0.25, 0.1));
     out.push_back(makeIntSpec("SingularDepthDiv", &searchParams.SingularDepthDiv, 2, 4, 0.25, 0.1));
+    out.push_back(makeIntSpec("SingularDoubleMargin", &searchParams.SingularDoubleMargin, 2, 40,
+                              2.0, 0.75));
 
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));

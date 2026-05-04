@@ -524,8 +524,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     Move ttMove = {0, 0, None};
     bool hasExcludedMove = (excludedMove.from != 0 || excludedMove.to != 0);
     bool ttHit = tt.probe(board.key, ttEntry, ply);
+    bool ttCapture = false;
     if (ttHit) {
         ttMove = ttEntry.best_move;
+        // Cache whether the TT move is a capture so the singular block can
+        // gate its multi-cut shortcut on it. A TT capture means quiet
+        // alternatives are likely tactically dominated; we should not
+        // shortcut past a singular search just because it happened to
+        // surface another capture at shallow depth.
+        if (ttMove.from != 0 || ttMove.to != 0) {
+            ttCapture = isCapture(board, ttMove);
+        }
         // PV nodes never take a TT score cutoff. A stale exact bound from an
         // earlier root search, or even from an earlier iteration of the
         // current search, can otherwise short-circuit the fresh verdict we
@@ -717,6 +726,30 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
+            // Double extension: when alternatives fall well below
+            // singularBeta the TT move is sharply better than every other
+            // candidate. Gated to non-PV nodes; the existing per-path
+            // extension budget keeps double extensions from stacking
+            // indefinitely down forcing lines.
+            if (!pvNode &&
+                singularScore < singularBeta - searchParams.SingularDoubleMargin) {
+                singularExtension = 2;
+            }
+        } else if (singularBeta >= beta && !ttCapture) {
+            // Multi-cut: the singular search proved a non-TT move also
+            // reaches the parent's beta at shallow depth, so this node is
+            // very likely to fail high too. Returning singularBeta is a
+            // shallow lower bound; we deliberately do NOT store it in TT
+            // (matches Stockfish), since the deeper search may still tighten
+            // it. Gated on `!ttCapture` so a tactically loaded TT move does
+            // not let us shortcut past the alternatives' real evaluation.
+            return singularBeta;
+        } else if (cutNode) {
+            // Negative extension: TT score is high enough that singular
+            // search did not beat singularBeta, and we are at a cut-node
+            // already expecting fail-high. Searching shallower saves work
+            // because the TT verdict is likely correct.
+            singularExtension = -1;
         }
     }
 
@@ -752,9 +785,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         bool capture = isCapture(board, m);
         bool isPromotion = (m.promotion != None);
 
-        // Compute extensions before makeMove so piece types are still on the board
+        // Compute extensions before makeMove so piece types are still on the board.
+        // Apply the singular verdict whether positive (extend) or negative
+        // (search shallower) so the negative-extension path actually shaves
+        // a ply on the TT move at cut-nodes.
         int moveExtension = 0;
-        if (singularExtension > 0 && m.from == ttMove.from && m.to == ttMove.to &&
+        if (singularExtension != 0 && m.from == ttMove.from && m.to == ttMove.to &&
             m.promotion == ttMove.promotion) {
             moveExtension = singularExtension;
         }
@@ -850,6 +886,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
         }
 
+        // Negative singular extensions only fire from the singular block
+        // when remaining depth is at least 8, so the natural `depth - 1` step
+        // here cannot push newDepth below 1 from a negative extension. We
+        // deliberately do NOT clamp to 1 because doing so would block the
+        // depth-1 -> qsearch transition that turns the leaves of the tree
+        // into the quiescence search.
         int newDepth = depth - 1 + moveExtension;
 
         int score;

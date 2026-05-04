@@ -35,6 +35,7 @@ static const SearchParams kDefaultSearchParams = {
     1,     // PawnHistoryWeight (divisor on pawn history when folding into the quiet score)
     2,     // SingularBetaMul (matches the prior hardcoded depth * 2 in singularBeta)
     2,     // SingularDepthDiv (matches the prior hardcoded (depth - 1) / 2 in singularDepth)
+    17,    // SingularDoubleMargin (Stockfish-lineage default; extends by two when alts fall below)
 };
 
 SearchParams searchParams = kDefaultSearchParams;
