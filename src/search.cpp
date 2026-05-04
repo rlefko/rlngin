@@ -572,8 +572,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // depth-8 cut-node with no TT move loses two plies instead of one (the
     // original IIR drops 8 to 7, then this rule drops it to 6).
     if (cutNode && depth >= searchParams.IirCutNodeDepth &&
-        (!ttHit || (ttMove.from == 0 && ttMove.to == 0) ||
-         ttEntry.depth + 4 <= depth)) {
+        (!ttHit || (ttMove.from == 0 && ttMove.to == 0) || ttEntry.depth + 4 <= depth)) {
         depth -= 1;
     }
 
@@ -684,8 +683,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // ProbCut iterates legal captures including the excluded TT move, and
     // returning early would let the TT capture itself "verify" that another
     // move reaches singularBeta, defeating the singular check.
-    if (!pvNode && !inCheck && !hasExcludedMove && depth >= 5 &&
-        beta > -MATE_SCORE + MAX_PLY && std::abs(beta) < MATE_SCORE - MAX_PLY) {
+    if (!pvNode && !inCheck && !hasExcludedMove && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
+        std::abs(beta) < MATE_SCORE - MAX_PLY) {
         int probcutBeta = beta + 483 - 145 * improving;
         int probcutDepth = depth - 4;
 
@@ -748,8 +747,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             // candidate. Gated to non-PV nodes; the existing per-path
             // extension budget keeps double extensions from stacking
             // indefinitely down forcing lines.
-            if (!pvNode &&
-                singularScore < singularBeta - searchParams.SingularDoubleMargin) {
+            if (!pvNode && singularScore < singularBeta - searchParams.SingularDoubleMargin) {
                 singularExtension = 2;
             }
         } else if (singularBeta >= beta && !ttCapture) {
@@ -890,8 +888,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // lines with extra room for later +1 / +2 extensions, which is the
         // opposite of the budget's purpose. Stockfish accumulates only
         // positive extensions for the same reason.
-        state.extensionsOnPath[ply + 1] =
-            state.extensionsOnPath[ply] + std::max(0, moveExtension);
+        state.extensionsOnPath[ply + 1] = state.extensionsOnPath[ply] + std::max(0, moveExtension);
 
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
@@ -929,8 +926,8 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             // candidate that should fail high, so its own children are then
             // expected to fail low, hence the flip.
             bool firstChildCutNode = pvNode ? false : !cutNode;
-            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true,
-                             Move{0, 0, None}, firstChildCutNode);
+            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true, Move{0, 0, None},
+                             firstChildCutNode);
         } else {
             // Late move reductions
             int reduction = 0;
@@ -1066,12 +1063,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 // Pawn-keyed history reward and malus. Pawn key is shared by
                 // every move searched at this node (we make and unmake from
                 // the same root position), so the index is computed once.
-                int pawnIdx =
-                    static_cast<int>(board.pawnKey & (PAWN_HIST_SIZE - 1));
+                int pawnIdx = static_cast<int>(board.pawnKey & (PAWN_HIST_SIZE - 1));
                 PieceType cutPt = board.squares[m.from].type;
-                applyHistoryBonus(
-                    state.historyTables->pawnHistory[us][pawnIdx][cutPt][m.to], bonus,
-                    MAX_PAWN_HISTORY);
+                applyHistoryBonus(state.historyTables->pawnHistory[us][pawnIdx][cutPt][m.to], bonus,
+                                  MAX_PAWN_HISTORY);
                 for (int i = 0; i < numSearchedQuiets; i++) {
                     const Move &prev = searchedQuiets[i];
                     PieceType prevPt = board.squares[prev.from].type;
