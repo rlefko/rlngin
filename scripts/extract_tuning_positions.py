@@ -58,7 +58,13 @@ def extract(pgn_path: str, out_path: str, skip_plies: int, tail_plies: int,
     # per-game inverse weighting and for the by-game train / val
     # split.
     fen_stats: dict = {}
-    with open(pgn_path) as f_in:
+    # PGN files in the wild are a mix of UTF-8 (modern engine self-play
+    # output) and latin-1 / windows-1252 (TWIC archives, historical
+    # databases). Open with `errors="replace"` so a stray 0xa0 in a
+    # comment or player name does not abort the whole extract; the
+    # python-chess parser only cares about the ASCII syntax, so the
+    # replacement codepoints in non-ASCII tags are harmless.
+    with open(pgn_path, encoding="utf-8", errors="replace") as f_in:
         while True:
             game = chess.pgn.read_game(f_in)
             if game is None:
