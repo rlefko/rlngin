@@ -7,6 +7,10 @@
 #include <thread>
 #include <vector>
 
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
+
 // Lock the packed entry layout: padding changes would silently alter the
 // ratio of entries per megabyte and invalidate hash-sizing assumptions.
 static_assert(sizeof(PackedTTEntry) == 10, "PackedTTEntry layout unexpectedly changed");
@@ -73,6 +77,21 @@ void TranspositionTable::resize(size_t size_mb) {
     // single-cache-line-per-cluster invariant holds at runtime as well as the
     // layout static_asserts hold at compile time.
     assert(reinterpret_cast<std::uintptr_t>(table_.data()) % alignof(TTCluster) == 0);
+
+#ifdef __linux__
+    // Ask the kernel for transparent huge pages over the TT region. The
+    // allocation is only 64-byte aligned (alignof(TTCluster)), not 2 MiB
+    // aligned, so the kernel applies the hint to the huge-page-aligned
+    // interior and falls back to 4 KiB pages for the head and tail. At
+    // typical 1+ GB hashes that interior is essentially the whole table,
+    // and the TLB-miss reduction is meaningful (the search hits the TT on
+    // every node). Below ~2 MiB the hint cannot apply at all, so skip it.
+    const size_t bytes = num_clusters_ * sizeof(TTCluster);
+    if (bytes >= 2ULL * 1024 * 1024) {
+        madvise(table_.data(), bytes, MADV_HUGEPAGE);
+    }
+#endif
+
     clear();
 }
 
