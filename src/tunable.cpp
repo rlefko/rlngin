@@ -155,6 +155,19 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeIntSpec("LmrThreatEscape", &searchParams.LmrThreatEscape, 0, 2, 0.5, 0.25));
     out.push_back(makeIntSpec("LmrThreatWalkIn", &searchParams.LmrThreatWalkIn, 0, 2, 0.5, 0.25));
 
+    // --- Singular extension shape ---
+    // The two scalars below replace the prior hardcoded literals in the
+    // singular block. SPSA can sweep how aggressively the singular window
+    // widens (lower SingularBetaMul = more extensions) and how shallow the
+    // verification search runs (raising SingularDepthDiv cheapens the
+    // verification at the cost of signal quality). Bounds are tight so the
+    // search space stays meaningful at integer granularity.
+    out.push_back(makeIntSpec("SingularBetaMul", &searchParams.SingularBetaMul, 1, 4, 0.25, 0.1));
+    out.push_back(makeIntSpec("SingularDepthDiv", &searchParams.SingularDepthDiv, 2, 4, 0.25, 0.1));
+    out.push_back(
+        makeIntSpec("SingularDoubleMargin", &searchParams.SingularDoubleMargin, 2, 40, 2.0, 0.75));
+    out.push_back(makeIntSpec("IirCutNodeDepth", &searchParams.IirCutNodeDepth, 5, 10, 0.5, 0.25));
+
     // --- Aspiration window seeding ---
     // Initial half-width is `max(AspWindowBase, |prevScore| / AspWindowDiv)`.
     // The base bound starts low (Stockfish ranges 9-15) so SPSA can settle

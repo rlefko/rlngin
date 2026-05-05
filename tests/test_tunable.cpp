@@ -10,22 +10,13 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // Eighty eight is the committed SPSA surface: twenty original
-    // scalars, fourteen king-safety scalars, five correction-history
-    // weights, four rook-behind-passer scalars, two minor-behind-pawn
-    // scalars, four piece-on-king-ring scalars, two king-protector
-    // scalars, four slider-on-queen scalars, two restricted-piece
-    // scalars, two pawn-islands penalty scalars, the qsearch delta
-    // margin, the late-history pruning coefficient, the four attack-
-    // aware ordering and threat-based LMR scalars, ten HCE refactor
-    // scalars (BadBishop, BishopPawns, BishopXrayPawns, RookOnQueenFile,
-    // KingMobilityFactor, each as Mg/Eg pair), two ThreatByPawnPush
-    // halves, two WeakQueenDefender halves, two KnightOnQueen halves,
-    // two PawnlessFlank halves, two QueenInfiltration halves, the
-    // KingPawnDistEg eg half, the KBNKCornerEg eg half, and the
-    // LucenaEg eg half. If this count ever changes, the SPSA driver's
-    // iteration budget and the PR description should move too.
-    REQUIRE(specs.size() == 90);
+    // Ninety four is the committed SPSA surface: the eighty-eight pre-uplift
+    // scalars plus the four search-strength uplift scalars (SingularBetaMul,
+    // SingularDepthDiv, SingularDoubleMargin, IirCutNodeDepth) plus the two
+    // aspiration-window scalars from #78 (AspWindowBase, AspWindowDiv). If
+    // this count ever changes, the SPSA driver's iteration budget and the PR
+    // description should move too.
+    REQUIRE(specs.size() == 94);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {
