@@ -23,16 +23,42 @@ static constexpr int MAX_LMR_MOVES = 256;
 
 static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 
-// Per-thread transposition table. The engine's UCI search runs on a
-// single thread, so behavior there is identical to the prior global
-// TT (the main thread instance is sized via setHashSize). The tuner's
-// leaf precompute now spawns worker threads that each touch
-// `qsearchLeafBoard`; with thread_local each worker gets its own 16 MB
-// TT on first use, no inter-thread races on tt.clear() / tt.store().
-// Loss-eval workers never call qsearch and so never default-construct
-// their copies (thread_local with a non-trivial constructor only runs
-// on first access in that thread).
-static thread_local TranspositionTable tt(16);
+// The UCI search runs on a worker thread spawned per `go` command, so the
+// transposition table has to be a process-wide singleton: a thread_local
+// would live and die with each spawned thread, which would silently lose
+// every TT entry between iterative-deepening sessions and ignore the UCI
+// Hash setting on the spawned side. `g_mainTT` is the persistent table the
+// search reads and writes. `g_tlsTTOverride` is an optional per-thread
+// override used by the Texel tuner's leaf functions: those spawn worker
+// pools that each need their own private TT to avoid racing on
+// clear / store, and pointing the override at a thread-local `g_leafTT`
+// keeps that isolation without giving up persistence on the search path.
+// `tt()` resolves to the override when set and the main TT otherwise.
+namespace {
+TranspositionTable g_mainTT(16);
+thread_local TranspositionTable *g_tlsTTOverride = nullptr;
+// Sized to match the original per-thread tuner TT so leaf-walk hit rates
+// (qsearchLeafBoard, pvLeafBoard, qsearchScore) stay at parity with prior
+// tuner runs. Each tuner worker thread allocates one of these on first use.
+thread_local TranspositionTable g_leafTT(16);
+
+inline TranspositionTable &tt() {
+    return g_tlsTTOverride ? *g_tlsTTOverride : g_mainTT;
+}
+
+// Scoped install / restore of the leaf TT override. RAII so an early return
+// or a future exception cannot leave the override pointing into a dead frame
+// or shadow the main TT for unrelated code on the same thread.
+struct LeafTTGuard {
+    TranspositionTable *prev;
+    explicit LeafTTGuard(TranspositionTable &leaf) : prev(g_tlsTTOverride) {
+        g_tlsTTOverride = &leaf;
+    }
+    ~LeafTTGuard() { g_tlsTTOverride = prev; }
+    LeafTTGuard(const LeafTTGuard &) = delete;
+    LeafTTGuard &operator=(const LeafTTGuard &) = delete;
+};
+} // namespace
 
 enum BoundType { BOUND_EXACT, BOUND_LOWER, BOUND_UPPER };
 
@@ -241,7 +267,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     // usable bound for the leaf-level search. A TT cut here is a free save.
     TTEntry ttEntry;
     Move ttMove = {0, 0, None};
-    bool ttHit = tt.probe(board.key, ttEntry, ply);
+    bool ttHit = tt().probe(board.key, ttEntry, ply);
     if (ttHit) {
         ttMove = ttEntry.best_move;
         if (ttEntry.flag == TT_EXACT) return ttEntry.score;
@@ -292,7 +318,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
             // scratch. The shortcut fires only when standPat < alpha, so
             // the bound is always an upper bound.
             Move noMove = {0, 0, None};
-            tt.store(board.key, standPat, rawStandPat, 0, TT_UPPER_BOUND, noMove, ply);
+            tt().store(board.key, standPat, rawStandPat, 0, TT_UPPER_BOUND, noMove, ply);
             return standPat;
         }
     }
@@ -326,7 +352,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
         state.moveStack[ply] = m;
         state.movedPiece[ply] = board.squares[m.from].type;
         UndoInfo undo = board.makeMove(m);
-        tt.prefetch(board.key);
+        tt().prefetch(board.key);
         int score = -quiescence(board, -beta, -alpha, ply + 1, state);
         board.unmakeMove(m, undo);
         if (state.stopped) return 0;
@@ -360,7 +386,7 @@ int quiescence(Board &board, int alpha, int beta, int ply, SearchState &state) {
     bool tried = bestMove.from != 0 || bestMove.to != 0;
     if (tried || bestScore != standPat || flag != TT_EXACT) {
         int storedEval = inCheck ? TT_NO_EVAL : rawStandPat;
-        tt.store(board.key, bestScore, storedEval, 0, flag, bestMove, ply);
+        tt().store(board.key, bestScore, storedEval, 0, flag, bestMove, ply);
     }
 
     return bestScore;
@@ -371,10 +397,10 @@ int qsearchScore(const Board &board) {
     // fresh state and an effectively unlimited time budget, then return
     // the side-to-move POV leaf score. Using qsearch (instead of raw
     // evaluate()) ensures every labeled position is scored on its quiet
-    // continuation, which is the Texel premise. The shared TT is read
-    // and written during the qsearch; when the tuner calls this from
-    // multiple threads, rare TT races are acceptable noise and are
-    // mitigated by clearing the TT between loss computations.
+    // continuation, which is the Texel premise. The leaf guard routes
+    // TT traffic to the per-thread `g_leafTT` so concurrent tuner
+    // workers do not race on the main TT.
+    LeafTTGuard guard(g_leafTT);
     SearchState state;
     state.startTime = std::chrono::steady_clock::now();
     state.allocatedTimeMs = std::numeric_limits<int64_t>::max();
@@ -395,10 +421,13 @@ static std::atomic<uint64_t> g_qsearchLeafTtMiss{0};
 static std::atomic<uint64_t> g_qsearchLeafCapped{0};
 
 Board qsearchLeafBoard(const Board &root) {
-    // Clear TT so the post-search walk only follows entries that this
-    // call wrote. Not thread-safe: the tuner must run this step
-    // sequentially before the multi-threaded loss loop starts.
-    tt.clear();
+    // Clear the per-thread leaf TT so the post-search walk only follows
+    // entries that this call wrote. The leaf guard routes both this clear
+    // and every probe / store inside `quiescence` through the thread-local
+    // `g_leafTT`, so the parallel tuner pool can run this concurrently
+    // without ever touching the main UCI TT.
+    LeafTTGuard guard(g_leafTT);
+    tt().clear();
 
     // Switch qsearch into tuner-leaf mode for the duration of this
     // call. Both delta pruning (against searchParams.QsDeltaMargin)
@@ -428,7 +457,7 @@ Board qsearchLeafBoard(const Board &root) {
     bool capped = false;
     for (; iter < 32; iter++) {
         TTEntry entry;
-        if (!tt.probe(cur.key, entry, 0)) {
+        if (!tt().probe(cur.key, entry, 0)) {
             ttMissed = true;
             break;
         }
@@ -524,7 +553,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     TTEntry ttEntry;
     Move ttMove = {0, 0, None};
     bool hasExcludedMove = (excludedMove.from != 0 || excludedMove.to != 0);
-    bool ttHit = tt.probe(board.key, ttEntry, ply);
+    bool ttHit = tt().probe(board.key, ttEntry, ply);
     bool ttCapture = false;
     if (ttHit) {
         ttMove = ttEntry.best_move;
@@ -720,7 +749,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
             if (pcScore >= probcutBeta) {
                 int storedEval = inCheck ? TT_NO_EVAL : staticEval;
-                tt.store(board.key, pcScore, storedEval, depth, TT_LOWER_BOUND, pcMove, ply);
+                tt().store(board.key, pcScore, storedEval, depth, TT_LOWER_BOUND, pcMove, ply);
                 return probcutBeta;
             }
         }
@@ -871,7 +900,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
 
         UndoInfo undo = board.makeMove(m);
-        tt.prefetch(board.key);
+        tt().prefetch(board.key);
         bool givesCheck = isInCheck(board);
 
         // Check extension: extend checking PV moves. Take the max rather than
@@ -1118,7 +1147,7 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             flag = TT_EXACT;
         }
         int storedEval = inCheck ? TT_NO_EVAL : staticEval;
-        tt.store(board.key, bestScore, storedEval, depth, flag, bestMove, ply);
+        tt().store(board.key, bestScore, storedEval, depth, flag, bestMove, ply);
 
         // Fold the search result into every correction-history table whenever
         // we have a quiet best move and a bound that actually informs the
@@ -1162,8 +1191,20 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
     return allocated;
 }
 
-static void printSearchInfo(int depth, const SearchState &state, int score, int64_t timeMs,
+static void printSearchInfo(int depth, SearchState &state, int score, int64_t timeMs,
                             BoundType bound, int multiPV) {
+    // Pin the bestmove output to whatever PV we are about to print. Without
+    // this, an aspiration loop that fail-highs (sets state.bestMove) then
+    // fail-lows (refreshes state.pv[0][0] via the empty-PV fallback) and
+    // gets interrupted by the clock would print a `bestmove` that disagrees
+    // with the last `info pv` line. fastchess flags that mismatch as a
+    // warning. By syncing right before every print, the last printed PV's
+    // first move is always the bestmove the engine reports at end of search.
+    if (multiPV == 1 && state.pvLength[0] > 0) {
+        state.bestMove = state.pv[0][0];
+        state.ponderMove = (state.pvLength[0] >= 2) ? state.pv[0][1] : Move{0, 0, None};
+    }
+
     // Floor the reported time at 1 ms so shallow iterations do not emit
     // "time 0" or a degenerate nps derived from zero elapsed time.
     int64_t reportedTimeMs = std::max<int64_t>(timeMs, 1);
@@ -1206,12 +1247,16 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     state.stopped = false;
     state.nodes = 0;
     state.bestMove = {0, 0, None};
+    // Ponder is only refreshed on the exact aspiration path, so reset it here
+    // to make sure a stale ponder from a previous search cannot bleed into
+    // this one if the iteration is interrupted before an exact result lands.
+    state.ponderMove = {0, 0, None};
     memset(state.killers, 0, sizeof(state.killers));
     state.positionHistory = positionHistory;
 
     // Tag every store from this root search with a fresh generation so the
     // aging replacement rule can discount entries from prior searches.
-    tt.new_search();
+    tt().new_search();
     state.searchKeys[0] = board.key;
     // Raw root eval is position-only and safe to compute once; the corrected
     // value is refreshed per iteration below so the ply=2 improving baseline
@@ -1563,6 +1608,12 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         if (mateFound) break;
     }
 
+    // Defensive fallback: if no aspiration path ever set bestMove (for
+    // example a search stopped before iteration 1 emitted any info line),
+    // print a legal root move rather than the {0,0,None} init sentinel.
+    // printSearchInfo normally captures bestMove from the PV it is about to
+    // print, so reaching this branch implies the search bailed before any
+    // line was printed.
     if (state.bestMove.from == 0 && state.bestMove.to == 0 && !rootMoves.empty()) {
         state.bestMove = rootMoves[0].move;
     }
@@ -1588,15 +1639,15 @@ Move findBestMove(const Board &board, int depth) {
 }
 
 void setHashSize(size_t mb) {
-    tt.resize(mb);
+    g_mainTT.resize(mb);
 }
 
 void clearTT() {
-    tt.clear();
+    g_mainTT.clear();
 }
 
 int getHashfull() {
-    return tt.hashfull();
+    return g_mainTT.hashfull();
 }
 
 static int g_multiPV = 1;
@@ -1639,16 +1690,17 @@ void rebuildLmrTable() {
 // `--leaf-depth N` option to resolve more tactical noise than plain
 // qsearch (Andrew-Grant style PV-terminal corpus).
 //
-// depth <= 0 falls back to qsearchLeafBoard, which is the existing
-// default behaviour. The search runs against the thread_local TT and
-// a fresh SearchState, so concurrent worker threads can each call
-// pvLeafBoard without contention. Time-limit infrastructure is
-// disabled by setting `allocatedTimeMs` to its max so the search
-// runs until the depth budget is exhausted.
+// depth <= 0 falls back to qsearchLeafBoard. The leaf guard installs the
+// per-thread `g_leafTT` for the duration of the call so concurrent worker
+// threads never contend on the main TT, and any nested `qsearchLeafBoard`
+// reuses the same per-thread leaf TT. Time-limit infrastructure is
+// disabled by setting `allocatedTimeMs` to its max so the search runs
+// until the depth budget is exhausted.
 Board pvLeafBoard(const Board &root, int depth) {
     if (depth <= 0) return qsearchLeafBoard(root);
 
-    tt.clear();
+    LeafTTGuard guard(g_leafTT);
+    tt().clear();
     g_tunerLeafMode = false;
 
     SearchState state;
@@ -1666,8 +1718,9 @@ Board pvLeafBoard(const Board &root, int depth) {
     }
 
     // Re-enter qsearch from the PV terminal so the static eval sits
-    // on a quiet position. qsearchLeafBoard handles its own TT clear
-    // and resets g_tunerLeafMode, so we leave both untouched here.
+    // on a quiet position. qsearchLeafBoard reinstalls its own leaf
+    // guard against the same `g_leafTT` and resets g_tunerLeafMode, so
+    // we leave both untouched here.
     return qsearchLeafBoard(cur);
 }
 

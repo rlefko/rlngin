@@ -119,25 +119,28 @@ int getMultiPV();
 
 // Quiescence-resolved static evaluation for use outside the search (e.g. the
 // Texel tuner). Runs qsearch from the given position with an empty state and
-// returns the side-to-move POV score.
+// returns the side-to-move POV score. Routes its TT traffic through a
+// per-thread leaf TT so concurrent tuner workers do not contend on the
+// main UCI TT.
 int qsearchScore(const Board &board);
 
 // Run qsearch from `root` and walk the resulting TT's best-move chain to
-// return the quiet leaf position. Clears the TT internally so the walk
-// only follows entries written by this call. Intended for Texel tuner
-// dataset preparation: tuning against pre-resolved leaves lets the loss
-// loop run cheap static evaluate() calls instead of full qsearch.
+// return the quiet leaf position. Clears its per-thread leaf TT internally
+// so the walk only follows entries written by this call. Intended for
+// Texel tuner dataset preparation: tuning against pre-resolved leaves lets
+// the loss loop run cheap static evaluate() calls instead of full qsearch.
+// Safe to call concurrently from worker threads; each worker has its own
+// leaf TT.
 Board qsearchLeafBoard(const Board &root);
 
 // Run a fixed-depth alpha-beta search from `root`, walk the resulting
 // principal variation to its terminal position, then re-enter qsearch
 // to land on a quiet leaf. Used by the Texel tuner's `--leaf-depth N`
 // option to resolve more tactical noise (Andrew-Grant style PV-terminal
-// corpus). depth <= 0 falls back to plain qsearchLeafBoard. Same TT
-// preconditions as qsearchLeafBoard: thread_local TT means workers can
-// run concurrently, but the call clears its own thread_local TT so a
-// caller must not interleave it with other search activity on the same
-// thread.
+// corpus). depth <= 0 falls back to plain qsearchLeafBoard. Routes the
+// search and the nested qsearch through the same per-thread leaf TT, so
+// concurrent worker threads never touch the main UCI TT and do not race
+// on each other's tables.
 Board pvLeafBoard(const Board &root, int depth);
 
 // Aggregate stats accumulated by every `qsearchLeafBoard` call since
