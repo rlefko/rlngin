@@ -91,7 +91,7 @@ void uciLoop() {
         if (command == "uci") {
             std::cout << "id name rlngin " << ENGINE_VERSION << std::endl;
             std::cout << "id author Ryan Lefkowitz" << std::endl;
-            std::cout << "option name Hash type spin default 16 min 1 max 1024" << std::endl;
+            std::cout << "option name Hash type spin default 16 min 1 max 32768" << std::endl;
             std::cout << "option name Threads type spin default 1 min 1 max 1" << std::endl;
             std::cout << "option name MultiPV type spin default 1 min 1 max 256" << std::endl;
             std::cout << "option name Ponder type check default false" << std::endl;

@@ -1344,8 +1344,10 @@ static double reportValidation(const std::vector<LabeledPosition> &positions,
 //                   positions on 14 threads is several minutes on
 //                   top of the qsearch-only baseline.
 //
-// Both modes use thread_local TTs inside the leaf function so the
-// outer worker pool can run concurrently without contention.
+// Both modes route TT traffic through a per-thread leaf TT inside the
+// leaf function (a thread-local override of the engine's main TT) so the
+// outer worker pool can run concurrently without contention and without
+// disturbing the persistent UCI-search TT.
 static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThreads,
                              int leafDepth = 0) {
     if (leafDepth > 0) {
@@ -1359,8 +1361,8 @@ static void precomputeLeaves(std::vector<LabeledPosition> &positions, int numThr
 
     // Workers share an atomic cursor so any uneven per-position cost
     // (some leaves walk a long capture chain, others stand-pat at the
-    // root) load-balances naturally. Each worker has its own
-    // thread_local TT inside qsearchLeafBoard / pvLeafBoard, so there
+    // root) load-balances naturally. Each worker routes through a
+    // per-thread leaf TT inside qsearchLeafBoard / pvLeafBoard, so there
     // is no contention on the table itself.
     std::atomic<size_t> nextIndex{0};
     std::atomic<size_t> nextReport{50000};

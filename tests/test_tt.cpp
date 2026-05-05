@@ -1,6 +1,9 @@
+#include "board.h"
 #include "catch_amalgamated.hpp"
+#include "search.h"
 #include "tt.h"
 #include "types.h"
+#include <thread>
 
 TEST_CASE("TT: store and probe round-trip", "[tt]") {
     TranspositionTable table(1);
@@ -112,8 +115,8 @@ TEST_CASE("TT: cluster absorbs colliding keys", "[tt]") {
     Move move2 = {3, 4, None};
 
     // Small keys always map to the first cluster under multiplicative hashing,
-    // so both stores should land in the same two-way cluster and both should
-    // probe back cleanly instead of one evicting the other.
+    // so both stores should land in the same cluster and both should probe
+    // back cleanly instead of one evicting the other.
     table.store(1, 100, 10, 5, TT_EXACT, move1, 0);
     table.store(2, 200, 20, 6, TT_LOWER_BOUND, move2, 0);
 
@@ -252,31 +255,42 @@ TEST_CASE("TT: same-key store preserves an existing best move on empty write", "
 
 TEST_CASE("TT: aging evicts stale deep entries before fresh shallow ones", "[tt]") {
     TranspositionTable table(1);
+
+    // Seven small keys all map to cluster 0 under multiplicative hashing
+    // and have distinct low 16 bits, so the inside-cluster key check tells
+    // them apart cleanly. Six slots fill with the first six stores; the
+    // seventh forces a replacement decision against a full cluster.
     Move stale = {1, 2, None};
     Move fresh = {3, 4, None};
+    Move current = {7, 8, None};
     Move incoming = {5, 6, None};
 
-    // All three small keys map to cluster 0 under multiplicative hashing, so
-    // they contend for the same two-slot cluster.
     table.new_search();
     table.store(1, 100, 0, 20, TT_EXACT, stale, 0);
 
-    // Bump four generations so the entry for key 1 is four searches stale.
+    // Bump four generations so the stale entry trails the live search by
+    // four; the aging penalty (4 generations * 8 = 32 effective ply) easily
+    // beats the 19-ply raw depth advantage of the stale slot.
     for (int i = 0; i < 4; i++)
         table.new_search();
 
-    // Fresh shallow entry lands in the remaining empty slot.
-    table.store(2, 200, 0, 5, TT_EXACT, fresh, 0);
+    for (int i = 0; i < 4; i++) {
+        table.store(2 + static_cast<uint64_t>(i), 200 + i, 0, 5, TT_EXACT, fresh, 0);
+    }
+    table.store(6, 250, 0, 6, TT_EXACT, current, 0);
 
-    // A new current-generation entry must evict the stale deep slot rather
-    // than the fresh shallow one, because age (4 generations * 8) outweighs
-    // the raw depth advantage of 20 - 5 = 15.
-    table.store(3, 300, 0, 1, TT_EXACT, incoming, 0);
+    // Cluster is now full (six slots). The new current-generation entry must
+    // evict the stale deep slot, not any of the fresh shallow ones.
+    table.store(7, 300, 0, 1, TT_EXACT, incoming, 0);
 
     TTEntry entry;
-    REQUIRE(table.probe(2, entry, 0));
-    CHECK(entry.score == 200);
-    REQUIRE(table.probe(3, entry, 0));
+    for (int i = 0; i < 4; i++) {
+        REQUIRE(table.probe(2 + static_cast<uint64_t>(i), entry, 0));
+        CHECK(entry.score == 200 + i);
+    }
+    REQUIRE(table.probe(6, entry, 0));
+    CHECK(entry.score == 250);
+    REQUIRE(table.probe(7, entry, 0));
     CHECK(entry.score == 300);
     CHECK_FALSE(table.probe(1, entry, 0));
 }
@@ -318,6 +332,69 @@ TEST_CASE("TT: hashfull counts only current-generation entries", "[tt]") {
     CHECK(table.hashfull() == 0);
 }
 
+TEST_CASE("TT: inside-cluster key check distinguishes entries at large hashes", "[tt]") {
+    // Regression for a bug where the inside-cluster key check was taken
+    // from the upper 16 bits of the key. The cluster index uses upper
+    // bits too, so for any hash >= 16 MB the key check was completely
+    // determined by the cluster the entry already lived in: every entry
+    // in a cluster shared the same key check, every probe matched the
+    // first occupied slot, and the TT silently collapsed to a single
+    // slot per cluster. This test stores two keys that share the same
+    // upper bits but differ in the low 16 bits, so they collide on
+    // cluster index and on any upper-bit check yet differ on the
+    // Stockfish-style low-bit check that the implementation must use.
+    TranspositionTable table(16);
+
+    uint64_t k1 = 0x0000000000000001ULL;
+    uint64_t k2 = 0x0000000000000002ULL;
+    Move move1 = {1, 2, None};
+    Move move2 = {3, 4, None};
+
+    table.store(k1, 100, 0, 5, TT_EXACT, move1, 0);
+    table.store(k2, 200, 0, 6, TT_LOWER_BOUND, move2, 0);
+
+    TTEntry e1;
+    REQUIRE(table.probe(k1, e1, 0));
+    CHECK(e1.score == 100);
+    CHECK(e1.depth == 5);
+    CHECK(e1.flag == TT_EXACT);
+    CHECK(e1.best_move.from == 1);
+
+    TTEntry e2;
+    REQUIRE(table.probe(k2, e2, 0));
+    CHECK(e2.score == 200);
+    CHECK(e2.depth == 6);
+    CHECK(e2.flag == TT_LOWER_BOUND);
+    CHECK(e2.best_move.from == 3);
+}
+
+TEST_CASE("TT: packed move encoding round-trips for boundary cases", "[tt]") {
+    TranspositionTable table(1);
+
+    // Walk every from / to combination plus every promotion type to confirm
+    // the 6 + 6 + 3 bit packing of `Move` survives the store / probe cycle.
+    // Boundary squares (0 and 63) catch any off-by-one in the bit layout,
+    // and each promotion piece exercises the high bits of the encoding.
+    PieceType promos[] = {None, Knight, Bishop, Rook, Queen};
+    int pairs[][2] = {{0, 63}, {63, 0}, {7, 56}, {56, 7}, {31, 32}, {0, 0}};
+    uint64_t key = 0;
+    for (int p = 0; p < 5; p++) {
+        for (auto &pair : pairs) {
+            Move m = {pair[0], pair[1], promos[p]};
+            // Use distinct low-bit keys so the inside-cluster key check can
+            // identify each entry uniquely on probe.
+            key++;
+            table.store(key, 0, 0, 1, TT_EXACT, m, 0);
+
+            TTEntry e;
+            REQUIRE(table.probe(key, e, 0));
+            CHECK(e.best_move.from == m.from);
+            CHECK(e.best_move.to == m.to);
+            CHECK(e.best_move.promotion == m.promotion);
+        }
+    }
+}
+
 TEST_CASE("TT: prefetch is safe on any key", "[tt]") {
     TranspositionTable table(1);
     // Smoke test: prefetch is a hint and must never crash or mutate state.
@@ -327,4 +404,49 @@ TEST_CASE("TT: prefetch is safe on any key", "[tt]") {
 
     TTEntry entry;
     CHECK_FALSE(table.probe(0, entry, 0));
+}
+
+TEST_CASE("TT: UCI Hash setting reaches a spawned search thread", "[tt][global]") {
+    // Regression for the bug where every `go` UCI command spawned a fresh
+    // search thread that default-constructed its own thread_local TT,
+    // silently ignoring the user's Hash setting and dropping all TT state
+    // between commands. Sizing the table on the test thread, then running a
+    // search on a separate thread, must observe the configured hash on the
+    // spawned side and persist entries across consecutive searches.
+
+    initSearch();
+    // Pick a hash small enough for a depth-10 search to land entries in the
+    // hashfull sample range with high confidence, but large enough that the
+    // search is not dominated by TT collisions.
+    setHashSize(1);
+    clearTT();
+
+    Board board;
+    board.setStartPos();
+
+    int firstHashfull = -1;
+    std::thread first([&] {
+        (void)findBestMove(board, 10);
+        firstHashfull = getHashfull();
+    });
+    first.join();
+    // A depth-10 search from startpos must fill a meaningful fraction of a
+    // 1 MB TT. If the spawned thread had silently fallen back to a private
+    // 16 MB thread_local instance, hashfull on the test thread would read
+    // zero because the entries never landed in `g_mainTT`.
+    REQUIRE(firstHashfull > 0);
+
+    int secondInitialHashfull = -1;
+    std::thread second([&] { secondInitialHashfull = getHashfull(); });
+    second.join();
+    // A freshly spawned thread must already see the persistent TT carrying
+    // entries from the first search, proving the table is truly global and
+    // not re-created per spawned search thread.
+    CHECK(secondInitialHashfull > 0);
+
+    clearTT();
+    int afterClear = -1;
+    std::thread third([&] { afterClear = getHashfull(); });
+    third.join();
+    CHECK(afterClear == 0);
 }

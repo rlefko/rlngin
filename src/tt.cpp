@@ -3,12 +3,85 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
+#include <thread>
+#include <type_traits>
+#include <vector>
 
-// Lock the TT entry layout: padding changes would silently alter the ratio of
-// entries per megabyte and invalidate hash-sizing assumptions.
-static_assert(sizeof(TTEntry) == 32, "TTEntry layout unexpectedly changed");
+#ifdef __linux__
+#include <sys/mman.h>
+#endif
+
+// Lock the packed entry layout: padding changes would silently alter the
+// ratio of entries per megabyte and invalidate hash-sizing assumptions.
+static_assert(sizeof(PackedTTEntry) == 10, "PackedTTEntry layout unexpectedly changed");
 static_assert(sizeof(TTCluster) == 64, "TTCluster must fit in one cache line");
 static_assert(alignof(TTCluster) == 64, "TTCluster must be cache-line aligned");
+
+// `clear()` zeros the table with `memset`, so the cluster and every entry
+// must be safe to bit-blit. If a member ever picks up a non-trivial copy or
+// destructor (e.g. someone adds a `std::string`), the static_asserts below
+// fail at compile time and force the rewrite of the clear path.
+static_assert(std::is_trivially_copyable_v<PackedTTEntry>,
+              "PackedTTEntry must be trivially copyable for memset-based clear");
+static_assert(std::is_trivially_copyable_v<TTCluster>,
+              "TTCluster must be trivially copyable for memset-based clear");
+
+namespace {
+
+// `genFlag8` bit layout:
+//   bits 0..1 : TTFlag (TT_NONE / TT_EXACT / TT_LOWER_BOUND / TT_UPPER_BOUND)
+//   bits 2..7 : 6-bit generation counter (wraps every 64 searches)
+constexpr uint8_t TT_FLAG_MASK = 0x3;
+constexpr uint8_t TT_GEN_SHIFT = 2;
+constexpr uint8_t TT_GEN_MASK = 0xFC;
+constexpr uint8_t TT_GEN_RANGE = 0x40;
+
+inline uint16_t encodeMove(const Move &m) {
+    return static_cast<uint16_t>((static_cast<uint32_t>(m.from) & 0x3F) |
+                                 ((static_cast<uint32_t>(m.to) & 0x3F) << 6) |
+                                 ((static_cast<uint32_t>(m.promotion) & 0x7) << 12));
+}
+
+inline Move decodeMove(uint16_t encoded) {
+    Move m;
+    m.from = static_cast<int>(encoded & 0x3F);
+    m.to = static_cast<int>((encoded >> 6) & 0x3F);
+    m.promotion = static_cast<PieceType>((encoded >> 12) & 0x7);
+    return m;
+}
+
+inline uint16_t keyCheck(uint64_t key) {
+    // Use the low 16 bits as the inside-cluster key check. The cluster index
+    // is `(key * num_clusters) >> 64`, which is dominated by the upper bits
+    // of the key and at hash sizes >= 16 MB consumes the entire upper 16
+    // bits. If the check were taken from the upper 16 bits it would be
+    // constant within every cluster, every probe would match the first
+    // occupied slot regardless of which position was queried, and the TT
+    // would effectively collapse to one slot per cluster. Stockfish uses
+    // the same low-16-bit choice for the same reason.
+    return static_cast<uint16_t>(key);
+}
+
+inline TTFlag flagOf(uint8_t genFlag8) {
+    return static_cast<TTFlag>(genFlag8 & TT_FLAG_MASK);
+}
+
+inline uint8_t generationOf(uint8_t genFlag8) {
+    return static_cast<uint8_t>((genFlag8 & TT_GEN_MASK) >> TT_GEN_SHIFT);
+}
+
+inline uint8_t packGenFlag(uint8_t generation, TTFlag flag) {
+    return static_cast<uint8_t>(((generation & 0x3F) << TT_GEN_SHIFT) |
+                                (static_cast<uint8_t>(flag) & TT_FLAG_MASK));
+}
+
+inline int agedQuality(uint8_t depth8, uint8_t storedGen, uint8_t currentGen) {
+    int age = (currentGen - storedGen) & (TT_GEN_RANGE - 1);
+    return static_cast<int>(depth8) - 8 * age;
+}
+
+} // namespace
 
 TranspositionTable::TranspositionTable(size_t size_mb) {
     resize(size_mb);
@@ -22,19 +95,63 @@ void TranspositionTable::resize(size_t size_mb) {
     // single-cache-line-per-cluster invariant holds at runtime as well as the
     // layout static_asserts hold at compile time.
     assert(reinterpret_cast<std::uintptr_t>(table_.data()) % alignof(TTCluster) == 0);
+
+#ifdef __linux__
+    // Ask the kernel for transparent huge pages over the TT region. The
+    // allocation is only 64-byte aligned (alignof(TTCluster)), not 2 MiB
+    // aligned, so the kernel applies the hint to the huge-page-aligned
+    // interior and falls back to 4 KiB pages for the head and tail. At
+    // typical 1+ GB hashes that interior is essentially the whole table,
+    // and the TLB-miss reduction is meaningful (the search hits the TT on
+    // every node). Below ~2 MiB the hint cannot apply at all, so skip it.
+    const size_t bytes = num_clusters_ * sizeof(TTCluster);
+    if (bytes >= 2ULL * 1024 * 1024) {
+        madvise(table_.data(), bytes, MADV_HUGEPAGE);
+    }
+#endif
+
     clear();
 }
 
 void TranspositionTable::clear() {
-    std::fill(table_.begin(), table_.end(), TTCluster{});
+    // memset is safe because the cluster is trivially copyable and every
+    // member's all-zero byte pattern is a valid empty state: `genFlag8 == 0`
+    // encodes TT_NONE, so probes filter the slot out before ever inspecting
+    // score / eval / move. Above the threshold the memset is sharded across
+    // up to eight worker threads so ucinewgame on a multi-gigabyte hash
+    // does not stall the engine on a serial DRAM wipe.
+    const size_t bytes = num_clusters_ * sizeof(TTCluster);
+    constexpr size_t PARALLEL_THRESHOLD = 64ULL * 1024 * 1024;
+
+    if (bytes < PARALLEL_THRESHOLD) {
+        std::memset(table_.data(), 0, bytes);
+    } else {
+        unsigned hw = std::thread::hardware_concurrency();
+        if (hw == 0) hw = 1;
+        const unsigned numThreads = std::min(hw, 8u);
+        const size_t chunkClusters = (num_clusters_ + numThreads - 1) / numThreads;
+        std::vector<std::thread> workers;
+        workers.reserve(numThreads);
+        for (unsigned t = 0; t < numThreads; t++) {
+            const size_t startCluster = static_cast<size_t>(t) * chunkClusters;
+            if (startCluster >= num_clusters_) break;
+            const size_t endCluster = std::min(startCluster + chunkClusters, num_clusters_);
+            workers.emplace_back([this, startCluster, endCluster] {
+                std::memset(&table_[startCluster], 0,
+                            (endCluster - startCluster) * sizeof(TTCluster));
+            });
+        }
+        for (auto &w : workers)
+            w.join();
+    }
     generation_ = 0;
 }
 
 void TranspositionTable::new_search() {
     // Bump once per root search so stored entries carry the generation tag
-    // used by the aging replacement rule. Natural uint8_t overflow wraps at
-    // 256, which is sufficient given search-to-search generations stay well
-    // within the ageing horizon we penalize against.
+    // used by the aging replacement rule. The stored field is six bits, so
+    // ages wrap every 64 searches; the runtime counter stays uint8_t and
+    // wraps every 256, which the public `generation()` accessor preserves.
     generation_++;
 }
 
@@ -60,6 +177,7 @@ int TranspositionTable::scoreFromTT(int16_t score, int ply) {
 void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTFlag flag,
                                const Move &best_move, int ply) {
     TTCluster &cluster = table_[index(key)];
+    const uint16_t k16 = keyCheck(key);
 
     // Prefer three slots in priority order: the slot already holding this key
     // (refresh in place so the newest info wins), then any empty slot, then
@@ -67,34 +185,32 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
     // subtracts 8 ply of effective depth, so a stale deep result loses to a
     // fresh shallow one once the stale entry trails the current search by
     // several generations.
-    TTEntry *target = nullptr;
+    PackedTTEntry *target = nullptr;
     bool sameKey = false;
     for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
-        if (cluster.entries[i].key == key && cluster.entries[i].flag != TT_NONE) {
-            target = &cluster.entries[i];
+        PackedTTEntry &slot = cluster.entries[i];
+        if (slot.key16 == k16 && flagOf(slot.genFlag8) != TT_NONE) {
+            target = &slot;
             sameKey = true;
             break;
         }
     }
     if (target == nullptr) {
         for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
-            if (cluster.entries[i].flag == TT_NONE) {
+            if (flagOf(cluster.entries[i].genFlag8) == TT_NONE) {
                 target = &cluster.entries[i];
                 break;
             }
         }
     }
     if (target == nullptr) {
-        auto quality = [this](const TTEntry &e) {
-            int age = static_cast<uint8_t>(generation_ - e.generation);
-            return static_cast<int>(e.depth) - 8 * age;
-        };
         target = &cluster.entries[0];
-        int best_quality = quality(cluster.entries[0]);
+        int best_quality = agedQuality(target->depth8, generationOf(target->genFlag8), generation_);
         for (int i = 1; i < TT_CLUSTER_SIZE; i++) {
-            int q = quality(cluster.entries[i]);
+            PackedTTEntry &slot = cluster.entries[i];
+            int q = agedQuality(slot.depth8, generationOf(slot.genFlag8), generation_);
             if (q < best_quality) {
-                target = &cluster.entries[i];
+                target = &slot;
                 best_quality = q;
             }
         }
@@ -109,30 +225,35 @@ void TranspositionTable::store(uint64_t key, int score, int eval, int depth, TTF
     // bestMove hint is preserved across rejected overwrites: a valid prior
     // move stays put rather than being erased by a store that could not supply
     // one of its own (for instance a leaf-level stand-pat write).
-    if (sameKey && flag != TT_EXACT && target->flag == TT_EXACT && depth < target->depth) {
+    TTFlag targetFlag = flagOf(target->genFlag8);
+    if (sameKey && flag != TT_EXACT && targetFlag == TT_EXACT &&
+        depth < static_cast<int>(target->depth8)) {
         // Preserve the deeper exact bound. Only refresh the generation so the
         // aging replacement logic does not treat it as stale.
-        target->generation = generation_;
+        target->genFlag8 = packGenFlag(generation_, targetFlag);
         return;
     }
-    if (sameKey && flag != TT_EXACT && depth + 4 <= target->depth) {
+    if (sameKey && flag != TT_EXACT && depth + 4 <= static_cast<int>(target->depth8)) {
         // New entry is meaningfully shallower than the existing same-key bound
         // and carries no stronger flag, so keep the deeper result intact.
-        target->generation = generation_;
+        target->genFlag8 = packGenFlag(generation_, targetFlag);
         return;
     }
 
     bool incomingHasMove = best_move.from != 0 || best_move.to != 0;
-    Move preservedMove = target->best_move;
-    bool preservedHasMove = sameKey && (preservedMove.from != 0 || preservedMove.to != 0);
+    uint16_t preservedMove = target->move16;
+    bool preservedHasMove = sameKey && preservedMove != 0;
 
-    target->key = key;
+    int clampedDepth = depth;
+    if (clampedDepth < 0) clampedDepth = 0;
+    if (clampedDepth > 0xFF) clampedDepth = 0xFF;
+
+    target->key16 = k16;
     target->score = scoreToTT(score, ply);
-    target->depth = static_cast<int16_t>(depth);
+    target->depth8 = static_cast<uint8_t>(clampedDepth);
     target->eval = static_cast<int16_t>(eval);
-    target->flag = flag;
-    target->generation = generation_;
-    target->best_move = (!incomingHasMove && preservedHasMove) ? preservedMove : best_move;
+    target->genFlag8 = packGenFlag(generation_, flag);
+    target->move16 = (!incomingHasMove && preservedHasMove) ? preservedMove : encodeMove(best_move);
 }
 
 void TranspositionTable::prefetch(uint64_t key) const {
@@ -145,11 +266,18 @@ void TranspositionTable::prefetch(uint64_t key) const {
 
 bool TranspositionTable::probe(uint64_t key, TTEntry &entry, int ply) const {
     const TTCluster &cluster = table_[index(key)];
+    const uint16_t k16 = keyCheck(key);
     for (int i = 0; i < TT_CLUSTER_SIZE; i++) {
-        const TTEntry &candidate = cluster.entries[i];
-        if (candidate.key == key && candidate.flag != TT_NONE) {
-            entry = candidate;
-            entry.score = static_cast<int16_t>(scoreFromTT(candidate.score, ply));
+        const PackedTTEntry &slot = cluster.entries[i];
+        TTFlag slotFlag = flagOf(slot.genFlag8);
+        if (slot.key16 == k16 && slotFlag != TT_NONE) {
+            entry.key = key;
+            entry.score = static_cast<int16_t>(scoreFromTT(slot.score, ply));
+            entry.depth = static_cast<int16_t>(slot.depth8);
+            entry.eval = slot.eval;
+            entry.flag = slotFlag;
+            entry.generation = generationOf(slot.genFlag8);
+            entry.best_move = decodeMove(slot.move16);
             return true;
         }
     }
@@ -157,20 +285,22 @@ bool TranspositionTable::probe(uint64_t key, TTEntry &entry, int ply) const {
 }
 
 int TranspositionTable::hashfull() const {
-    // Sample the first 1000 slots (500 clusters) so the reading is cheap and
-    // stable across table sizes. Only entries tagged with the current search
-    // generation count as full, so the number reflects table pressure from
-    // the live search rather than residue from prior searches.
+    // Sample the first 1000 slots so the reading is cheap and stable across
+    // table sizes. Only entries tagged with the current search generation
+    // count as full, so the number reflects table pressure from the live
+    // search rather than residue from prior searches.
     const size_t total_slots = num_clusters_ * TT_CLUSTER_SIZE;
     const size_t sample_slots = std::min(total_slots, static_cast<size_t>(1000));
     const size_t sample_clusters = (sample_slots + TT_CLUSTER_SIZE - 1) / TT_CLUSTER_SIZE;
+    const uint8_t currentGen = static_cast<uint8_t>(generation_ & 0x3F);
     int used = 0;
     for (size_t c = 0; c < sample_clusters; c++) {
         for (int e = 0; e < TT_CLUSTER_SIZE; e++) {
             const size_t slot = c * TT_CLUSTER_SIZE + e;
             if (slot >= sample_slots) break;
-            const TTEntry &entry = table_[c].entries[e];
-            if (entry.flag != TT_NONE && entry.generation == generation_) used++;
+            const PackedTTEntry &entry = table_[c].entries[e];
+            TTFlag slotFlag = flagOf(entry.genFlag8);
+            if (slotFlag != TT_NONE && generationOf(entry.genFlag8) == currentGen) used++;
         }
     }
     return static_cast<int>(used * 1000 / sample_slots);
