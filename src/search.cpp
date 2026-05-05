@@ -1235,6 +1235,10 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     state.stopped = false;
     state.nodes = 0;
     state.bestMove = {0, 0, None};
+    // Ponder is only refreshed on the exact aspiration path, so reset it here
+    // to make sure a stale ponder from a previous search cannot bleed into
+    // this one if the iteration is interrupted before an exact result lands.
+    state.ponderMove = {0, 0, None};
     memset(state.killers, 0, sizeof(state.killers));
     state.positionHistory = positionHistory;
 
@@ -1592,8 +1596,22 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         if (mateFound) break;
     }
 
-    if (state.bestMove.from == 0 && state.bestMove.to == 0 && !rootMoves.empty()) {
+    // Final sync. The aspiration loop only writes `state.bestMove` on the
+    // fail-high and exact paths; a fail-low retry refreshes `state.pv[0][0]`
+    // (via the empty-PV fallback) but leaves `state.bestMove` pointing at
+    // whatever the last fail-high set, so an iteration that fail-highs then
+    // fail-lows and gets interrupted by the clock would otherwise print a
+    // bestmove that disagrees with the last info pv line. The PV is the
+    // engine's most recent best estimate at the root, so pull bestMove and
+    // ponderMove straight from it; fall back to the first legal root move
+    // only if the PV was never seeded (which the seed at the top of this
+    // function already prevents in practice).
+    if (state.pvLength[0] > 0) {
+        state.bestMove = state.pv[0][0];
+        state.ponderMove = (state.pvLength[0] >= 2) ? state.pv[0][1] : Move{0, 0, None};
+    } else if (!rootMoves.empty()) {
         state.bestMove = rootMoves[0].move;
+        state.ponderMove = {0, 0, None};
     }
 
     // Fallback for searches that were stopped before any aspiration iteration
