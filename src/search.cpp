@@ -559,11 +559,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Internal iterative reduction: if we lack a TT move at a node deep enough
     // to justify it, spend one ply less so the sibling search produces a TT
-    // move for the eventual re-visit. Restricted to PV and cut nodes,
-    // matching modern Stockfish: all-nodes already prune aggressively, so
-    // dropping a ply there only adds noise without buying a useful TT hint
-    // for the next visit.
-    if ((pvNode || cutNode) && depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
+    // move for the eventual re-visit. Applies at every node type. The
+    // Stockfish convention restricts this to PV and cut nodes, but the
+    // engine's pruning thresholds were SPSA-tuned with the all-node firing
+    // in place; gating it down here without retuning leaves all-nodes
+    // searching one ply deeper than the rest of the system expects, which
+    // is the easiest way to leak Elo across the board.
+    if (depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
         depth -= 1;
     }
     // Cut-node IIR: at deep cut-nodes the search is already expected to fail
