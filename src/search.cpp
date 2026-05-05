@@ -14,6 +14,10 @@
 
 static constexpr int MAX_HISTORY = 16384;
 static constexpr int MAX_CONT_HISTORY = 16384;
+// Pawn history shares the saturation magnitude of the other quiet-history
+// tables so the bonus and malus loops can reuse the same `applyHistoryBonus`
+// gravity update without rescaling.
+static constexpr int MAX_PAWN_HISTORY = 16384;
 // Every correction-history table shares the same clamp magnitude and modulo
 // size. Per-table weighting is handled by SearchParams.*CorrWeight so the
 // relative contribution of each signal is tunable without changing storage.
@@ -1062,6 +1066,20 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     const Move &prev = searchedQuiets[i];
                     applyHistoryBonus(state.historyTables->mainHistory[us][prev.from][prev.to],
                                       -bonus, MAX_HISTORY);
+                }
+                // Pawn-keyed history reward and malus. Pawn key is shared by
+                // every move searched at this node (we make and unmake from
+                // the same root position), so the index is computed once.
+                int pawnIdx = static_cast<int>(board.pawnKey & (PAWN_HIST_SIZE - 1));
+                PieceType cutPt = board.squares[m.from].type;
+                applyHistoryBonus(state.historyTables->pawnHistory[us][pawnIdx][cutPt][m.to], bonus,
+                                  MAX_PAWN_HISTORY);
+                for (int i = 0; i < numSearchedQuiets; i++) {
+                    const Move &prev = searchedQuiets[i];
+                    PieceType prevPt = board.squares[prev.from].type;
+                    applyHistoryBonus(
+                        state.historyTables->pawnHistory[us][pawnIdx][prevPt][prev.to], -bonus,
+                        MAX_PAWN_HISTORY);
                 }
                 if (ply >= 1) {
                     PieceType prevPt = state.movedPiece[ply - 1];

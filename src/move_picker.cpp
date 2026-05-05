@@ -99,6 +99,15 @@ int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
         if (ply >= 0) {
             quietHist += contHistoryScore(state, ply, pt, m.to);
         }
+        // Pawn-keyed history. The same pawn structure usually persists for
+        // many search nodes, so a quiet refutation in this structure
+        // generalizes well to sibling positions reached through different
+        // piece move orders. Divided by `PawnHistoryWeight` so SPSA can
+        // dampen the signal if it ever crowds out the butterfly +
+        // continuation contribution at default settings.
+        int pawnIdx = static_cast<int>(board.pawnKey & (PAWN_HIST_SIZE - 1));
+        quietHist += state.historyTables->pawnHistory[board.sideToMove][pawnIdx][pt][m.to] /
+                     searchParams.PawnHistoryWeight;
         if (outQuietHistory) *outQuietHistory = quietHist;
     }
 

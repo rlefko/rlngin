@@ -10,12 +10,13 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // Ninety two is the committed SPSA surface: the previous eighty eight
-    // scalars plus the four search-strength uplift scalars (SingularBetaMul,
-    // SingularDepthDiv, SingularDoubleMargin, IirCutNodeDepth). If this
-    // count ever changes, the SPSA driver's iteration budget and the PR
+    // Ninety three is the committed SPSA surface: the previous eighty
+    // eight scalars plus the five search-strength uplift scalars
+    // (PawnHistoryWeight, SingularBetaMul, SingularDepthDiv,
+    // SingularDoubleMargin, IirCutNodeDepth). If this count ever
+    // changes, the SPSA driver's iteration budget and the PR
     // description should move too.
-    REQUIRE(specs.size() == 92);
+    REQUIRE(specs.size() == 93);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {
