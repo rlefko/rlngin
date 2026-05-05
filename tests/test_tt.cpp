@@ -1,6 +1,9 @@
+#include "board.h"
 #include "catch_amalgamated.hpp"
+#include "search.h"
 #include "tt.h"
 #include "types.h"
+#include <thread>
 
 TEST_CASE("TT: store and probe round-trip", "[tt]") {
     TranspositionTable table(1);
@@ -327,4 +330,49 @@ TEST_CASE("TT: prefetch is safe on any key", "[tt]") {
 
     TTEntry entry;
     CHECK_FALSE(table.probe(0, entry, 0));
+}
+
+TEST_CASE("TT: UCI Hash setting reaches a spawned search thread", "[tt][global]") {
+    // Regression for the bug where every `go` UCI command spawned a fresh
+    // search thread that default-constructed its own thread_local TT,
+    // silently ignoring the user's Hash setting and dropping all TT state
+    // between commands. Sizing the table on the test thread, then running a
+    // search on a separate thread, must observe the configured hash on the
+    // spawned side and persist entries across consecutive searches.
+
+    initSearch();
+    // Pick a hash small enough for a depth-10 search to land entries in the
+    // hashfull sample range with high confidence, but large enough that the
+    // search is not dominated by TT collisions.
+    setHashSize(1);
+    clearTT();
+
+    Board board;
+    board.setStartPos();
+
+    int firstHashfull = -1;
+    std::thread first([&] {
+        (void)findBestMove(board, 10);
+        firstHashfull = getHashfull();
+    });
+    first.join();
+    // A depth-10 search from startpos must fill a meaningful fraction of a
+    // 1 MB TT. If the spawned thread had silently fallen back to a private
+    // 16 MB thread_local instance, hashfull on the test thread would read
+    // zero because the entries never landed in `g_mainTT`.
+    REQUIRE(firstHashfull > 0);
+
+    int secondInitialHashfull = -1;
+    std::thread second([&] { secondInitialHashfull = getHashfull(); });
+    second.join();
+    // A freshly spawned thread must already see the persistent TT carrying
+    // entries from the first search, proving the table is truly global and
+    // not re-created per spawned search thread.
+    CHECK(secondInitialHashfull > 0);
+
+    clearTT();
+    int afterClear = -1;
+    std::thread third([&] { afterClear = getHashfull(); });
+    third.join();
+    CHECK(afterClear == 0);
 }
