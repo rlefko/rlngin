@@ -114,21 +114,24 @@ TEST_CASE("TT: cluster absorbs colliding keys", "[tt]") {
     Move move1 = {1, 2, None};
     Move move2 = {3, 4, None};
 
-    // Small keys always map to the first cluster under multiplicative hashing,
-    // so both stores should land in the same two-way cluster and both should
-    // probe back cleanly instead of one evicting the other.
-    table.store(1, 100, 10, 5, TT_EXACT, move1, 0);
-    table.store(2, 200, 20, 6, TT_LOWER_BOUND, move2, 0);
+    // Two keys with distinct upper-16 bits so the packed key check can tell
+    // them apart, but small enough lower bits that multiplicative hashing
+    // routes both to cluster 0. The cluster has room for both, and probes
+    // come back cleanly without one evicting the other.
+    uint64_t k1 = 1ULL << 48;
+    uint64_t k2 = 2ULL << 48;
+    table.store(k1, 100, 10, 5, TT_EXACT, move1, 0);
+    table.store(k2, 200, 20, 6, TT_LOWER_BOUND, move2, 0);
 
     TTEntry e1;
-    REQUIRE(table.probe(1, e1, 0));
+    REQUIRE(table.probe(k1, e1, 0));
     CHECK(e1.score == 100);
     CHECK(e1.depth == 5);
     CHECK(e1.flag == TT_EXACT);
     CHECK(e1.best_move.from == 1);
 
     TTEntry e2;
-    REQUIRE(table.probe(2, e2, 0));
+    REQUIRE(table.probe(k2, e2, 0));
     CHECK(e2.score == 200);
     CHECK(e2.depth == 6);
     CHECK(e2.flag == TT_LOWER_BOUND);
@@ -254,34 +257,51 @@ TEST_CASE("TT: same-key store preserves an existing best move on empty write", "
 }
 
 TEST_CASE("TT: aging evicts stale deep entries before fresh shallow ones", "[tt]") {
-    TranspositionTable table(1);
+    // Size the table down to a single cluster so every key, regardless of
+    // its upper bits, lands in the same six-slot cluster. The first store
+    // gets a deep entry that we then age by bumping generations; the next
+    // four keys fill the rest of the cluster with current-generation
+    // shallow entries; the final seventh key forces a replacement decision
+    // against a full cluster.
+    TranspositionTable table(0);
+
+    uint64_t kStale = 1ULL << 48;
+    uint64_t kFresh[4] = {2ULL << 48, 3ULL << 48, 4ULL << 48, 5ULL << 48};
+    uint64_t kCurrent = 6ULL << 48;
+    uint64_t kIncoming = 7ULL << 48;
     Move stale = {1, 2, None};
     Move fresh = {3, 4, None};
+    Move current = {7, 8, None};
     Move incoming = {5, 6, None};
 
-    // All three small keys map to cluster 0 under multiplicative hashing, so
-    // they contend for the same two-slot cluster.
     table.new_search();
-    table.store(1, 100, 0, 20, TT_EXACT, stale, 0);
+    table.store(kStale, 100, 0, 20, TT_EXACT, stale, 0);
 
-    // Bump four generations so the entry for key 1 is four searches stale.
+    // Bump four generations so the stale entry trails the live search by
+    // four; the aging penalty (4 generations * 8 = 32 effective ply) easily
+    // beats the 19-ply raw depth advantage of the stale slot.
     for (int i = 0; i < 4; i++)
         table.new_search();
 
-    // Fresh shallow entry lands in the remaining empty slot.
-    table.store(2, 200, 0, 5, TT_EXACT, fresh, 0);
+    for (int i = 0; i < 4; i++) {
+        table.store(kFresh[i], 200 + i, 0, 5, TT_EXACT, fresh, 0);
+    }
+    table.store(kCurrent, 250, 0, 6, TT_EXACT, current, 0);
 
-    // A new current-generation entry must evict the stale deep slot rather
-    // than the fresh shallow one, because age (4 generations * 8) outweighs
-    // the raw depth advantage of 20 - 5 = 15.
-    table.store(3, 300, 0, 1, TT_EXACT, incoming, 0);
+    // Cluster is now full (six slots). The new current-generation entry must
+    // evict the stale deep slot, not any of the fresh shallow ones.
+    table.store(kIncoming, 300, 0, 1, TT_EXACT, incoming, 0);
 
     TTEntry entry;
-    REQUIRE(table.probe(2, entry, 0));
-    CHECK(entry.score == 200);
-    REQUIRE(table.probe(3, entry, 0));
+    for (int i = 0; i < 4; i++) {
+        REQUIRE(table.probe(kFresh[i], entry, 0));
+        CHECK(entry.score == 200 + i);
+    }
+    REQUIRE(table.probe(kCurrent, entry, 0));
+    CHECK(entry.score == 250);
+    REQUIRE(table.probe(kIncoming, entry, 0));
     CHECK(entry.score == 300);
-    CHECK_FALSE(table.probe(1, entry, 0));
+    CHECK_FALSE(table.probe(kStale, entry, 0));
 }
 
 TEST_CASE("TT: generation counter wraps cleanly", "[tt]") {
@@ -319,6 +339,33 @@ TEST_CASE("TT: hashfull counts only current-generation entries", "[tt]") {
     // full, since they no longer reflect work from the live search.
     table.new_search();
     CHECK(table.hashfull() == 0);
+}
+
+TEST_CASE("TT: packed move encoding round-trips for boundary cases", "[tt]") {
+    TranspositionTable table(1);
+
+    // Walk every from / to combination plus every promotion type to confirm
+    // the 6 + 6 + 3 bit packing of `Move` survives the store / probe cycle.
+    // Boundary squares (0 and 63) catch any off-by-one in the bit layout,
+    // and each promotion piece exercises the high bits of the encoding.
+    PieceType promos[] = {None, Knight, Bishop, Rook, Queen};
+    int pairs[][2] = {{0, 63}, {63, 0}, {7, 56}, {56, 7}, {31, 32}, {0, 0}};
+    uint64_t key = 0;
+    for (int p = 0; p < 5; p++) {
+        for (auto &pair : pairs) {
+            Move m = {pair[0], pair[1], promos[p]};
+            // Use distinct upper-16 bits so each store lands in a slot the
+            // packed key check can identify uniquely on probe.
+            key += 1ULL << 48;
+            table.store(key, 0, 0, 1, TT_EXACT, m, 0);
+
+            TTEntry e;
+            REQUIRE(table.probe(key, e, 0));
+            CHECK(e.best_move.from == m.from);
+            CHECK(e.best_move.to == m.to);
+            CHECK(e.best_move.promotion == m.promotion);
+        }
+    }
 }
 
 TEST_CASE("TT: prefetch is safe on any key", "[tt]") {
