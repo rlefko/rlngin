@@ -18,14 +18,15 @@ constexpr int16_t TT_NO_EVAL = std::numeric_limits<int16_t>::min();
 // on a single cache line.
 constexpr int TT_CLUSTER_SIZE = 6;
 
-// Internal storage layout. `key16` is the upper 16 bits of the full hash key,
-// used as a collision check on probe (Stockfish-style). The remaining 48 bits
-// of the key are encoded in the cluster index, so the combination uniquely
-// identifies a position with overwhelmingly high probability and the rare
-// 1-in-65536 false-hit is filtered out by the move-legality check on the
-// search side. `move16` packs the move into `from | (to << 6) | (promo << 12)`.
-// `genFlag8` packs the generation into the upper six bits and the bound flag
-// into the lower two bits.
+// Internal storage layout. `key16` is the low 16 bits of the full hash key,
+// used as the inside-cluster collision check (Stockfish-style). The cluster
+// index is taken from the high bits of the key by multiplicative hashing, so
+// the low 16 bits are independent of the cluster and uniquely identify the
+// entry within it with 65535/65536 probability; the rare false-hit is
+// filtered out by the move-legality check on the search side. `move16`
+// packs the move into `from | (to << 6) | (promo << 12)`. `genFlag8` packs
+// the generation into the upper six bits and the bound flag into the lower
+// two bits.
 struct PackedTTEntry {
     uint16_t key16 = 0;
     uint16_t move16 = 0;

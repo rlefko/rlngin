@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstring>
 #include <thread>
+#include <type_traits>
 #include <vector>
 
 #ifdef __linux__
@@ -16,6 +17,15 @@
 static_assert(sizeof(PackedTTEntry) == 10, "PackedTTEntry layout unexpectedly changed");
 static_assert(sizeof(TTCluster) == 64, "TTCluster must fit in one cache line");
 static_assert(alignof(TTCluster) == 64, "TTCluster must be cache-line aligned");
+
+// `clear()` zeros the table with `memset`, so the cluster and every entry
+// must be safe to bit-blit. If a member ever picks up a non-trivial copy or
+// destructor (e.g. someone adds a `std::string`), the static_asserts below
+// fail at compile time and force the rewrite of the clear path.
+static_assert(std::is_trivially_copyable_v<PackedTTEntry>,
+              "PackedTTEntry must be trivially copyable for memset-based clear");
+static_assert(std::is_trivially_copyable_v<TTCluster>,
+              "TTCluster must be trivially copyable for memset-based clear");
 
 namespace {
 

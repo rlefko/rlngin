@@ -37,7 +37,10 @@ static int lmrReductions[MAX_PLY][MAX_LMR_MOVES];
 namespace {
 TranspositionTable g_mainTT(16);
 thread_local TranspositionTable *g_tlsTTOverride = nullptr;
-thread_local TranspositionTable g_leafTT(8);
+// Sized to match the original per-thread tuner TT so leaf-walk hit rates
+// (qsearchLeafBoard, pvLeafBoard, qsearchScore) stay at parity with prior
+// tuner runs. Each tuner worker thread allocates one of these on first use.
+thread_local TranspositionTable g_leafTT(16);
 
 inline TranspositionTable &tt() {
     return g_tlsTTOverride ? *g_tlsTTOverride : g_mainTT;
