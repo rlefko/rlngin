@@ -185,12 +185,17 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
 }
 
 // Apply the same bonus to every tier of continuation history for this move.
+// Skip tiers whose ancestor move is a null move (movedPiece sentinel `None`):
+// every null-move-parent context shares the `[None][0]` slot, so writes there
+// pollute unrelated subtrees that happen to also have a null parent at the
+// matching offset.
 static void updateContHistoryAll(SearchState &state, int ply, PieceType currPt, int currTo,
                                  int bonus) {
     for (int t = 0; t < 3; t++) {
         int off = CONT_HIST_OFFSETS[t];
         if (ply >= off) {
             PieceType prevPt = state.movedPiece[ply - off];
+            if (prevPt == None) continue;
             int prevTo = state.moveStack[ply - off].to;
             applyHistoryBonus(state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo],
                               bonus, MAX_CONT_HISTORY);
@@ -1079,7 +1084,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     int prevTo = state.moveStack[ply - 1].to;
                     PieceType currPt = board.squares[m.from].type;
                     Color prevColor = (us == White) ? Black : White;
-                    state.historyTables->counterMoves[prevColor][prevPt][prevTo] = m;
+                    // Skip the counter-move write when the parent was a null
+                    // move; every null-move-parent context shares the
+                    // `[None][0]` slot and would otherwise contaminate
+                    // unrelated subtrees.
+                    if (prevPt != None) {
+                        state.historyTables->counterMoves[prevColor][prevPt][prevTo] = m;
+                    }
                     updateContHistoryAll(state, ply, currPt, m.to, bonus);
                     // Penalize previously searched quiets across every tier
                     for (int i = 0; i < numSearchedQuiets; i++) {

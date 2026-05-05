@@ -75,6 +75,9 @@ int contHistoryScore(const SearchState &state, int ply, PieceType currPt, int cu
         int off = CONT_HIST_OFFSETS[t];
         if (ply >= off) {
             PieceType prevPt = state.movedPiece[ply - off];
+            // Null-move ancestors share the `[None][0]` slot across every
+            // unrelated subtree, so a read there is not a real signal.
+            if (prevPt == None) continue;
             int prevTo = state.moveStack[ply - off].to;
             score += state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo];
         }
@@ -145,14 +148,19 @@ int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
         }
     }
 
-    // Counter-move: the quiet reply that previously refuted the prior move
+    // Counter-move: the quiet reply that previously refuted the prior move.
+    // Skip when the previous move was a null move; the `[None][0]` slot is
+    // shared across unrelated null-move-parent contexts and would yield a
+    // misleading match.
     if (ply >= 1) {
-        Color prevColor = (board.sideToMove == White) ? Black : White;
         PieceType prevPt = state.movedPiece[ply - 1];
-        int prevTo = state.moveStack[ply - 1].to;
-        const Move &counter = state.historyTables->counterMoves[prevColor][prevPt][prevTo];
-        if (m.from == counter.from && m.to == counter.to && m.promotion == counter.promotion) {
-            return 3500000;
+        if (prevPt != None) {
+            Color prevColor = (board.sideToMove == White) ? Black : White;
+            int prevTo = state.moveStack[ply - 1].to;
+            const Move &counter = state.historyTables->counterMoves[prevColor][prevPt][prevTo];
+            if (m.from == counter.from && m.to == counter.to && m.promotion == counter.promotion) {
+                return 3500000;
+            }
         }
     }
 
@@ -319,10 +327,12 @@ MovePicker::MovePicker(Board &board, const SearchState &state, int ply, Move ttM
     killer1_ = state.killers[ply][0];
     killer2_ = state.killers[ply][1];
     if (ply >= 1) {
-        Color prevColor = (board.sideToMove == White) ? Black : White;
         PieceType prevPt = state.movedPiece[ply - 1];
-        int prevTo = state.moveStack[ply - 1].to;
-        counterMove_ = state.historyTables->counterMoves[prevColor][prevPt][prevTo];
+        if (prevPt != None) {
+            Color prevColor = (board.sideToMove == White) ? Black : White;
+            int prevTo = state.moveStack[ply - 1].to;
+            counterMove_ = state.historyTables->counterMoves[prevColor][prevPt][prevTo];
+        }
     }
 }
 
