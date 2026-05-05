@@ -181,12 +181,17 @@ static void updateCorrectionHistories(const Board &board, SearchState &state, in
 }
 
 // Apply the same bonus to every tier of continuation history for this move.
+// Skip tiers whose ancestor move is a null move (movedPiece sentinel `None`):
+// every null-move-parent context shares the `[None][0]` slot, so writes there
+// pollute unrelated subtrees that happen to also have a null parent at the
+// matching offset.
 static void updateContHistoryAll(SearchState &state, int ply, PieceType currPt, int currTo,
                                  int bonus) {
     for (int t = 0; t < 3; t++) {
         int off = CONT_HIST_OFFSETS[t];
         if (ply >= off) {
             PieceType prevPt = state.movedPiece[ply - off];
+            if (prevPt == None) continue;
             int prevTo = state.moveStack[ply - off].to;
             applyHistoryBonus(state.historyTables->contHistory[t][prevPt][prevTo][currPt][currTo],
                               bonus, MAX_CONT_HISTORY);
@@ -485,8 +490,17 @@ static bool isRepetition(const Board &board, const SearchState &state, int ply) 
     return false;
 }
 
+// `cutNode` carries the Stockfish-style node-type signal: true marks a
+// non-PV node where the parent expects a fail-high (children of a cut-node
+// are searched with a null window and we are looking for any move that
+// proves >= beta). False marks both PV nodes and all-nodes (where the
+// parent expects fail-low). The flag flips between cut and all on every
+// null-window recursion so descendants stay correctly classified, and
+// resets to false on PV re-searches. Pruning and reduction sites read it
+// to decide how aggressively to trim children of an expected cut.
 static int negamax(Board &board, int depth, int ply, int alpha, int beta, SearchState &state,
-                   bool allowNullMove = true, Move excludedMove = {0, 0, None}) {
+                   bool allowNullMove = true, Move excludedMove = {0, 0, None},
+                   bool cutNode = false) {
     state.nodes++;
     if (ply > state.seldepth) state.seldepth = ply;
     state.pvLength[ply] = ply;
@@ -511,8 +525,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     Move ttMove = {0, 0, None};
     bool hasExcludedMove = (excludedMove.from != 0 || excludedMove.to != 0);
     bool ttHit = tt.probe(board.key, ttEntry, ply);
+    bool ttCapture = false;
     if (ttHit) {
         ttMove = ttEntry.best_move;
+        // Cache whether the TT move is a capture so the singular block can
+        // gate its multi-cut shortcut on it. A TT capture means quiet
+        // alternatives are likely tactically dominated; we should not
+        // shortcut past a singular search just because it happened to
+        // surface another capture at shallow depth.
+        if (ttMove.from != 0 || ttMove.to != 0) {
+            ttCapture = isCapture(board, ttMove);
+        }
         // PV nodes never take a TT score cutoff. A stale exact bound from an
         // earlier root search, or even from an earlier iteration of the
         // current search, can otherwise short-circuit the fresh verdict we
@@ -536,8 +559,23 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
 
     // Internal iterative reduction: if we lack a TT move at a node deep enough
     // to justify it, spend one ply less so the sibling search produces a TT
-    // move for the eventual re-visit. Applies at both PV and non-PV nodes.
+    // move for the eventual re-visit. Applies at every node type. The
+    // Stockfish convention restricts this to PV and cut nodes, but the
+    // engine's pruning thresholds were SPSA-tuned with the all-node firing
+    // in place; gating it down here without retuning leaves all-nodes
+    // searching one ply deeper than the rest of the system expects, which
+    // is the easiest way to leak Elo across the board.
     if (depth >= 4 && ttMove.from == 0 && ttMove.to == 0) {
+        depth -= 1;
+    }
+    // Cut-node IIR: at deep cut-nodes the search is already expected to fail
+    // high, so an extra ply less at this visit is comparatively cheap when
+    // the TT either has no best move or a much shallower record than the
+    // current iteration. Stacks with the original rule when both apply, so a
+    // depth-8 cut-node with no TT move loses two plies instead of one (the
+    // original IIR drops 8 to 7, then this rule drops it to 6).
+    if (cutNode && depth >= searchParams.IirCutNodeDepth &&
+        (!ttHit || (ttMove.from == 0 && ttMove.to == 0) || ttEntry.depth + 4 <= depth)) {
         depth -= 1;
     }
 
@@ -620,13 +658,20 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             state.movedPiece[ply] = None;
             UndoInfo nullUndo = board.makeNullMove();
             state.searchKeys[ply + 1] = board.key;
-            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state);
+            // The null-window child of a fail-high prediction is itself an
+            // expected fail-low (all-node), so the flag flips for the recurse.
+            int nullScore = -negamax(board, depth - 1 - R, ply + 1, -beta, -beta + 1, state, true,
+                                     Move{0, 0, None}, !cutNode);
             board.unmakeNullMove(nullUndo);
             if (state.stopped) return 0;
             if (nullScore >= beta) {
                 // Verification search at high depths to guard against zugzwang
                 if (depth >= 8) {
-                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false);
+                    // Verification re-enters with the original window at the
+                    // same ply; treat it as a non-cut search so descendants
+                    // do not inherit the original cut-node prediction.
+                    int verifyScore = negamax(board, depth - 1 - R, ply, alpha, beta, state, false,
+                                              Move{0, 0, None}, false);
                     if (state.stopped) return 0;
                     if (verifyScore >= beta) return beta;
                 } else {
@@ -637,8 +682,11 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     }
 
     // ProbCut: use a shallow search of captures to predict whether a full-depth
-    // search would produce a beta cutoff
-    if (!pvNode && !inCheck && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
+    // search would produce a beta cutoff. Skipped inside a singular search:
+    // ProbCut iterates legal captures including the excluded TT move, and
+    // returning early would let the TT capture itself "verify" that another
+    // move reaches singularBeta, defeating the singular check.
+    if (!pvNode && !inCheck && !hasExcludedMove && depth >= 5 && beta > -MATE_SCORE + MAX_PLY &&
         std::abs(beta) < MATE_SCORE - MAX_PLY) {
         int probcutBeta = beta + 483 - 145 * improving;
         int probcutDepth = depth - 4;
@@ -662,8 +710,10 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             state.movedPiece[ply] = board.squares[pcMove.from].type;
             UndoInfo pcUndo = board.makeMove(pcMove);
 
-            int pcScore =
-                -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1, state);
+            // Null-window child of a node that just predicted fail-high; flip
+            // the cut flag so the recurse sees itself as an all-node.
+            int pcScore = -negamax(board, probcutDepth, ply + 1, -probcutBeta, -probcutBeta + 1,
+                                   state, true, Move{0, 0, None}, !cutNode);
 
             board.unmakeMove(pcMove, pcUndo);
             if (state.stopped) return 0;
@@ -679,19 +729,50 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     // Restricted singular extensions: if the TT move is much better than all
     // alternatives, extend its search by one ply to resolve critical lines
     int singularExtension = 0;
-    if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove && ttMove.from != 0 &&
-        ttEntry.depth >= depth - 3 &&
+    if (depth >= 8 && ply > 0 && !inCheck && !hasExcludedMove &&
+        (ttMove.from != 0 || ttMove.to != 0) && ttEntry.depth >= depth - 3 &&
         (ttEntry.flag == TT_LOWER_BOUND || ttEntry.flag == TT_EXACT) &&
         std::abs(ttEntry.score) < MATE_SCORE - MAX_PLY) {
 
-        int singularBeta = ttEntry.score - depth * 2;
-        int singularDepth = (depth - 1) / 2;
+        int singularBeta = ttEntry.score - searchParams.SingularBetaMul * depth;
+        int singularDepth = (depth - 1) / searchParams.SingularDepthDiv;
 
+        // Singular search asks "does any non-TT move at shallow depth reach
+        // singularBeta". Pass cutNode unchanged so the underlying position's
+        // node-type signal is preserved.
         int singularScore = negamax(board, singularDepth, ply, singularBeta - 1, singularBeta,
-                                    state, false, ttMove);
+                                    state, false, ttMove, cutNode);
 
         if (singularScore < singularBeta) {
             singularExtension = 1;
+            // Double extension: when alternatives fall well below
+            // singularBeta the TT move is sharply better than every other
+            // candidate. Gated to non-PV nodes; the existing per-path
+            // extension budget keeps double extensions from stacking
+            // indefinitely down forcing lines.
+            if (!pvNode && singularScore < singularBeta - searchParams.SingularDoubleMargin) {
+                singularExtension = 2;
+            }
+        } else if (singularBeta >= beta && !ttCapture) {
+            // Multi-cut: the singular search proved a non-TT move also
+            // reaches the parent's beta at shallow depth, so this node is
+            // very likely to fail high too. Returning singularBeta is a
+            // shallow lower bound; we deliberately do NOT store it in TT
+            // (matches Stockfish), since the deeper search may still tighten
+            // it. Gated on `!ttCapture` so a tactically loaded TT move does
+            // not let us shortcut past the alternatives' real evaluation.
+            return singularBeta;
+        } else if (ttEntry.score >= beta) {
+            // Strong negative extension: the TT score itself already proves
+            // a fail-high, so the singular search not finding alternatives
+            // is consistent with the TT verdict. Drop two plies because the
+            // outcome is over-determined and any further work is wasted.
+            singularExtension = -2;
+        } else if (cutNode) {
+            // Negative extension: TT score is below beta but we are at a
+            // cut-node already expecting fail-high. Searching shallower
+            // saves work because the TT verdict is likely correct.
+            singularExtension = -1;
         }
     }
 
@@ -727,9 +808,12 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         bool capture = isCapture(board, m);
         bool isPromotion = (m.promotion != None);
 
-        // Compute extensions before makeMove so piece types are still on the board
+        // Compute extensions before makeMove so piece types are still on the board.
+        // Apply the singular verdict whether positive (extend) or negative
+        // (search shallower) so the negative-extension path actually shaves
+        // a ply on the TT move at cut-nodes.
         int moveExtension = 0;
-        if (singularExtension > 0 && m.from == ttMove.from && m.to == ttMove.to &&
+        if (singularExtension != 0 && m.from == ttMove.from && m.to == ttMove.to &&
             m.promotion == ttMove.promotion) {
             moveExtension = singularExtension;
         }
@@ -798,11 +882,16 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         }
         int extBudget = 2 * state.rootDepth - state.extensionsOnPath[ply];
         if (extBudget <= 0) {
-            moveExtension = 0;
+            moveExtension = std::min(moveExtension, 0);
         } else if (moveExtension > extBudget) {
             moveExtension = extBudget;
         }
-        state.extensionsOnPath[ply + 1] = state.extensionsOnPath[ply] + moveExtension;
+        // Only positive extensions consume the per-path budget. Letting a
+        // negative extension decrement the tracker would credit forcing
+        // lines with extra room for later +1 / +2 extensions, which is the
+        // opposite of the budget's purpose. Stockfish accumulates only
+        // positive extensions for the same reason.
+        state.extensionsOnPath[ply + 1] = state.extensionsOnPath[ply] + std::max(0, moveExtension);
 
         // Futility pruning: skip quiet moves at shallow depth when static eval + margin <= alpha
         if (!inCheck && depth <= 3 && moveIndex > 0 && !capture && !isPromotion && !givesCheck &&
@@ -825,11 +914,23 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
             }
         }
 
+        // Negative singular extensions only fire from the singular block
+        // when remaining depth is at least 8, so the natural `depth - 1` step
+        // here cannot push newDepth below 1 from a negative extension. We
+        // deliberately do NOT clamp to 1 because doing so would block the
+        // depth-1 -> qsearch transition that turns the leaves of the tree
+        // into the quiescence search.
         int newDepth = depth - 1 + moveExtension;
 
         int score;
         if (moveIndex == 0) {
-            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
+            // First move: full window. PV nodes start with cutNode=false; at
+            // a non-PV node the first child of a cut prediction is the
+            // candidate that should fail high, so its own children are then
+            // expected to fail low, hence the flip.
+            bool firstChildCutNode = pvNode ? false : !cutNode;
+            score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true, Move{0, 0, None},
+                             firstChildCutNode);
         } else {
             // Late move reductions
             int reduction = 0;
@@ -897,17 +998,25 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                 reduction = std::max(0, std::min(reduction, newDepth - 1));
             }
 
-            // Reduced null-window search
-            score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state);
+            // Reduced null-window search. Null-window children of a node are
+            // expected to fail high relative to alpha+1, so they are cut-nodes.
+            score = -negamax(board, newDepth - reduction, ply + 1, -alpha - 1, -alpha, state, true,
+                             Move{0, 0, None}, true);
 
-            // Re-search at full depth if reduced search beats alpha
+            // Re-search at full depth if reduced search beats alpha. The
+            // earlier reduced search expected a cut and did not deliver one,
+            // so flip the prediction: this re-search now treats the child as
+            // an all-node relative to the parent's expectation.
             if (reduction > 0 && score > alpha) {
-                score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state);
+                score = -negamax(board, newDepth, ply + 1, -alpha - 1, -alpha, state, true,
+                                 Move{0, 0, None}, !cutNode);
             }
 
-            // PVS: re-search with full window if null-window search beats alpha
+            // PVS: re-search with full window if null-window search beats alpha.
+            // PV re-searches are PV nodes, never cut-nodes.
             if (score > alpha && score < beta) {
-                score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state);
+                score = -negamax(board, newDepth, ply + 1, -beta, -alpha, state, true,
+                                 Move{0, 0, None}, false);
             }
         }
 
@@ -959,7 +1068,13 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
                     int prevTo = state.moveStack[ply - 1].to;
                     PieceType currPt = board.squares[m.from].type;
                     Color prevColor = (us == White) ? Black : White;
-                    state.historyTables->counterMoves[prevColor][prevPt][prevTo] = m;
+                    // Skip the counter-move write when the parent was a null
+                    // move; every null-move-parent context shares the
+                    // `[None][0]` slot and would otherwise contaminate
+                    // unrelated subtrees.
+                    if (prevPt != None) {
+                        state.historyTables->counterMoves[prevColor][prevPt][prevTo] = m;
+                    }
                     updateContHistoryAll(state, ply, currPt, m.to, bonus);
                     // Penalize previously searched quiets across every tier
                     for (int i = 0; i < numSearchedQuiets; i++) {
@@ -1293,14 +1408,21 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
 
                     int score;
                     if (!firstSearched) {
-                        score = -negamax(pos, adjustedDepth - 1, 1, -beta, -localAlpha, state);
+                        // Root PV move: full window, PV-style child.
+                        score = -negamax(pos, adjustedDepth - 1, 1, -beta, -localAlpha, state, true,
+                                         Move{0, 0, None}, false);
                         firstSearched = true;
                     } else {
-                        // PVS: null-window search for non-first moves
+                        // PVS: null-window search for non-first moves. The
+                        // null-window child is expected to fail high (we are
+                        // looking for any move that proves >= localAlpha+1),
+                        // so it is a cut-node.
                         score = -negamax(pos, adjustedDepth - 1, 1, -localAlpha - 1, -localAlpha,
-                                         state);
+                                         state, true, Move{0, 0, None}, true);
                         if (score > localAlpha && score < beta) {
-                            score = -negamax(pos, adjustedDepth - 1, 1, -beta, -localAlpha, state);
+                            // Full-window PVS re-search: PV node, not cut.
+                            score = -negamax(pos, adjustedDepth - 1, 1, -beta, -localAlpha, state,
+                                             true, Move{0, 0, None}, false);
                         }
                     }
 

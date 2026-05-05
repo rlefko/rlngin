@@ -82,6 +82,29 @@ struct SearchParams {
     int LmrThreatEscape;
     int LmrThreatWalkIn;
 
+    // Singular extension scalars. `singularBeta = ttScore - SingularBetaMul *
+    // depth` controls how far below the TT score a non-TT move has to come up
+    // to "tie" the TT move; lowering it widens the singular window so more
+    // moves get extended. `singularDepth = (depth - 1) / SingularDepthDiv`
+    // controls how shallow the verification search runs; raising it cheapens
+    // the verification but loses signal. Defaults reproduce the prior
+    // hardcoded literals (2, 2).
+    int SingularBetaMul;
+    int SingularDepthDiv;
+    // Double-extension trigger: when the singular search fails low by more
+    // than this margin against `singularBeta`, the TT move is treated as
+    // sharply better than every alternative and gets extended by two plies
+    // instead of one. Gated to non-PV nodes so the double extension never
+    // stacks with PV check or recapture extensions on the same move.
+    int SingularDoubleMargin;
+
+    // Cut-node Internal Iterative Reduction depth gate. When the search is
+    // at a cut-node and the TT either has no best move or a much shallower
+    // record than the current iteration, drop one extra ply so the next
+    // visit gets a better TT move at full depth. Only fires once the
+    // remaining depth is at least this large.
+    int IirCutNodeDepth;
+
     // Aspiration window seeding. The first iteration with a reliable previous
     // score opens a window around it of half-width
     //   delta = max(AspWindowBase, |prevScore| / AspWindowDiv)
