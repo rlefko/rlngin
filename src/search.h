@@ -14,13 +14,6 @@
 // theoretical safe upper bound with comfortable headroom.
 constexpr int MOVE_PICKER_BUFFER_SIZE = 256;
 
-// Pawn history table modulus. A power of two so the index reduction can use
-// a bitmask instead of integer modulo. 512 mirrors what Stockfish-lineage
-// engines pick: large enough to keep collisions sparse for the same pawn
-// structure across distinct game phases, small enough that the full table
-// fits inside roughly half a megabyte.
-constexpr int PAWN_HIST_SIZE = 512;
-
 // Scored entry shared between MovePicker and SearchState. Declared here so
 // SearchState can preallocate per-ply scratch buffers on the heap; the
 // MovePicker borrows those slots instead of carrying large arrays on the
@@ -62,13 +55,6 @@ struct SearchState {
         // contHistory[tier][prevPt][prevTo][currPt][currTo] where tier 0 is
         // 1-ply back, tier 1 is 2-ply back, tier 2 is 4-ply back.
         int16_t contHistory[3][7][64][7][64] = {};
-        // Pawn-keyed quiet history: `[stm][pawnKey & (PAWN_HIST_SIZE - 1)][pieceType][toSquare]`.
-        // Captures the signal that, given the current pawn structure, a
-        // particular piece type moving to a particular square has refuted
-        // recent search nodes. Distinct from `pawnCorrHist` (which corrects
-        // the static eval); this table reorders quiet candidates the same
-        // way the butterfly and continuation tables do.
-        int16_t pawnHistory[2][PAWN_HIST_SIZE][7][64] = {};
         // Pawn-keyed static eval correction: `[color][pawnKey % N]`. The signal
         // here is that for a given pawn structure, the search score tends to
         // diverge from the static eval in a particular direction.

@@ -155,14 +155,6 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeIntSpec("LmrThreatEscape", &searchParams.LmrThreatEscape, 0, 2, 0.5, 0.25));
     out.push_back(makeIntSpec("LmrThreatWalkIn", &searchParams.LmrThreatWalkIn, 0, 2, 0.5, 0.25));
 
-    // --- Pawn history dampening ---
-    // Divisor applied when folding the pawn-keyed quiet history term into the
-    // move picker's quiet score. Default 1 keeps the table at full strength;
-    // SPSA can dampen up to 4x if the signal turns out to need de-weighting
-    // against the existing butterfly + continuation history sum.
-    out.push_back(
-        makeIntSpec("PawnHistoryWeight", &searchParams.PawnHistoryWeight, 1, 4, 0.5, 0.25));
-
     // --- Singular extension shape ---
     // The two scalars below replace the prior hardcoded literals in the
     // singular block. SPSA can sweep how aggressively the singular window
