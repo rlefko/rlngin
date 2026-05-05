@@ -3,6 +3,9 @@
 #include <algorithm>
 #include <cassert>
 #include <cstdint>
+#include <cstring>
+#include <thread>
+#include <vector>
 
 // Lock the packed entry layout: padding changes would silently alter the
 // ratio of entries per megabyte and invalidate hash-sizing assumptions.
@@ -74,7 +77,36 @@ void TranspositionTable::resize(size_t size_mb) {
 }
 
 void TranspositionTable::clear() {
-    std::fill(table_.begin(), table_.end(), TTCluster{});
+    // memset is safe because the cluster is trivially copyable and every
+    // member's all-zero byte pattern is a valid empty state: `genFlag8 == 0`
+    // encodes TT_NONE, so probes filter the slot out before ever inspecting
+    // score / eval / move. Above the threshold the memset is sharded across
+    // up to eight worker threads so ucinewgame on a multi-gigabyte hash
+    // does not stall the engine on a serial DRAM wipe.
+    const size_t bytes = num_clusters_ * sizeof(TTCluster);
+    constexpr size_t PARALLEL_THRESHOLD = 64ULL * 1024 * 1024;
+
+    if (bytes < PARALLEL_THRESHOLD) {
+        std::memset(table_.data(), 0, bytes);
+    } else {
+        unsigned hw = std::thread::hardware_concurrency();
+        if (hw == 0) hw = 1;
+        const unsigned numThreads = std::min(hw, 8u);
+        const size_t chunkClusters = (num_clusters_ + numThreads - 1) / numThreads;
+        std::vector<std::thread> workers;
+        workers.reserve(numThreads);
+        for (unsigned t = 0; t < numThreads; t++) {
+            const size_t startCluster = static_cast<size_t>(t) * chunkClusters;
+            if (startCluster >= num_clusters_) break;
+            const size_t endCluster = std::min(startCluster + chunkClusters, num_clusters_);
+            workers.emplace_back([this, startCluster, endCluster] {
+                std::memset(&table_[startCluster], 0,
+                            (endCluster - startCluster) * sizeof(TTCluster));
+            });
+        }
+        for (auto &w : workers)
+            w.join();
+    }
     generation_ = 0;
 }
 
