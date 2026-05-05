@@ -1191,8 +1191,20 @@ static int64_t computeTimeAllocation(const Board &board, const SearchLimits &lim
     return allocated;
 }
 
-static void printSearchInfo(int depth, const SearchState &state, int score, int64_t timeMs,
+static void printSearchInfo(int depth, SearchState &state, int score, int64_t timeMs,
                             BoundType bound, int multiPV) {
+    // Pin the bestmove output to whatever PV we are about to print. Without
+    // this, an aspiration loop that fail-highs (sets state.bestMove) then
+    // fail-lows (refreshes state.pv[0][0] via the empty-PV fallback) and
+    // gets interrupted by the clock would print a `bestmove` that disagrees
+    // with the last `info pv` line. fastchess flags that mismatch as a
+    // warning. By syncing right before every print, the last printed PV's
+    // first move is always the bestmove the engine reports at end of search.
+    if (multiPV == 1 && state.pvLength[0] > 0) {
+        state.bestMove = state.pv[0][0];
+        state.ponderMove = (state.pvLength[0] >= 2) ? state.pv[0][1] : Move{0, 0, None};
+    }
+
     // Floor the reported time at 1 ms so shallow iterations do not emit
     // "time 0" or a degenerate nps derived from zero elapsed time.
     int64_t reportedTimeMs = std::max<int64_t>(timeMs, 1);
@@ -1596,22 +1608,14 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         if (mateFound) break;
     }
 
-    // Final sync. The aspiration loop only writes `state.bestMove` on the
-    // fail-high and exact paths; a fail-low retry refreshes `state.pv[0][0]`
-    // (via the empty-PV fallback) but leaves `state.bestMove` pointing at
-    // whatever the last fail-high set, so an iteration that fail-highs then
-    // fail-lows and gets interrupted by the clock would otherwise print a
-    // bestmove that disagrees with the last info pv line. The PV is the
-    // engine's most recent best estimate at the root, so pull bestMove and
-    // ponderMove straight from it; fall back to the first legal root move
-    // only if the PV was never seeded (which the seed at the top of this
-    // function already prevents in practice).
-    if (state.pvLength[0] > 0) {
-        state.bestMove = state.pv[0][0];
-        state.ponderMove = (state.pvLength[0] >= 2) ? state.pv[0][1] : Move{0, 0, None};
-    } else if (!rootMoves.empty()) {
+    // Defensive fallback: if no aspiration path ever set bestMove (for
+    // example a search stopped before iteration 1 emitted any info line),
+    // print a legal root move rather than the {0,0,None} init sentinel.
+    // printSearchInfo normally captures bestMove from the PV it is about to
+    // print, so reaching this branch implies the search bailed before any
+    // line was printed.
+    if (state.bestMove.from == 0 && state.bestMove.to == 0 && !rootMoves.empty()) {
         state.bestMove = rootMoves[0].move;
-        state.ponderMove = {0, 0, None};
     }
 
     // Fallback for searches that were stopped before any aspiration iteration
