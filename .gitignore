@@ -28,3 +28,10 @@ tuning/texel/selfplay.log
 tuning/texel/extract.log
 tuning/texel/tune.log
 tuning/texel/checkpoint.txt
+
+# Master games corpora pulled by scripts/fetch_val_corpus.sh (used as
+# the val partition) and scripts/fetch_train_master.sh (mixed into the
+# training set via CURATED_EPD). Both are best-effort downloads that
+# the pipeline auto-fetches; the EPDs are large and re-derivable.
+tuning/val/master_positions.epd
+tuning/train/master_positions.epd

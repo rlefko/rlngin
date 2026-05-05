@@ -145,6 +145,35 @@ else
     echo "[$(stamp)] VAL_EPD set explicitly to $VAL_EPD"
 fi
 
+# --- Stage 2.6: fetch external train master pack --------------------------
+#
+# Pulls a SECOND master-games corpus (different TWIC issue than the
+# val one) and parks it at tuning/train/master_positions.epd. Wired
+# through the tuner's CURATED_EPD slot so the rows mix into training
+# with the default per-row weight of 5.0, biasing the gradient toward
+# real-world piece values without dominating the millions of self-play
+# rows. Like the val fetch, this is best-effort: if the download fails
+# the tuner trains on self-play alone.
+
+CURATED_EPD_DEFAULT="tuning/train/master_positions.epd"
+if [ -z "${CURATED_EPD:-}" ]; then
+    if [ ! -f "$CURATED_EPD_DEFAULT" ]; then
+        echo "[$(stamp)] fetching external master train pack"
+        if ./scripts/fetch_train_master.sh; then
+            export CURATED_EPD="$CURATED_EPD_DEFAULT"
+            echo "[$(stamp)] external train pack ready at $CURATED_EPD"
+        else
+            echo "[$(stamp)] no external train pack (offline or fetch failed); " \
+                 "training on self-play alone"
+        fi
+    else
+        export CURATED_EPD="$CURATED_EPD_DEFAULT"
+        echo "[$(stamp)] reusing existing train pack at $CURATED_EPD"
+    fi
+else
+    echo "[$(stamp)] CURATED_EPD set explicitly to $CURATED_EPD"
+fi
+
 # --- Stage 3: tune --------------------------------------------------------
 
 echo "[$(stamp)] running tune ($TUNE_THREADS threads, $TUNE_PASSES passes)"
