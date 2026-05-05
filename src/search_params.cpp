@@ -36,6 +36,8 @@ static const SearchParams kDefaultSearchParams = {
     2,     // SingularDepthDiv (matches the prior hardcoded (depth - 1) / 2 in singularDepth)
     17,    // SingularDoubleMargin (Stockfish-lineage default; extends by two when alts fall below)
     7,     // IirCutNodeDepth (extra IIR at cut-nodes once remaining depth >= this)
+    12,    // AspWindowBase (Stockfish-lineage minimum half-width)
+    8,     // AspWindowDiv (divisor for the |prevScore|-scaled term)
 };
 
 SearchParams searchParams = kDefaultSearchParams;

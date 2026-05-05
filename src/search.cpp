@@ -1294,9 +1294,18 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         bool iterFailLowAfterFailHigh = false;
 
         for (int slot = 0; slot < numSlots; slot++) {
-            int delta = 60;
-            int alpha, beta;
+            // Initial aspiration half-width derived from the previous
+            // iteration's score: `max(base, |prev| / div)`. A narrow base
+            // (Stockfish-style ~9-12) makes the window tight in most
+            // positions, which surfaces second-best moves that would
+            // otherwise be clipped by an over-generous null window probe.
+            // The |prev|-scaled term keeps the window wide enough in
+            // sharp positions where the score routinely moves by hundreds
+            // of centipawns between iterations.
             int slotPrev = prevSlotScores[slot];
+            int delta = std::max(searchParams.AspWindowBase,
+                                 std::abs(slotPrev) / searchParams.AspWindowDiv);
+            int alpha, beta;
 
             // Aspiration windows only seed slot 0 and only once the previous
             // score is reliable; other slots start at full width because
