@@ -32,6 +32,8 @@ static const SearchParams kDefaultSearchParams = {
     32768, // ThreatWalkInPenalty (symmetric walk-into-threat quiet penalty)
     1,     // LmrThreatEscape (ply discount for evacuating a threatened piece)
     1,     // LmrThreatWalkIn (ply surcharge for walking into a lesser-piece attack)
+    12,    // AspWindowBase (Stockfish-lineage minimum half-width)
+    8,     // AspWindowDiv (divisor for the |prevScore|-scaled term)
 };
 
 SearchParams searchParams = kDefaultSearchParams;

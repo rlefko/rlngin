@@ -81,6 +81,17 @@ struct SearchParams {
     // sub-unit perturbations would never cross a reduction boundary.
     int LmrThreatEscape;
     int LmrThreatWalkIn;
+
+    // Aspiration window seeding. The first iteration with a reliable previous
+    // score opens a window around it of half-width
+    //   delta = max(AspWindowBase, |prevScore| / AspWindowDiv)
+    // matching the Stockfish-lineage formula. A narrow base catches boundary
+    // cases where the second-best move's null-window probe would otherwise
+    // be clipped against an over-generous alpha; the |prevScore| term keeps
+    // the window wide enough in heavily one-sided positions where the score
+    // can swing several pawns between iterations.
+    int AspWindowBase;
+    int AspWindowDiv;
 };
 
 extern SearchParams searchParams;

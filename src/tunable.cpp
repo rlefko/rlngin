@@ -155,6 +155,15 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeIntSpec("LmrThreatEscape", &searchParams.LmrThreatEscape, 0, 2, 0.5, 0.25));
     out.push_back(makeIntSpec("LmrThreatWalkIn", &searchParams.LmrThreatWalkIn, 0, 2, 0.5, 0.25));
 
+    // --- Aspiration window seeding ---
+    // Initial half-width is `max(AspWindowBase, |prevScore| / AspWindowDiv)`.
+    // The base bound starts low (Stockfish ranges 9-15) so SPSA can settle
+    // it inside the regime where boundary moves get re-searched at full
+    // window. The divisor controls how fast the window grows in sharp
+    // positions; smaller values widen the window faster.
+    out.push_back(makeIntSpec("AspWindowBase", &searchParams.AspWindowBase, 6, 40, 1.5, 0.5));
+    out.push_back(makeIntSpec("AspWindowDiv", &searchParams.AspWindowDiv, 4, 32, 1.0, 0.4));
+
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
     out.push_back(
