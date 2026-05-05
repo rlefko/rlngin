@@ -42,7 +42,15 @@ inline Move decodeMove(uint16_t encoded) {
 }
 
 inline uint16_t keyCheck(uint64_t key) {
-    return static_cast<uint16_t>(key >> 48);
+    // Use the low 16 bits as the inside-cluster key check. The cluster index
+    // is `(key * num_clusters) >> 64`, which is dominated by the upper bits
+    // of the key and at hash sizes >= 16 MB consumes the entire upper 16
+    // bits. If the check were taken from the upper 16 bits it would be
+    // constant within every cluster, every probe would match the first
+    // occupied slot regardless of which position was queried, and the TT
+    // would effectively collapse to one slot per cluster. Stockfish uses
+    // the same low-16-bit choice for the same reason.
+    return static_cast<uint16_t>(key);
 }
 
 inline TTFlag flagOf(uint8_t genFlag8) {
