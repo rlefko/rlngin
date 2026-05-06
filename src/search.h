@@ -15,11 +15,15 @@
 constexpr int MOVE_PICKER_BUFFER_SIZE = 256;
 
 // Pawn history table modulus. A power of two so the index reduction can use
-// a bitmask instead of integer modulo. 512 mirrors what Stockfish-lineage
-// engines pick: large enough to keep collisions sparse for the same pawn
-// structure across distinct game phases, small enough that the full table
-// fits inside roughly half a megabyte.
-constexpr int PAWN_HIST_SIZE = 512;
+// a bitmask instead of integer modulo. 8192 matches Stockfish's current
+// PAWN_HISTORY_BASE_SIZE; the original 512 collapsed millions of distinct
+// pawn structures into a few hundred slots, which buried the per-structure
+// signal under collision noise. The whole table is roughly seven megabytes
+// of int16_t, which sits comfortably inside the heap-allocated history
+// block already shared with the continuation-history surface.
+constexpr int PAWN_HIST_SIZE = 8192;
+static_assert((PAWN_HIST_SIZE & (PAWN_HIST_SIZE - 1)) == 0,
+              "PAWN_HIST_SIZE must be a power of two so the bitmask index reduction is correct");
 
 // Scored entry shared between MovePicker and SearchState. Declared here so
 // SearchState can preallocate per-ply scratch buffers on the heap; the
