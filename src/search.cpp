@@ -548,6 +548,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (ply > 0) {
         if (board.halfmoveClock >= 100) return 0;
         if (isRepetition(board, state, ply)) return 0;
+
+        // Mate distance pruning. Once we are below the root our score
+        // cannot exceed mate-in-(ply+1) and cannot fall below mated-in-ply,
+        // so tighten the window to those theoretical limits. If a parent
+        // already proved a faster mate, the window collapses (alpha >= beta)
+        // and the entire sibling line is pruned: any longer mate found here
+        // cannot improve on what the parent has, so the nodes are wasted.
+        // Guarded by `ply > 0` so the root iteration stays full width.
+        alpha = std::max(alpha, -(MATE_SCORE - ply));
+        beta = std::min(beta, MATE_SCORE - ply - 1);
+        if (alpha >= beta) return alpha;
     }
 
     int origAlpha = alpha;
@@ -1350,7 +1361,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         std::vector<Move> excludedMoves;
         excludedMoves.reserve(numSlots);
 
-        bool mateFound = false;
         // Aggregated across slots: did any aspiration loop on this iteration
         // fail low after already failing high? That oscillation is the signal
         // we pass through to next iteration's searchAgainCounter increment.
@@ -1595,7 +1605,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 } else {
                     state.ponderMove = {0, 0, None};
                 }
-                if (std::abs(currentBestScore) >= MATE_SCORE - 100) mateFound = true;
             }
 
             printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT, slot + 1);
@@ -1622,8 +1631,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             searchAgainCounter++;
         }
         prevIterationFailLowAfterFailHigh = iterFailLowAfterFailHigh;
-
-        if (mateFound) break;
     }
 
     // Defensive fallback: if no aspiration path ever set bestMove (for
