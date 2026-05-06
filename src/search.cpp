@@ -1343,7 +1343,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
         std::vector<Move> excludedMoves;
         excludedMoves.reserve(numSlots);
 
-        bool mateFound = false;
         // Aggregated across slots: did any aspiration loop on this iteration
         // fail low after already failing high? That oscillation is the signal
         // we pass through to next iteration's searchAgainCounter increment.
@@ -1588,7 +1587,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 } else {
                     state.ponderMove = {0, 0, None};
                 }
-                if (std::abs(currentBestScore) >= MATE_SCORE - 100) mateFound = true;
             }
 
             printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT, slot + 1);
@@ -1615,8 +1613,6 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             searchAgainCounter++;
         }
         prevIterationFailLowAfterFailHigh = iterFailLowAfterFailHigh;
-
-        if (mateFound) break;
     }
 
     // Defensive fallback: if no aspiration path ever set bestMove (for
