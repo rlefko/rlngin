@@ -176,6 +176,15 @@ std::vector<TunableSpec> buildRegistry() {
         makeIntSpec("SingularDoubleMargin", &searchParams.SingularDoubleMargin, 2, 40, 2.0, 0.75));
     out.push_back(makeIntSpec("IirCutNodeDepth", &searchParams.IirCutNodeDepth, 5, 10, 0.5, 0.25));
 
+    // --- Aspiration window seeding ---
+    // Initial half-width is `max(AspWindowBase, |prevScore| / AspWindowDiv)`.
+    // The base bound starts low (Stockfish ranges 9-15) so SPSA can settle
+    // it inside the regime where boundary moves get re-searched at full
+    // window. The divisor controls how fast the window grows in sharp
+    // positions; smaller values widen the window faster.
+    out.push_back(makeIntSpec("AspWindowBase", &searchParams.AspWindowBase, 6, 40, 1.5, 0.5));
+    out.push_back(makeIntSpec("AspWindowDiv", &searchParams.AspWindowDiv, 4, 32, 1.0, 0.4));
+
     // --- Eval Score halves. Every min is >= 0 so each bonus stays a bonus. ---
     out.push_back(makeScoreHalfSpec("TempoMg", &evalParams.Tempo, true, 0, 200, 8.0, 3.0));
     out.push_back(
