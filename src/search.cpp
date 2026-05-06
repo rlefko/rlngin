@@ -544,6 +544,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     if (ply > 0) {
         if (board.halfmoveClock >= 100) return 0;
         if (isRepetition(board, state, ply)) return 0;
+
+        // Mate distance pruning. Once we are below the root our score
+        // cannot exceed mate-in-(ply+1) and cannot fall below mated-in-ply,
+        // so tighten the window to those theoretical limits. If a parent
+        // already proved a faster mate, the window collapses (alpha >= beta)
+        // and the entire sibling line is pruned: any longer mate found here
+        // cannot improve on what the parent has, so the nodes are wasted.
+        // Guarded by `ply > 0` so the root iteration stays full width.
+        alpha = std::max(alpha, -(MATE_SCORE - ply));
+        beta = std::min(beta, MATE_SCORE - ply - 1);
+        if (alpha >= beta) return alpha;
     }
 
     int origAlpha = alpha;
