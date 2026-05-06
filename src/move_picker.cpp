@@ -93,12 +93,18 @@ int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
 
     // Compute the quiet history once and expose it to the caller; LMR reads
     // this instead of recomputing the same lookups after move ordering.
+    // The value handed back through `outQuietHistory` is the main +
+    // continuation sum only, since the LMR divisor and the late-history
+    // pruning threshold downstream were calibrated against that range.
+    // Pawn history is folded into `quietHist` afterwards so it still
+    // shapes move ordering without disturbing the pruning calibration.
     int quietHist = 0;
     if (quietCandidate) {
         quietHist = state.historyTables->mainHistory[board.sideToMove][m.from][m.to];
         if (ply >= 0) {
             quietHist += contHistoryScore(state, ply, pt, m.to);
         }
+        if (outQuietHistory) *outQuietHistory = quietHist;
         // Pawn-keyed history. The same pawn structure usually persists for
         // many search nodes, so a quiet refutation in this structure
         // generalizes well to sibling positions reached through different
@@ -108,7 +114,6 @@ int scoreMove(const Move &m, const Board &board, const Move &ttMove, int ply,
         int pawnIdx = static_cast<int>(board.pawnKey & (PAWN_HIST_SIZE - 1));
         quietHist += state.historyTables->pawnHistory[board.sideToMove][pawnIdx][pt][m.to] /
                      searchParams.PawnHistoryWeight;
-        if (outQuietHistory) *outQuietHistory = quietHist;
     }
 
     // TT move gets highest priority
