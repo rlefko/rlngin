@@ -51,6 +51,27 @@ TEST_CASE("Search: finds mate in 1", "[search]") {
     CHECK(best.to == stringToSquare("e8"));
 }
 
+TEST_CASE("Search: iterative deepening continues past mate", "[search][iid]") {
+    ensureInit();
+    clearTT();
+    Board board;
+    // Mate in 1 at depth 1; the previous behavior bailed out of iterative
+    // deepening here. A correct loop runs to the requested limit.
+    board.setFen("6k1/5ppp/8/8/8/8/8/4R2K w - - 0 1");
+
+    SearchLimits limits;
+    limits.depth = 8;
+    SearchState state;
+    startSearch(board, limits, state);
+
+    CHECK(state.bestMove.from == stringToSquare("e1"));
+    CHECK(state.bestMove.to == stringToSquare("e8"));
+    // The proof that iterative deepening did not break out early: rootDepth
+    // must reach the requested limit, not the depth at which mate was first
+    // seen.
+    CHECK(state.rootDepth >= limits.depth);
+}
+
 TEST_CASE("Search: returns valid move at deeper depths", "[search]") {
     ensureInit();
     Board board;
