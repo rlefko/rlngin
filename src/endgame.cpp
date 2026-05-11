@@ -5,6 +5,7 @@
 #include "kpk_bitbase.h"
 #include "zobrist.h"
 
+#include <cstdlib>
 #include <unordered_map>
 
 namespace Endgame {
@@ -84,6 +85,85 @@ int evaluateKXK(const Board &board, Color strongSide) {
                    pushClose(strongKing, weakKing) * eg_value(evalParams.KXKPushClose);
     int whitePov = materialEg + gradient;
     return (strongSide == White) ? whitePov : -whitePov;
+}
+
+// K + B + pawns vs K. The textbook wrong-rook-pawn fortress applies
+// when every strong-side pawn sits on a single rook file and the
+// bishop cannot control the corresponding promotion corner. The
+// defender king holds the draw by reaching the corner before the lead
+// pawn queens; any other configuration evaluates normally.
+ScaleResult scaleKBPsK(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[strongSide];
+    Bitboard ourBishop = board.byPiece[Bishop] & board.byColor[strongSide];
+    if (!ourPawns || !ourBishop) return {64, 0};
+
+    Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
+    if (rookFilePawns != ourPawns) return {64, 0};
+    bool onA = (ourPawns & FileABB) != 0;
+    bool onH = (ourPawns & FileHBB) != 0;
+    if (onA && onH) return {64, 0};
+
+    int promoSq = onA ? (strongSide == White ? 56 : 0) : (strongSide == White ? 63 : 7);
+    bool promoLight = (squareBB(promoSq) & LightSquaresBB) != 0;
+    bool bishopLight = (ourBishop & LightSquaresBB) != 0;
+    if (promoLight == bishopLight) return {64, 0};
+
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int leadPawn = (strongSide == White) ? msb(ourPawns) : lsb(ourPawns);
+    int pushes = (strongSide == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
+    if (chebyshev(weakKing, promoSq) <= pushes) return {0, 0};
+    return {64, 0};
+}
+
+// K + B + P vs K + B. Same-colored bishops give the pawn side the
+// usual winning chances; opposite-colored bishops drop the scale far
+// toward a draw because the defender can erect a blockade the pawn
+// cannot break without bishop support on the right diagonal.
+ScaleResult scaleKBPKB(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
+    Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
+    bool strongLight = (strongBishop & LightSquaresBB) != 0;
+    bool weakLight = (weakBishop & LightSquaresBB) != 0;
+    if (strongLight == weakLight) return {64, 0};
+    return {16, 0};
+}
+
+// K + B + 2 P vs K + B. Two-pawn opposite-bishop endings are drawish
+// when the pawns are connected or close together; widely separated
+// pawns leave the bishop unable to stop both, lifting the scale.
+ScaleResult scaleKBPPKB(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
+    Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
+    bool strongLight = (strongBishop & LightSquaresBB) != 0;
+    bool weakLight = (weakBishop & LightSquaresBB) != 0;
+    if (strongLight == weakLight) return {64, 0};
+
+    Bitboard strongPawns = board.byPiece[Pawn] & board.byColor[strongSide];
+    int p1 = lsb(strongPawns);
+    int p2 = msb(strongPawns);
+    int fileDiff = std::abs(squareFile(p1) - squareFile(p2));
+    return {fileDiff <= 1 ? 16 : 38, 0};
+}
+
+// K + B + P vs K + N. The bishop side usually wins but the knight can
+// blockade the pawn from a defended square, especially when the
+// defender king also sits in front of the pawn. The scale drops in
+// that recognized blockade shape and otherwise keeps the full eg.
+ScaleResult scaleKBPKN(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int pawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
+    int knight = lsb(board.byPiece[Knight] & board.byColor[weakSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int pushSq = pawn + (strongSide == White ? 8 : -8);
+    if (pushSq >= 0 && pushSq < 64 &&
+        (knight == pushSq || weakKing == pushSq) &&
+        chebyshev(weakKing, pawn) <= 2) {
+        return {16, 0};
+    }
+    return {64, 0};
 }
 
 // KPK is wired as a scale evaluator: a bitbase WIN keeps the full
@@ -345,6 +425,23 @@ void init() {
     // becomes a strict subset of the bitbase coverage and is retired
     // from the inline scaleFactor path.
     registerScale(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, scaleKPK);
+
+    // K + B + N pawns vs K with the wrong-colored bishop: register one
+    // entry per pawn count so the dispatch covers single-pawn and
+    // multi-pawn rook-file fortresses without falling back to the
+    // inline rule.
+    for (int n = 1; n <= 8; n++) {
+        registerScale(n, 0, 1, 0, 0, 0, 0, 0, 0, 0, scaleKBPsK);
+    }
+
+    // K + B + P vs K + B (opposite or same-colored bishops).
+    registerScale(1, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPKB);
+
+    // K + B + 2 P vs K + B.
+    registerScale(2, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPPKB);
+
+    // K + B + P vs K + N.
+    registerScale(1, 0, 1, 0, 0, 0, 1, 0, 0, 0, scaleKBPKN);
 }
 
 const ValueEntry *probeValue(uint64_t materialKey) {

@@ -203,6 +203,40 @@ TEST_CASE("KNNK: two knights vs lone king evaluates to roughly zero", "[endgame]
     CHECK(std::abs(evaluate(corner)) < 20);
 }
 
+TEST_CASE("KBPsK: wrong-colored bishop with a rook-file pawn yields a fortress draw",
+          "[endgame][kbpsk]") {
+    Board fortress;
+    // Promotion square h8 is dark. A light-square bishop (h3) cannot
+    // evict the defender from h8, so the position is a textbook
+    // wrong-rook-pawn draw.
+    fortress.setFen("7k/7P/8/8/8/7B/8/4K3 w - - 0 1");
+    int fortressEval = evaluate(fortress);
+    CHECK(std::abs(fortressEval) < 100);
+
+    // Same shape but with the bishop on a dark square (a3), matching
+    // the h8 promotion corner. The bishop controls the corner so the
+    // pawn promotes and the natural eg score survives.
+    Board winning;
+    winning.setFen("7k/7P/8/8/8/B7/8/4K3 w - - 0 1");
+    int winningEval = evaluate(winning);
+    CHECK(winningEval > 200);
+}
+
+TEST_CASE("KBPKB: opposite-colored bishops with one pawn scale toward a draw",
+          "[endgame][kbpkb]") {
+    Board ocb;
+    ocb.setFen("4k3/8/8/4b3/4P3/8/4B3/4K3 w - - 0 1");
+    int ocbEval = evaluate(ocb);
+
+    // Same-colored bishops keep the winning chances intact: eval
+    // should be significantly higher than the OCB case.
+    Board sameColor;
+    sameColor.setFen("4k3/8/8/3b4/4P3/8/4B3/4K3 w - - 0 1");
+    int sameEval = evaluate(sameColor);
+
+    CHECK(sameEval > ocbEval);
+}
+
 TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong corner",
           "[endgame][kbnk]") {
     // Light-squared bishop drives the lone king to a light corner (h1

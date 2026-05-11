@@ -1170,52 +1170,6 @@ static int scaleFactor(const Board &board) {
         return 38;
     }
 
-    // Wrong-colored bishop with a single rook-file pawn: the classical
-    // drawn ending. The defending king parks in the promotion corner and
-    // the bishop can never evict it because the corner square is on a
-    // different color. Gated narrowly so this only fires for the book
-    // fortress shape (one file of our own pawns on the a or h file, all
-    // other pieces off, defender has at most an opposite-coloured bishop).
-    for (int c = 0; c < 2; c++) {
-        Color us = static_cast<Color>(c);
-        Color them = static_cast<Color>(c ^ 1);
-        if (board.pieceCount[us][Bishop] != 1) continue;
-        if (board.pieceCount[us][Knight] || board.pieceCount[us][Rook] ||
-            board.pieceCount[us][Queen])
-            continue;
-        if (board.pieceCount[them][Pawn]) continue;
-        if (board.pieceCount[them][Knight] || board.pieceCount[them][Rook] ||
-            board.pieceCount[them][Queen])
-            continue;
-
-        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
-        if (!ourPawns) continue;
-        Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
-        if (rookFilePawns != ourPawns) continue;
-        bool onA = (ourPawns & FileABB) != 0;
-        bool onH = (ourPawns & FileHBB) != 0;
-        if (onA && onH) continue;
-
-        int promoSq = onA ? (us == White ? 56 : 0) : (us == White ? 63 : 7);
-        bool promoLight = (squareBB(promoSq) & LightSquaresBB) != 0;
-        Bitboard ourBishop = board.byPiece[Bishop] & board.byColor[us];
-        bool bishopLight = (ourBishop & LightSquaresBB) != 0;
-        if (promoLight == bishopLight) continue;
-
-        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
-        if (!theirKingBB) continue;
-        int theirKingSq = lsb(theirKingBB);
-
-        // The defender holds the draw as long as the king can reach the
-        // promotion square by the time the lead pawn queens. Compute the
-        // worst case pawn distance on our side: the furthest-back pawn
-        // needs the most pushes. Bishop colour mismatch alone is not
-        // enough; the king has to make it to the corner in time.
-        int leadPawn = (us == White) ? lsb(ourPawns) : msb(ourPawns);
-        int pushes = (us == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
-        if (chebyshev(theirKingSq, promoSq) <= pushes) return 0;
-    }
-
     // Pawnless minor-only endings reduce to draws unless one side has a
     // material excess of a rook or more. Kings-only positions fall through
     // to the default scale because the PST ordering of king activity is
