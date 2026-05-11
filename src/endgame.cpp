@@ -113,7 +113,9 @@ ScaleResult scaleKBPsK(const Board &board, Color strongSide) {
 // K + B + P vs K + B. Same-colored bishops give the pawn side the
 // usual winning chances; opposite-colored bishops drop the scale far
 // toward a draw because the defender can erect a blockade the pawn
-// cannot break without bishop support on the right diagonal.
+// cannot break without bishop support on the right diagonal. The
+// drawish scale matches the legacy single-pawn OCB inline value so the
+// dispatch does not inflate the eval relative to pre-bitbase play.
 ScaleResult scaleKBPKB(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
@@ -121,12 +123,13 @@ ScaleResult scaleKBPKB(const Board &board, Color strongSide) {
     bool strongLight = (strongBishop & LightSquaresBB) != 0;
     bool weakLight = (weakBishop & LightSquaresBB) != 0;
     if (strongLight == weakLight) return {64, 0};
-    return {16, 0};
+    return {10, 0};
 }
 
-// K + B + 2 P vs K + B. Two-pawn opposite-bishop endings are drawish
-// when the pawns are connected or close together; widely separated
-// pawns leave the bishop unable to stop both, lifting the scale.
+// K + B + 2 P vs K + B. Opposite-bishop endings with two pawns are
+// drawish; the uniform scale matches the legacy two-or-three-pawn
+// OCB inline value so the dispatch stays consistent with pre-bitbase
+// play. Same-color bishops keep the full eg.
 ScaleResult scaleKBPPKB(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
@@ -134,12 +137,7 @@ ScaleResult scaleKBPPKB(const Board &board, Color strongSide) {
     bool strongLight = (strongBishop & LightSquaresBB) != 0;
     bool weakLight = (weakBishop & LightSquaresBB) != 0;
     if (strongLight == weakLight) return {64, 0};
-
-    Bitboard strongPawns = board.byPiece[Pawn] & board.byColor[strongSide];
-    int p1 = lsb(strongPawns);
-    int p2 = msb(strongPawns);
-    int fileDiff = std::abs(squareFile(p1) - squareFile(p2));
-    return {fileDiff <= 1 ? 16 : 38, 0};
+    return {26, 0};
 }
 
 // K + Q vs K + R + pawns. Drawish when the defender keeps the rook on
@@ -208,25 +206,6 @@ ScaleResult scaleKRPKR(const Board &board, Color strongSide) {
     return {64, 0};
 }
 
-// K + R + P vs K + B. The defender holds if the bishop controls the
-// promotion square and the defender king is close enough to block the
-// pawn's advance.
-ScaleResult scaleKRPKB(const Board &board, Color strongSide) {
-    Color weakSide = (strongSide == White) ? Black : White;
-    int strongPawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
-    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-    Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
-
-    int pawnFile = squareFile(strongPawn);
-    int promoSq = (strongSide == White) ? (56 + pawnFile) : pawnFile;
-    bool promoLight = (squareBB(promoSq) & LightSquaresBB) != 0;
-    bool bishopLight = (weakBishop & LightSquaresBB) != 0;
-    if (bishopLight == promoLight && chebyshev(weakKing, promoSq) <= 3) {
-        return {8, 0};
-    }
-    return {64, 0};
-}
-
 // K + R + 2 P vs K + R + P. Drawish when neither attacker pawn is
 // passed and all three pawns sit on the same flank: the defender rook
 // keeps the position from progressing despite the material edge.
@@ -277,18 +256,16 @@ ScaleResult scaleKRPPKRP(const Board &board, Color strongSide) {
     return {64, 0};
 }
 
-// K + B + P vs K + N. The bishop side usually wins but the knight can
-// blockade the pawn from a defended square, especially when the
-// defender king also sits in front of the pawn. The scale drops in
-// that recognized blockade shape and otherwise keeps the full eg.
+// K + B + P vs K + N. The bishop side usually wins; the scale only
+// drops when the defender king itself blockades the pawn's push square
+// because a knight on the push square is normally captured by the
+// bishop on the next move rather than holding a fortress.
 ScaleResult scaleKBPKN(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int pawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
-    int knight = lsb(board.byPiece[Knight] & board.byColor[weakSide]);
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
     int pushSq = pawn + (strongSide == White ? 8 : -8);
-    if (pushSq >= 0 && pushSq < 64 && (knight == pushSq || weakKing == pushSq) &&
-        chebyshev(weakKing, pawn) <= 2) {
+    if (pushSq >= 0 && pushSq < 64 && weakKing == pushSq) {
         return {16, 0};
     }
     return {64, 0};
@@ -609,10 +586,6 @@ void init() {
     // Lucena branch absorbs the inline LucenaEg path from
     // endgameEgAdjust.
     registerScale(1, 0, 0, 1, 0, 0, 0, 0, 1, 0, scaleKRPKR);
-
-    // K + R + P vs K + B: rook-pawn-vs-bishop fortress when the
-    // bishop controls the promotion square.
-    registerScale(1, 0, 0, 1, 0, 0, 0, 1, 0, 0, scaleKRPKB);
 
     // K + R + 2 P vs K + R + P: drawish slope when the attacker has
     // no passer and all pawns sit on the same flank.
