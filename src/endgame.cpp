@@ -148,6 +148,22 @@ ScaleResult scaleKBPPKB(const Board &board, Color strongSide) {
     return {fileDiff <= 1 ? 16 : 38, 0};
 }
 
+// K + Q vs K + R + pawns. Drawish when the defender keeps the rook on
+// its third rank backed by a pawn wall and the king tucked away on the
+// first two ranks. The queen cannot pry the rook free of the defender
+// king without the defender pawns abandoning the fortress.
+ScaleResult scaleKQKRPs(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int weakRook = lsb(board.byPiece[Rook] & board.byColor[weakSide]);
+    int weakRookRelRank = relativeRank(weakSide, weakRook);
+    int weakKingRelRank = relativeRank(weakSide, weakKing);
+    if (weakRookRelRank == 2 && weakKingRelRank <= 1) {
+        return {0, 0};
+    }
+    return {64, 0};
+}
+
 // K + R + P vs K + R. Recognizes the three named patterns:
 //
 //   * Philidor third-rank defense: defender rook on the fifth rank
@@ -624,6 +640,14 @@ void init() {
     // K + R + 2 P vs K + R + P: drawish slope when the attacker has
     // no passer and all pawns sit on the same flank.
     registerScale(2, 0, 0, 1, 0, 1, 0, 0, 1, 0, scaleKRPPKRP);
+
+    // K + Q vs K + R + pawns: register one entry per defender pawn
+    // count so the dispatch covers single-pawn and multi-pawn
+    // fortresses. The dispatch fires only for the drawish setup where
+    // the defender's rook sits on its third rank with the king behind.
+    for (int n = 1; n <= 8; n++) {
+        registerScale(0, 0, 0, 0, 1, n, 0, 0, 1, 0, scaleKQKRPs);
+    }
 }
 
 const ValueEntry *probeValue(uint64_t materialKey) {
