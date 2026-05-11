@@ -176,7 +176,11 @@ void init() {
     if (g_initialized) return;
     g_initialized = true;
 
-    std::vector<Result> results(kIndexCount, INVALID);
+    // Initialize every slot as UNKNOWN so a not-yet-classified successor
+    // looked up during the initial pass cannot be mistaken for a draw.
+    // classify() flips the slot to INVALID for kings-overlap and other
+    // structurally impossible configurations.
+    std::vector<Result> results(kIndexCount, UNKNOWN);
 
     auto idxFromPawn = [](int pawnIdx) {
         int file = pawnIdx / 6;

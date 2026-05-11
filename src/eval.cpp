@@ -1231,49 +1231,6 @@ static int scaleFactor(const Board &board) {
         }
     }
 
-    // Rule-based KPK rook-file fortress: strong side has K + a single
-    // pawn on the a or h file, weak side has K only. The defender holds
-    // the draw if the weak king reaches the promotion corner before the
-    // pawn queens. Mirrors the wrong-bishop fortress logic above for the
-    // pawn-only case (no bishop required).
-    for (int c = 0; c < 2; c++) {
-        Color us = static_cast<Color>(c);
-        Color them = static_cast<Color>(c ^ 1);
-        if (board.pieceCount[us][Pawn] != 1) continue;
-        if (board.pieceCount[us][Knight] || board.pieceCount[us][Bishop] ||
-            board.pieceCount[us][Rook] || board.pieceCount[us][Queen])
-            continue;
-        if (board.pieceCount[them][Pawn] || board.pieceCount[them][Knight] ||
-            board.pieceCount[them][Bishop] || board.pieceCount[them][Rook] ||
-            board.pieceCount[them][Queen])
-            continue;
-
-        Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
-        Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
-        if (rookFilePawns != ourPawns) continue;
-
-        bool onA = (ourPawns & FileABB) != 0;
-        int promoSq = onA ? (us == White ? 56 : 0) : (us == White ? 63 : 7);
-        Bitboard theirKingBB = board.byPiece[King] & board.byColor[them];
-        if (!theirKingBB) continue;
-        int theirKingSq = lsb(theirKingBB);
-
-        int pawnSq = lsb(ourPawns);
-        int pawnRank = squareRank(pawnSq);
-        int pushes = (us == White) ? (7 - pawnRank) : pawnRank;
-        // Pawn at its starting rank can use the two-square initial push
-        // to save one tempo. Without this adjustment the recognizer
-        // over-claims fortress in positions where the attacker actually
-        // promotes ahead of the defender's race to the corner.
-        bool atInitialRank = (us == White) ? (pawnRank == 1) : (pawnRank == 6);
-        if (atInitialRank) pushes--;
-        // Defender to move gets one extra king step before the pawn race
-        // resolves, attacker to move gets none (defender plays K turns
-        // counting the post-promotion queen capture).
-        if (board.sideToMove == them) pushes++;
-        if (chebyshev(theirKingSq, promoSq) <= pushes) return 0;
-    }
-
     // Rule-based KQKP fortress: defender has K + 1 pawn one push from
     // promotion on the a or h file with the defender king blockading on
     // the promotion square, attacker has K + Q only and the attacking

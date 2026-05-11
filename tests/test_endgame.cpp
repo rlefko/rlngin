@@ -98,6 +98,20 @@ TEST_CASE("KXK: color-symmetric mirror returns the same strong-side score",
     CHECK(whiteSide == blackSide);
 }
 
+TEST_CASE("KPK eval: winning bitbase entries keep the natural eg, drawn entries scale to zero",
+          "[endgame][kpk][eval]") {
+    Board winning;
+    winning.setFen("8/P1K5/8/k7/8/8/8/8 w - - 0 1");
+    CHECK(evaluate(winning) > 200);
+
+    // KPK opposition draw: with the defender king directly in front of
+    // the pawn and white to move, the bitbase returns DRAW and the
+    // scale evaluator collapses eg to zero.
+    Board drawn;
+    drawn.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
+    CHECK(evaluate(drawn) == 0);
+}
+
 TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong corner",
           "[endgame][kbnk]") {
     // Light-squared bishop drives the lone king to a light corner (h1

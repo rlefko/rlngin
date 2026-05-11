@@ -86,6 +86,19 @@ int evaluateKXK(const Board &board, Color strongSide) {
     return (strongSide == White) ? whitePov : -whitePov;
 }
 
+// KPK is wired as a scale evaluator: a bitbase WIN keeps the full
+// endgame gradient (material plus KingPawnDistEg plus the natural pawn
+// structure terms drive the conversion plan) while a bitbase DRAW
+// collapses eg to zero so the engine stops chasing illusory wins.
+ScaleResult scaleKPK(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int pawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
+    bool win = Kpk::probe(strongSide, strongKing, pawn, weakKing, board.sideToMove);
+    return {win ? 64 : 0, 0};
+}
+
 int evaluateKBNK(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
@@ -105,6 +118,14 @@ void registerValueBothColors(int wp, int wn, int wb, int wr, int wq, ValueFn fn)
     uint64_t kb = makeKey(0, 0, 0, 0, 0, wp, wn, wb, wr, wq);
     g_valueMap[kw] = {fn, White};
     g_valueMap[kb] = {fn, Black};
+}
+
+void registerScaleBothColors(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb,
+                             int br, int bq, ScaleFn fn) {
+    uint64_t kw = makeKey(wp, wn, wb, wr, wq, bp, bn, bb, br, bq);
+    uint64_t kb = makeKey(bp, bn, bb, br, bq, wp, wn, wb, wr, wq);
+    g_scaleMap[kw] = {fn, White};
+    g_scaleMap[kb] = {fn, Black};
 }
 
 bool g_initialized = false;
@@ -135,6 +156,13 @@ void init() {
     // KBNK uses the colored-corner gradient instead of the generic
     // edge push because the bishop only controls one corner color.
     registerValueBothColors(0, 1, 1, 0, 0, evaluateKBNK);
+
+    // K + P vs K: bitbase scaling. The strong pawn side keeps the full
+    // eg gradient for winning bitbase entries and collapses to zero for
+    // drawn entries. The previous rule-based rook-file fortress
+    // becomes a strict subset of the bitbase coverage and is retired
+    // from the inline scaleFactor path.
+    registerScaleBothColors(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, scaleKPK);
 }
 
 const ValueEntry *probeValue(uint64_t materialKey) {

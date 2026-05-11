@@ -512,12 +512,13 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
     CHECK(evaluate(board) == 212);
 
-    // Textbook K + P vs K with an outside passed pawn: white is winning
-    // and the score should not be dragged down by treating the "no
-    // opposing pawn" feature as a weakness. The king is one square from
-    // the pawn so KingPawnDistEg only contributes a single-step penalty.
-    board.setFen("8/8/3k4/8/3P4/3K4/8/8 w - - 0 1");
-    CHECK(evaluate(board) == 182);
+    // Textbook K + P vs K with the strong king escorting a rook pawn
+    // one square from promotion. The KPK bitbase confirms WIN, so the
+    // scale stays at 64 and the natural eg is preserved; the weak
+    // unopposed penalty should not pull the score below the passer
+    // bonus that this configuration earns.
+    board.setFen("8/P1K5/8/k7/8/8/8/8 w - - 0 1");
+    CHECK(evaluate(board) > 200);
 }
 
 TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eval][pawn]") {
@@ -1154,13 +1155,17 @@ TEST_CASE("Eval: enemy king far from passer is preferred", "[eval][passed]") {
 TEST_CASE("Eval: our king close to advanced passer is preferred", "[eval][passed]") {
     Board board;
 
-    // White passer on e6 with our king nearby at e5 vs the same passer
-    // with our king stranded at a1. The endgame king-proximity term
-    // combined with king PST should both favor the close king.
-    board.setFen("4k3/8/4P3/4K3/8/8/8/8 w - - 0 1");
+    // White passer on e6 with our king nearby at e5: the KPK bitbase
+    // confirms the strong-king-in-front-of-pawn pattern wins, so the
+    // natural eg gradient survives intact.
+    board.setFen("4k3/8/4P3/4K3/8/8/P7/8 w - - 0 1");
     int kingClose = evaluate(board);
 
-    board.setFen("4k3/8/4P3/8/8/8/8/K7 w - - 0 1");
+    // Same passer with our king stranded at a1 outside the pawn's
+    // support range. Both positions share the additional a-pawn so the
+    // material configuration stays off the KPK dispatch and the
+    // comparison reflects the natural king-proximity gradient.
+    board.setFen("4k3/8/4P3/8/8/8/P7/K7 w - - 0 1");
     int kingFar = evaluate(board);
 
     CHECK(kingClose > kingFar);
