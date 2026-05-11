@@ -344,6 +344,34 @@ struct EvalParams {
     // the raw material gradient alone would. Mg structurally zero;
     // only the eg half is tunable.
     Score LucenaEg;
+
+    // KXK mating-conversion gradients: in K + mating-material vs lone
+    // K endings (KQK, KRK, KQQK, KQRK, KRRK, KQBK, KQNK, KRBK, KRNK),
+    // the strong side needs to drive the lone king toward an edge and
+    // bring its own king close enough to deliver mate inside the
+    // 50-move horizon. The natural eval has no such gradient; without
+    // these two terms the search can wander indefinitely with a clearly
+    // winning material advantage. Mg structurally zero (these only
+    // matter when the eg phase weight dominates); only the eg half is
+    // tunable. Per-square weighting: pushToEdge returns 0..7, pushClose
+    // returns 0..7, so each term contributes up to 7 * weight to eg.
+    Score KXKPushToEdge;
+    Score KXKPushClose;
+
+    // KBNK kings-together gradient: paired with KBNKCornerEg, this term
+    // pulls the strong king toward the weak king so the bishop and
+    // knight can actually deliver mate after driving the lone king to
+    // the colored corner. Pre-bitbase only had the colored-corner term;
+    // adding kings-together accelerates conversion. Mg zero, eg tunable.
+    Score KBNKPushClose;
+
+    // KQKR mating-conversion gradients: queen versus rook is a known
+    // win but technical. Push-to-edge drives the rook-side king toward
+    // the edge; push-close brings the queen-side king in support.
+    // Without these, the search rarely converts KQKR inside the
+    // 50-move horizon. Mg zero, eg tunable.
+    Score KQKRPushToEdge;
+    Score KQKRPushClose;
 };
 
 extern EvalParams evalParams;

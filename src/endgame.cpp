@@ -38,6 +38,26 @@ uint64_t makeKey(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb,
     return k;
 }
 
+// Closeness to the nearest board edge, returned as 0..7 where 7 is on
+// the edge and 0 is on a central square. Used by the mating-conversion
+// gradients (KXK, KQKR) to drive the lone king toward an edge so the
+// search converges to mate inside the 50-move horizon.
+inline int pushToEdge(int sq) {
+    int file = squareFile(sq);
+    int rank = squareRank(sq);
+    int fileDist = std::min(file, 7 - file);
+    int rankDist = std::min(rank, 7 - rank);
+    return 7 - std::min(fileDist, rankDist);
+}
+
+// Closeness of two squares, returned as 0..7 where 7 is adjacent and 0
+// is maximally separated. The mating gradients use this to bring the
+// strong king close enough to deliver mate after driving the lone king
+// to the edge.
+inline int pushClose(int a, int b) {
+    return 7 - chebyshev(a, b);
+}
+
 // Distance metric toward the two corners that match the given square
 // color (light or dark). Used by KBNK and any future endgame that
 // drives the lone king toward bishop-controllable corners.
@@ -218,17 +238,51 @@ ScaleResult scaleMinorVsMinorDraw(const Board &board, Color strongSide) {
     return {0, 0};
 }
 
+// K + mating-material vs lone K (KQK, KRK, KQQK, KQRK, KRRK, KQBK,
+// KQNK, KRBK, KRNK). Drives the lone king toward an edge and brings
+// the strong king close enough to deliver mate. Without these
+// gradients the search has no eg signal beyond the material delta,
+// which is too flat for the 50-move horizon. Scale stays at 64 so the
+// natural eg (material plus PSTs plus king-safety pressure on the
+// lone king) passes through unchanged.
+ScaleResult scaleKXK(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int gradient = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) +
+                   pushClose(strongKing, weakKing) * eg_value(evalParams.KXKPushClose);
+    if (strongSide == Black) gradient = -gradient;
+    return {64, gradient};
+}
+
 // K + B + N vs K. Drives the lone king toward the corner the bishop
-// controls. Matches the legacy inline KBNK adjustment exactly: only
-// KBNKCornerEg drives the gradient. Scale stays at 64 so the rest of
-// the eg (material plus PST plus king-safety pressure on the lone
-// king) passes through unchanged.
+// controls (KBNKCornerEg) and brings the strong king close enough to
+// deliver mate (KBNKPushClose). The colored-corner term is the
+// dominant signal; the kings-together term is added on top so the
+// strong king is not stranded once the lone king reaches the corner.
+// Scale stays at 64.
 ScaleResult scaleKBNK(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
     Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
     bool bishopLight = (strongBishop & LightSquaresBB) != 0;
-    int gradient = pushToColoredCorner(weakKing, bishopLight) * eg_value(evalParams.KBNKCornerEg);
+    int gradient = pushToColoredCorner(weakKing, bishopLight) * eg_value(evalParams.KBNKCornerEg) +
+                   pushClose(strongKing, weakKing) * eg_value(evalParams.KBNKPushClose);
+    if (strongSide == Black) gradient = -gradient;
+    return {64, gradient};
+}
+
+// K + Q vs K + R. The queen wins but conversion is technical: drive
+// the rook-side king toward the edge and bring the queen-side king
+// close enough to deliver mate. Without these gradients the search
+// often shuffles inside the 50-move horizon. Scale stays at 64.
+ScaleResult scaleKQKR(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int gradient = pushToEdge(weakKing) * eg_value(evalParams.KQKRPushToEdge) +
+                   pushClose(strongKing, weakKing) * eg_value(evalParams.KQKRPushClose);
     if (strongSide == Black) gradient = -gradient;
     return {64, gradient};
 }
@@ -254,13 +308,29 @@ void init() {
     g_initialized = true;
     Kpk::init();
 
-    // K + B + N vs K: route through the dedicated colored-corner
-    // gradient. Mating material configurations without colored-corner
-    // constraints (KQK, KRK, KQQK, KQRK, KRRK, KQBK, KQNK, KRBK, KRNK)
-    // are left to the natural eval because the material excess alone
-    // already drives the search; pre-bitbase did not apply any
-    // dedicated lone-king push gradient for those material configs.
+    // K + B + N vs K: route through the dedicated colored-corner plus
+    // kings-together gradient.
     registerScaleVsLoneKing(0, 1, 1, 0, 0, scaleKBNK);
+
+    // K + mating-material vs lone K: push-to-edge plus kings-together
+    // gradients. Covers the common mating configurations so the
+    // search has an eg pull toward checkmate beyond the raw material
+    // delta. The natural eval has no such gradient; without it the
+    // engine often shuffles inside the 50-move horizon when a clearly
+    // winning material edge could have converted.
+    registerScaleVsLoneKing(0, 0, 0, 0, 1, scaleKXK); // KQK
+    registerScaleVsLoneKing(0, 0, 0, 1, 0, scaleKXK); // KRK
+    registerScaleVsLoneKing(0, 0, 0, 0, 2, scaleKXK); // KQQK
+    registerScaleVsLoneKing(0, 0, 0, 2, 0, scaleKXK); // KRRK
+    registerScaleVsLoneKing(0, 0, 0, 1, 1, scaleKXK); // KQRK
+    registerScaleVsLoneKing(0, 0, 1, 0, 1, scaleKXK); // KQBK
+    registerScaleVsLoneKing(0, 1, 0, 0, 1, scaleKXK); // KQNK
+    registerScaleVsLoneKing(0, 0, 1, 1, 0, scaleKXK); // KRBK
+    registerScaleVsLoneKing(0, 1, 0, 1, 0, scaleKXK); // KRNK
+
+    // K + Q vs K + R: push-to-edge plus kings-together for the
+    // queen-vs-rook mating conversion.
+    registerScale(0, 0, 0, 0, 1, 0, 0, 0, 1, 0, scaleKQKR);
 
     // K + Q vs K + P: queen wins everywhere except the textbook
     // rook-file fortress with the defender king on the promotion

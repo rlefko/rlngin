@@ -10,15 +10,13 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // Ninety five is the committed SPSA surface: the eighty-eight pre-uplift
-    // scalars plus the four search-strength uplift scalars from #76
-    // (SingularBetaMul, SingularDepthDiv, SingularDoubleMargin,
-    // IirCutNodeDepth), the two aspiration-window scalars from #78
-    // (AspWindowBase, AspWindowDiv), and PawnHistoryWeight. The new
-    // endgame module reuses the existing KBNKCornerEg, LucenaEg, and
-    // KingPawnDistEg tunables and does not introduce any new SPSA
-    // scalars.
-    REQUIRE(specs.size() == 95);
+    // One hundred is the committed SPSA surface: the ninety-five
+    // pre-mating-gradient scalars plus the five new endgame mating-
+    // conversion gradients (KXKPushToEdgeEg, KXKPushCloseEg,
+    // KBNKPushCloseEg, KQKRPushToEdgeEg, KQKRPushCloseEg) added so the
+    // engine has a tunable pull toward driving the lone king to the
+    // edge and bringing the strong king close enough to deliver mate.
+    REQUIRE(specs.size() == 100);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {
