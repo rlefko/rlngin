@@ -6,16 +6,13 @@
 #include <cstdint>
 
 // Specialized endgame evaluation module. Material-key dispatch routes
-// positions with recognized material configurations to dedicated
-// evaluators that supersede the generic HCE gradient. Value evaluators
-// return an absolute white-perspective score that overrides the main
-// eval; scale evaluators return a ScaleResult carrying a 0..64
-// multiplier on the endgame half plus an optional additive applied to
-// eg before the multiplier. Both flavors are registered for both color
-// polarities at init time so dispatch is symmetric.
+// positions with recognized material configurations to dedicated scale
+// evaluators that override the generic HCE drawishness scaling.
+// Evaluators return a ScaleResult carrying a 0..64 multiplier on the
+// endgame half plus an optional additive applied to eg before the
+// multiplier. Both color polarities are registered at init time so
+// dispatch is symmetric.
 namespace Endgame {
-
-using ValueFn = int (*)(const Board &, Color strongSide);
 
 // Result of a scale evaluator. `scale` is the 0..64 multiplier applied
 // to the endgame half before the phase blend; values below 64 pull a
@@ -31,11 +28,6 @@ struct ScaleResult {
 
 using ScaleFn = ScaleResult (*)(const Board &, Color strongSide);
 
-struct ValueEntry {
-    ValueFn fn;
-    Color strongSide;
-};
-
 struct ScaleEntry {
     ScaleFn fn;
     Color strongSide;
@@ -44,14 +36,10 @@ struct ScaleEntry {
 // One-time registry population. Called from ensureEvalInit().
 void init();
 
-// Returns a pointer to the registered value evaluator for this material
+// Returns a pointer to the registered scale evaluator for this material
 // configuration, or nullptr if none is registered. The pointer remains
 // valid for the lifetime of the process; the registry is read-only after
 // init() returns.
-const ValueEntry *probeValue(uint64_t materialKey);
-
-// Returns a pointer to the registered scale evaluator for this material
-// configuration, or nullptr if none is registered.
 const ScaleEntry *probeScale(uint64_t materialKey);
 
 } // namespace Endgame

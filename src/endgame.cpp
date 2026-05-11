@@ -12,9 +12,8 @@ namespace Endgame {
 
 namespace {
 
-// Material-key registries populated once in init(). Lookups are read-only
+// Material-key registry populated once in init(). Lookups are read-only
 // after init() returns, so no synchronization is required on probe.
-std::unordered_map<uint64_t, ValueEntry> g_valueMap;
 std::unordered_map<uint64_t, ScaleEntry> g_scaleMap;
 
 // Compute the same material zobrist key Board::computeMaterialKey
@@ -304,11 +303,6 @@ void init() {
     registerScale(0, 1, 0, 0, 0, 0, 1, 0, 0, 0, scaleMinorVsMinorDraw); // KNKN
     registerScale(0, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleMinorVsMinorDraw); // KBKB
     registerScale(0, 1, 0, 0, 0, 0, 0, 1, 0, 0, scaleMinorVsMinorDraw); // KNKB
-}
-
-const ValueEntry *probeValue(uint64_t materialKey) {
-    auto it = g_valueMap.find(materialKey);
-    return it == g_valueMap.end() ? nullptr : &it->second;
 }
 
 const ScaleEntry *probeScale(uint64_t materialKey) {
