@@ -112,6 +112,50 @@ TEST_CASE("KPK eval: winning bitbase entries keep the natural eg, drawn entries 
     CHECK(evaluate(drawn) == 0);
 }
 
+TEST_CASE("KRKP: rook side beats a far-back pawn but a far-advanced pawn with king support draws",
+          "[endgame][krkp]") {
+    Board winning;
+    // White rook vs black pawn far back, white king close enough to
+    // intervene. Should score as a clear win.
+    winning.setFen("8/8/8/8/8/2k1K3/3p4/3R4 w - - 0 1");
+    int strong = evaluate(winning);
+    CHECK(strong > 200);
+
+    // Pawn one square from promotion with the weak king supporting and
+    // strong king cut off: the race favours the pawn side, score
+    // should pull toward zero rather than the raw material edge.
+    Board drawish;
+    drawish.setFen("8/8/8/8/8/8/3p4/3k3K w - - 0 1");
+    int draw = evaluate(drawish);
+    CHECK(draw < strong);
+}
+
+TEST_CASE("KRKB: drawish, but the rook side keeps a slope toward the edge",
+          "[endgame][krkb]") {
+    Board center;
+    center.setFen("8/8/8/3k4/8/2b5/8/3KR3 w - - 0 1");
+    int centered = evaluate(center);
+
+    Board edge;
+    edge.setFen("k7/8/8/8/8/2b5/8/3KR3 w - - 0 1");
+    int onEdge = evaluate(edge);
+
+    CHECK(onEdge > centered);
+}
+
+TEST_CASE("KRKN: separating the weak king from its knight scores better than keeping them together",
+          "[endgame][krkn]") {
+    Board together;
+    together.setFen("8/8/8/3kn3/8/8/8/3KR3 w - - 0 1");
+    int near = evaluate(together);
+
+    Board apart;
+    apart.setFen("4k3/8/8/8/n7/8/8/3KR3 w - - 0 1");
+    int far = evaluate(apart);
+
+    CHECK(far > near);
+}
+
 TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong corner",
           "[endgame][kbnk]") {
     // Light-squared bishop drives the lone king to a light corner (h1

@@ -99,6 +99,79 @@ ScaleResult scaleKPK(const Board &board, Color strongSide) {
     return {win ? 64 : 0, 0};
 }
 
+// K + R vs K + P. The result hinges on whether the strong king (or the
+// rook) can intervene before the lone pawn promotes. The classical
+// decomposition into four cases handles each of "strong king in front
+// of the pawn", "weak king too far to defend", "advanced supported
+// pawn", and a graduated middle ground that combines king-distance and
+// pawn-rank terms into a continuous score.
+int evaluateKRKP(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int rook = lsb(board.byPiece[Rook] & board.byColor[strongSide]);
+    int pawn = lsb(board.byPiece[Pawn] & board.byColor[weakSide]);
+
+    int pawnFile = squareFile(pawn);
+    int queeningSq = (weakSide == White) ? (56 + pawnFile) : pawnFile;
+    int pushDir = (weakSide == White) ? 8 : -8;
+    int pushSq = pawn + pushDir;
+    int rookEg = eg_value(evalParams.PieceScore[Rook]);
+
+    int weakStm = (board.sideToMove == weakSide) ? 1 : 0;
+    int strongStm = (board.sideToMove == strongSide) ? 1 : 0;
+
+    bool inFrontOfPawn;
+    if (weakSide == White) {
+        inFrontOfPawn = squareFile(strongKing) == pawnFile &&
+                        squareRank(strongKing) > squareRank(pawn);
+    } else {
+        inFrontOfPawn = squareFile(strongKing) == pawnFile &&
+                        squareRank(strongKing) < squareRank(pawn);
+    }
+
+    int result;
+    if (inFrontOfPawn) {
+        result = rookEg - chebyshev(strongKing, pawn);
+    } else if (chebyshev(weakKing, pawn) >= 3 + weakStm && chebyshev(weakKing, rook) >= 3) {
+        result = rookEg - chebyshev(strongKing, pawn);
+    } else if (relativeRank(weakSide, weakKing) >= 5 && chebyshev(weakKing, pawn) == 1 &&
+               relativeRank(weakSide, strongKing) <= 4 &&
+               chebyshev(strongKing, pawn) > 2 + strongStm) {
+        result = 80 - 8 * chebyshev(strongKing, pawn);
+    } else {
+        result = 200 - 8 * (chebyshev(strongKing, pushSq) - chebyshev(weakKing, pushSq) -
+                            chebyshev(pawn, queeningSq));
+    }
+
+    return (strongSide == White) ? result : -result;
+}
+
+// K + R vs K + B. The defender holds with reasonable play; the score is
+// near zero with a token slope toward the edge to keep the search
+// pointed at the strongest defensive setup rather than wandering.
+int evaluateKRKB(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int gradient = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) / 4;
+    int whitePov = gradient;
+    return (strongSide == White) ? whitePov : -whitePov;
+}
+
+// K + R vs K + N. Less drawish than KRKB because the knight is much
+// less mobile than a bishop. The evaluator rewards separating the weak
+// king from its knight so the rook can pick off the knight after a
+// king sequence drives the defender into a corner.
+int evaluateKRKN(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int knight = lsb(board.byPiece[Knight] & board.byColor[weakSide]);
+    int edgePush = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) / 3;
+    int separation = chebyshev(weakKing, knight) * eg_value(evalParams.KXKPushClose) / 2;
+    int whitePov = edgePush + separation;
+    return (strongSide == White) ? whitePov : -whitePov;
+}
+
 int evaluateKBNK(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
@@ -113,15 +186,20 @@ int evaluateKBNK(const Board &board, Color strongSide) {
     return (strongSide == White) ? whitePov : -whitePov;
 }
 
-void registerValueBothColors(int wp, int wn, int wb, int wr, int wq, ValueFn fn) {
-    uint64_t kw = makeKey(wp, wn, wb, wr, wq, 0, 0, 0, 0, 0);
-    uint64_t kb = makeKey(0, 0, 0, 0, 0, wp, wn, wb, wr, wq);
+void registerValue(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb, int br, int bq,
+                   ValueFn fn) {
+    uint64_t kw = makeKey(wp, wn, wb, wr, wq, bp, bn, bb, br, bq);
+    uint64_t kb = makeKey(bp, bn, bb, br, bq, wp, wn, wb, wr, wq);
     g_valueMap[kw] = {fn, White};
     g_valueMap[kb] = {fn, Black};
 }
 
-void registerScaleBothColors(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb,
-                             int br, int bq, ScaleFn fn) {
+void registerValueVsLoneKing(int wp, int wn, int wb, int wr, int wq, ValueFn fn) {
+    registerValue(wp, wn, wb, wr, wq, 0, 0, 0, 0, 0, fn);
+}
+
+void registerScale(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb, int br, int bq,
+                   ScaleFn fn) {
     uint64_t kw = makeKey(wp, wn, wb, wr, wq, bp, bn, bb, br, bq);
     uint64_t kb = makeKey(bp, bn, bb, br, bq, wp, wn, wb, wr, wq);
     g_scaleMap[kw] = {fn, White};
@@ -143,26 +221,42 @@ void init() {
     // suffice to mate without help from any pawn structure; rarer
     // pile-ons like K + 3Q vs K stay on the natural gradient because
     // the material alone already drives the search.
-    registerValueBothColors(0, 0, 0, 0, 1, evaluateKXK); // KQK
-    registerValueBothColors(0, 0, 0, 1, 0, evaluateKXK); // KRK
-    registerValueBothColors(0, 0, 0, 0, 2, evaluateKXK); // KQQK
-    registerValueBothColors(0, 0, 0, 1, 1, evaluateKXK); // KQRK
-    registerValueBothColors(0, 0, 0, 2, 0, evaluateKXK); // KRRK
-    registerValueBothColors(0, 0, 1, 0, 1, evaluateKXK); // KQBK
-    registerValueBothColors(0, 1, 0, 0, 1, evaluateKXK); // KQNK
-    registerValueBothColors(0, 0, 1, 1, 0, evaluateKXK); // KRBK
-    registerValueBothColors(0, 1, 0, 1, 0, evaluateKXK); // KRNK
+    registerValueVsLoneKing(0, 0, 0, 0, 1, evaluateKXK); // KQK
+    registerValueVsLoneKing(0, 0, 0, 1, 0, evaluateKXK); // KRK
+    registerValueVsLoneKing(0, 0, 0, 0, 2, evaluateKXK); // KQQK
+    registerValueVsLoneKing(0, 0, 0, 1, 1, evaluateKXK); // KQRK
+    registerValueVsLoneKing(0, 0, 0, 2, 0, evaluateKXK); // KRRK
+    registerValueVsLoneKing(0, 0, 1, 0, 1, evaluateKXK); // KQBK
+    registerValueVsLoneKing(0, 1, 0, 0, 1, evaluateKXK); // KQNK
+    registerValueVsLoneKing(0, 0, 1, 1, 0, evaluateKXK); // KRBK
+    registerValueVsLoneKing(0, 1, 0, 1, 0, evaluateKXK); // KRNK
 
     // KBNK uses the colored-corner gradient instead of the generic
     // edge push because the bishop only controls one corner color.
-    registerValueBothColors(0, 1, 1, 0, 0, evaluateKBNK);
+    registerValueVsLoneKing(0, 1, 1, 0, 0, evaluateKBNK);
+
+    // K + R vs K + P: rook-vs-pawn race. The dispatched evaluator
+    // weighs strong-king-vs-promotion-square distance against
+    // weak-king support to discriminate wins from drawing races.
+    registerValue(0, 0, 0, 1, 0, 1, 0, 0, 0, 0, evaluateKRKP);
+
+    // K + R vs K + B: drawish. The rook side keeps a token edge but
+    // the evaluator collapses the score so the search does not chase
+    // illusory wins against a coordinated bishop and king.
+    registerValue(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, evaluateKRKB);
+
+    // K + R vs K + N: drawish with a slight edge for the rook side
+    // when the defending king and knight are separated. The evaluator
+    // rewards driving the weak king to the edge and prying knight
+    // support away.
+    registerValue(0, 0, 0, 1, 0, 0, 1, 0, 0, 0, evaluateKRKN);
 
     // K + P vs K: bitbase scaling. The strong pawn side keeps the full
     // eg gradient for winning bitbase entries and collapses to zero for
     // drawn entries. The previous rule-based rook-file fortress
     // becomes a strict subset of the bitbase coverage and is retired
     // from the inline scaleFactor path.
-    registerScaleBothColors(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, scaleKPK);
+    registerScale(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, scaleKPK);
 }
 
 const ValueEntry *probeValue(uint64_t materialKey) {
