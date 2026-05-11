@@ -1,6 +1,7 @@
 #include "eval.h"
 
 #include "bitboard.h"
+#include "endgame.h"
 #include "eval_params.h"
 #include "material_hash.h"
 #include "pawn_hash.h"
@@ -31,6 +32,7 @@ static void ensureEvalInit() {
         PST[Rook] = evalParams.RookPST;
         PST[Queen] = evalParams.QueenPST;
         PST[King] = evalParams.KingPST;
+        Endgame::init();
         return true;
     }();
 
@@ -1685,6 +1687,30 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
 int evaluate(const Board &board) {
     ensureEvalInit();
 
+    // Specialized endgame value evaluators short-circuit the generic
+    // pipeline. The probe is keyed on the position's material zobrist
+    // hash so dispatch is O(1) and the natural eval path remains
+    // untouched for material configurations the module does not
+    // recognize. Halfmove decay and the tempo bonus are still applied so
+    // the override stays consistent with the rest of search's score
+    // contract.
+    if (const auto *ve = Endgame::probeValue(board.materialKey)) {
+        int v = ve->fn(board, ve->strongSide);
+        if (board.byPiece[Pawn]) {
+            v = v * (200 - board.halfmoveClock) / 200;
+        }
+        int phaseHere = 0;
+        for (int c = 0; c < 2; c++) {
+            for (int pt = 1; pt < 7; pt++) {
+                phaseHere += GamePhaseInc[pt] * board.pieceCount[c][pt];
+            }
+        }
+        int mgPhaseHere = std::min(phaseHere, 24);
+        int tempo = mg_value(evalParams.Tempo) * mgPhaseHere / 24;
+        int whitePov = v + tempo * ((board.sideToMove == White) ? 1 : -1);
+        return (board.sideToMove == White) ? whitePov : -whitePov;
+    }
+
     Score scores[2] = {0, 0};
     int gamePhase = 0;
 
@@ -1753,9 +1779,16 @@ int evaluate(const Board &board) {
     // adjustment ahead of the scale so the gradient survives even when
     // the scaled eg would otherwise flatline.
     if (mgPhase <= 10) {
-        eg += endgameEgAdjust(board);
-        int scale = scaleFactor(board);
-        eg = eg * scale / 64;
+        int egAdjust = endgameEgAdjust(board);
+        int scale;
+        if (const auto *se = Endgame::probeScale(board.materialKey)) {
+            Endgame::ScaleResult r = se->fn(board, se->strongSide);
+            scale = r.scale;
+            egAdjust += r.egAdjust;
+        } else {
+            scale = scaleFactor(board);
+        }
+        eg = (eg + egAdjust) * scale / 64;
     }
 
     int result = (mg * mgPhase + eg * egPhase) / 24;
@@ -1862,9 +1895,17 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     int scale = 64;
     int scaledEg = eg;
     int egAdjust = 0;
+    const Endgame::ScaleEntry *scaleEntry =
+        (mgPhase <= 10) ? Endgame::probeScale(board.materialKey) : nullptr;
     if (mgPhase <= 10) {
         egAdjust = endgameEgAdjust(board);
-        scale = scaleFactor(board);
+        if (scaleEntry) {
+            Endgame::ScaleResult r = scaleEntry->fn(board, scaleEntry->strongSide);
+            scale = r.scale;
+            egAdjust += r.egAdjust;
+        } else {
+            scale = scaleFactor(board);
+        }
         scaledEg = (eg + egAdjust) * scale / 64;
     }
     int blended = (mg * mgPhase + scaledEg * egPhase) / 24;
@@ -1878,6 +1919,23 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     int whitePovResult =
         halfmoveScaled + ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
     int stmResult = (board.sideToMove == White) ? whitePovResult : -whitePovResult;
+
+    // Specialized value evaluators override the natural breakdown sum.
+    // Print the breakdown anyway so the contributors are visible, then
+    // emit the override value as the final stmResult so the safety check
+    // below stays consistent with evaluate().
+    const Endgame::ValueEntry *valueEntry = Endgame::probeValue(board.materialKey);
+    int overrideValue = 0;
+    if (valueEntry) {
+        int v = valueEntry->fn(board, valueEntry->strongSide);
+        if (board.byPiece[Pawn]) {
+            v = v * (200 - board.halfmoveClock) / 200;
+        }
+        int whitePovOverride = v + ((board.sideToMove == White) ? tempoContribution
+                                                                : -tempoContribution);
+        overrideValue = (board.sideToMove == White) ? whitePovOverride : -whitePovOverride;
+        stmResult = overrideValue;
+    }
 
     // Render one eval half (mg or eg) as a pawns-with-two-decimals string
     // padded to exactly 6 chars. One pawn is worth 228 internal units in
@@ -1945,6 +2003,10 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
        << " clock=" << board.halfmoveClock << " -> " << halfmoveScaled << '\n';
     os << " " << std::left << std::setw(14) << "Tempo"
        << " " << ((board.sideToMove == White) ? "+" : "-") << tempoContribution << '\n';
+    if (valueEntry) {
+        os << " " << std::left << std::setw(14) << "Endgame"
+           << " override=" << overrideValue << '\n';
+    }
     os << " " << std::left << std::setw(14) << "Total (stm)"
        << " internal=" << stmResult << " cp=" << (stmResult * 100 / 228) << '\n';
 
