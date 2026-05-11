@@ -482,6 +482,25 @@ int evaluateKNNK(const Board &board, Color strongSide) {
     return 0;
 }
 
+// K + minor vs K. A single minor piece against a lone king is a
+// textbook draw. The shared evaluator covers KNK and KBK from either
+// side and returns zero unconditionally.
+int evaluateKMinorK(const Board &board, Color strongSide) {
+    (void)board;
+    (void)strongSide;
+    return 0;
+}
+
+// K + minor vs K + minor (pawnless). Any of KNKN, KBKB, KBKN, KNKB
+// without pawns is a draw with proper defense. The shared scale
+// evaluator returns zero to subsume the inline pawnless-minor-only
+// recognizer in scaleFactor.
+ScaleResult scaleMinorVsMinorDraw(const Board &board, Color strongSide) {
+    (void)board;
+    (void)strongSide;
+    return {0, 0};
+}
+
 // K + N + N vs K + P. The Troitsky-line theory gives winning chances
 // only when the defender pawn is suitably restrained, but the band of
 // winning positions is narrow and search-only conversion is unreliable.
@@ -648,6 +667,15 @@ void init() {
     for (int n = 1; n <= 8; n++) {
         registerScale(0, 0, 0, 0, 1, n, 0, 0, 1, 0, scaleKQKRPs);
     }
+
+    // K + minor vs K: drawn with insufficient material.
+    registerValueVsLoneKing(0, 1, 0, 0, 0, evaluateKMinorK); // KNK
+    registerValueVsLoneKing(0, 0, 1, 0, 0, evaluateKMinorK); // KBK
+
+    // K + minor vs K + minor (pawnless): drawn with proper defense.
+    registerScale(0, 1, 0, 0, 0, 0, 1, 0, 0, 0, scaleMinorVsMinorDraw); // KNKN
+    registerScale(0, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleMinorVsMinorDraw); // KBKB
+    registerScale(0, 1, 0, 0, 0, 0, 0, 1, 0, 0, scaleMinorVsMinorDraw); // KNKB
 }
 
 const ValueEntry *probeValue(uint64_t materialKey) {

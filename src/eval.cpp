@@ -1170,31 +1170,7 @@ static int scaleFactor(const Board &board) {
         return 38;
     }
 
-    // Pawnless minor-only endings reduce to draws unless one side has a
-    // material excess of a rook or more. Kings-only positions fall through
-    // to the default scale because the PST ordering of king activity is
-    // still useful to the search even if the outcome is a formal draw.
-    if (!board.byPiece[Pawn]) {
-        int wMinors = board.pieceCount[White][Knight] + board.pieceCount[White][Bishop];
-        int bMinors = board.pieceCount[Black][Knight] + board.pieceCount[Black][Bishop];
-        int wMajors = board.pieceCount[White][Rook] + board.pieceCount[White][Queen];
-        int bMajors = board.pieceCount[Black][Rook] + board.pieceCount[Black][Queen];
-        bool onlyMinorsEachSide = wMajors == 0 && bMajors == 0;
-        if (onlyMinorsEachSide && wMinors <= 1 && bMinors <= 1 && (wMinors + bMinors) >= 1) {
-            return 0;
-        }
-    }
-
     return 64;
-}
-
-// Endgame-only score adjustment in white-perspective eg units. The
-// inline endgame patterns have all been migrated to the dedicated
-// endgame module so the function returns zero unconditionally and is
-// retired in a follow-up cleanup commit.
-static int endgameEgAdjust(const Board &board) {
-    (void)board;
-    return 0;
 }
 
 // Reward pieces we attack with a less-valuable attacker, hanging pieces,
@@ -1509,12 +1485,12 @@ int evaluate(const Board &board) {
     // adjustment ahead of the scale so the gradient survives even when
     // the scaled eg would otherwise flatline.
     if (mgPhase <= 10) {
-        int egAdjust = endgameEgAdjust(board);
+        int egAdjust = 0;
         int scale;
         if (const auto *se = Endgame::probeScale(board.materialKey)) {
             Endgame::ScaleResult r = se->fn(board, se->strongSide);
             scale = r.scale;
-            egAdjust += r.egAdjust;
+            egAdjust = r.egAdjust;
         } else {
             scale = scaleFactor(board);
         }
@@ -1628,11 +1604,10 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     const Endgame::ScaleEntry *scaleEntry =
         (mgPhase <= 10) ? Endgame::probeScale(board.materialKey) : nullptr;
     if (mgPhase <= 10) {
-        egAdjust = endgameEgAdjust(board);
         if (scaleEntry) {
             Endgame::ScaleResult r = scaleEntry->fn(board, scaleEntry->strongSide);
             scale = r.scale;
-            egAdjust += r.egAdjust;
+            egAdjust = r.egAdjust;
         } else {
             scale = scaleFactor(board);
         }

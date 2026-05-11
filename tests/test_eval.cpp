@@ -58,18 +58,15 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
     CHECK(evaluate(board) == 212);
 
-    // Knight on a1 versus a bare king is a textbook draw, so the endgame
-    // scale factor zeroes the eg half. Only the tapered middlegame
-    // contribution survives, which is small with phase=1 and no pieces
-    // to generate meaningful mg terms.
+    // Knight or bishop versus a bare king is a textbook draw. The
+    // dedicated KMinorK value evaluator returns zero so the final
+    // score is just the side-to-move tempo contribution scaled by the
+    // tiny endgame phase.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 30);
+    CHECK(std::abs(evaluate(board)) < 20);
 
-    // Bishop on a1 versus a bare king is likewise drawn, so the eg half
-    // is scaled to zero. The mg half reflects material, PSTs, and the
-    // long-diagonal sweep the a1-h8 diagonal earns on an empty board.
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 47);
+    CHECK(std::abs(evaluate(board)) < 20);
 
     // Rook on a1 vs a lone king routes through the KXK value evaluator
     // (material delta plus the lone-king gradient) rather than the
@@ -87,10 +84,13 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
 TEST_CASE("Eval: central knight scores higher than corner knight", "[eval]") {
     Board board;
 
-    board.setFen("4k3/8/8/8/4N3/8/8/4K3 w - - 0 1");
+    // Both positions carry an extra white pawn so the material stays
+    // off the KMinorK draw dispatch and the natural PST gradient
+    // drives the comparison.
+    board.setFen("4k3/8/8/8/4N3/8/P7/4K3 w - - 0 1");
     int centralKnight = evaluate(board);
 
-    board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
+    board.setFen("4k3/8/8/8/8/8/P7/N3K3 w - - 0 1");
     int cornerKnight = evaluate(board);
 
     CHECK(centralKnight > cornerKnight);
@@ -996,10 +996,13 @@ TEST_CASE("Eval: space bonus vanishes in thin endgames", "[eval][space]") {
 TEST_CASE("Eval: mobility term is color-symmetric", "[eval][mobility]") {
     Board board;
 
-    board.setFen("4k3/8/8/8/3N4/8/8/4K3 w - - 0 1");
+    // Both positions carry an extra a-pawn for each side so the
+    // material stays off the KMinorK / minor-vs-minor draw dispatch
+    // and the natural mobility term drives the asymmetry.
+    board.setFen("4k3/p7/8/8/3N4/8/P7/4K3 w - - 0 1");
     int whiteKnight = evaluate(board);
 
-    board.setFen("4k3/8/8/3n4/8/8/8/4K3 w - - 0 1");
+    board.setFen("4k3/p7/8/3n4/8/8/P7/4K3 w - - 0 1");
     int blackKnight = evaluate(board);
 
     // Both FENs have White to move, so the shared tempo bonus survives the
