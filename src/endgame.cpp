@@ -111,44 +111,28 @@ bool isWrongRookPawnFortress(const Board &board, Color strongSide) {
     return chebyshev(weakKing, promoSq) <= pushes;
 }
 
-// K + B + pawns vs K. The textbook wrong-rook-pawn fortress applies
-// when every strong-side pawn sits on a single rook file and the
-// bishop cannot control the corresponding promotion corner. The
-// defender king holds the draw by reaching the corner before the lead
-// pawn queens; any other configuration evaluates normally.
+// Unified bishop-and-pawns vs king-with-optional-bishop scale
+// evaluator. Checks the textbook wrong-rook-pawn fortress first; if
+// that fails and the defender holds a bishop, applies the same
+// opposite-colored-bishop pawn-count damping the legacy inline rule
+// used (scale 10 for one pawn, 26 for two or three, 38 for four or
+// more). Otherwise the natural eg passes through unchanged.
 ScaleResult scaleKBPsK(const Board &board, Color strongSide) {
-    return isWrongRookPawnFortress(board, strongSide) ? ScaleResult{0, 0} : ScaleResult{64, 0};
-}
-
-// K + B + P vs K + B. Same-colored bishops give the pawn side the
-// usual winning chances; opposite-colored bishops drop the scale to
-// the legacy single-pawn OCB inline value. The wrong-rook-pawn
-// fortress takes precedence over the OCB scaling because the
-// defender's bishop is irrelevant once the corner is unreachable.
-ScaleResult scaleKBPKB(const Board &board, Color strongSide) {
     if (isWrongRookPawnFortress(board, strongSide)) return {0, 0};
+
     Color weakSide = (strongSide == White) ? Black : White;
-    Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
     Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
+    if (!weakBishop) return {64, 0};
+
+    Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
     bool strongLight = (strongBishop & LightSquaresBB) != 0;
     bool weakLight = (weakBishop & LightSquaresBB) != 0;
     if (strongLight == weakLight) return {64, 0};
-    return {10, 0};
-}
 
-// K + B + 2 P vs K + B. Wrong-rook-pawn fortress wins over OCB
-// scaling. Otherwise opposite-bishop endings with two pawns are
-// drawish at the legacy two-or-three-pawn OCB inline value and
-// same-color bishops keep the full eg.
-ScaleResult scaleKBPPKB(const Board &board, Color strongSide) {
-    if (isWrongRookPawnFortress(board, strongSide)) return {0, 0};
-    Color weakSide = (strongSide == White) ? Black : White;
-    Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
-    Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
-    bool strongLight = (strongBishop & LightSquaresBB) != 0;
-    bool weakLight = (weakBishop & LightSquaresBB) != 0;
-    if (strongLight == weakLight) return {64, 0};
-    return {26, 0};
+    int strongPawns = popcount(board.byPiece[Pawn] & board.byColor[strongSide]);
+    if (strongPawns <= 1) return {10, 0};
+    if (strongPawns <= 3) return {26, 0};
+    return {38, 0};
 }
 
 // K + R + P vs K + R. Recognizes the three named patterns:
@@ -395,28 +379,15 @@ void init() {
     // from the inline scaleFactor path.
     registerScale(1, 0, 0, 0, 0, 0, 0, 0, 0, 0, scaleKPK);
 
-    // K + B + N pawns vs K with the wrong-colored bishop: register one
-    // entry per pawn count so the dispatch covers single-pawn and
-    // multi-pawn rook-file fortresses without falling back to the
-    // inline rule.
+    // K + B + N pawns vs K (defender bare king): unified scaleKBPsK
+    // handles the wrong-rook-pawn fortress check.
     for (int n = 1; n <= 8; n++) {
         registerScale(n, 0, 1, 0, 0, 0, 0, 0, 0, 0, scaleKBPsK);
     }
 
-    // K + B + P vs K + B (opposite or same-colored bishops). The
-    // wrong-rook-pawn fortress check inside scaleKBPKB also catches
-    // KBPKB drawn shapes regardless of the defender bishop color.
-    registerScale(1, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPKB);
-
-    // K + B + 2 P vs K + B.
-    registerScale(2, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPPKB);
-
-    // K + B + N pawns vs K + B for 3..8 pawns. The wrong-rook-pawn
-    // fortress check is the only meaningful drawishness signal for
-    // these uncommon configurations; routing them through scaleKBPsK
-    // exposes the same check without forcing the inline scaleFactor
-    // to keep a duplicate path for the defender-bishop case.
-    for (int n = 3; n <= 8; n++) {
+    // K + B + N pawns vs K + B (defender holds a bishop): same
+    // unified evaluator, with OCB pawn-count damping folded in.
+    for (int n = 1; n <= 8; n++) {
         registerScale(n, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPsK);
     }
 
