@@ -172,6 +172,53 @@ int evaluateKRKN(const Board &board, Color strongSide) {
     return (strongSide == White) ? whitePov : -whitePov;
 }
 
+// K + Q vs K + R. Queen wins with technique: drive the weak king to the
+// edge so the queen can pry the defender's rook from king support, then
+// pick it off. The eval encodes the material excess together with the
+// per-square edge push and kings-together gradients tuned specifically
+// for this material configuration.
+int evaluateKQKR(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+
+    int matEg = eg_value(evalParams.PieceScore[Queen]) - eg_value(evalParams.PieceScore[Rook]);
+    int edgePush = pushToEdge(weakKing) * eg_value(evalParams.KQKRPushToEdge);
+    int closePush = pushClose(strongKing, weakKing) * eg_value(evalParams.KQKRPushClose);
+    int whitePov = matEg + edgePush + closePush;
+    return (strongSide == White) ? whitePov : -whitePov;
+}
+
+// K + Q vs K + P. The queen wins almost everywhere; the exception is a
+// rook-file pawn one push from promotion with the defender king
+// blockading the corner and the attacker king too far to dislodge it.
+// The fortress check here subsumes the inline rule in scaleFactor.
+int evaluateKQKP(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int pawn = lsb(board.byPiece[Pawn] & board.byColor[weakSide]);
+
+    int pawnFile = squareFile(pawn);
+    int pawnRelRank = relativeRank(weakSide, pawn);
+
+    // Rook-file pawn fortress: defender king on or next to the
+    // promotion square and the attacker king at least four king-steps
+    // away. Returning zero in this slim band of positions stops the
+    // search from converting a textbook draw into an imagined win.
+    if (pawnRelRank == 6 && (pawnFile == 0 || pawnFile == 7)) {
+        int promoSq = (weakSide == White) ? (56 + pawnFile) : pawnFile;
+        if (chebyshev(weakKing, promoSq) <= 1 && chebyshev(strongKing, promoSq) > 3) {
+            return 0;
+        }
+    }
+
+    int matEg = eg_value(evalParams.PieceScore[Queen]) - eg_value(evalParams.PieceScore[Pawn]);
+    int gradient = pushClose(strongKing, weakKing) * eg_value(evalParams.KXKPushClose);
+    int whitePov = matEg + gradient;
+    return (strongSide == White) ? whitePov : -whitePov;
+}
+
 int evaluateKBNK(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
@@ -250,6 +297,17 @@ void init() {
     // rewards driving the weak king to the edge and prying knight
     // support away.
     registerValue(0, 0, 0, 1, 0, 0, 1, 0, 0, 0, evaluateKRKN);
+
+    // K + Q vs K + R: queen wins by technique. The dedicated evaluator
+    // tracks edge push and king proximity rather than the generic KXK
+    // gradient because the rook can defend more squares than a lone
+    // king and the conversion plan is shaped by the rook's mobility.
+    registerValue(0, 0, 0, 0, 1, 0, 0, 0, 1, 0, evaluateKQKR);
+
+    // K + Q vs K + P: queen wins everywhere except the textbook
+    // rook-file fortress with the defender king on the promotion
+    // square and the attacker king too far away to drive it out.
+    registerValue(0, 0, 0, 0, 1, 1, 0, 0, 0, 0, evaluateKQKP);
 
     // K + P vs K: bitbase scaling. The strong pawn side keeps the full
     // eg gradient for winning bitbase entries and collapses to zero for

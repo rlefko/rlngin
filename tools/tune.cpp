@@ -142,6 +142,10 @@ static std::vector<ParamRef> collectParams() {
         {"KXKPushClose.eg", &evalParams.KXKPushClose, false, boundsNonNegative()});
     out.push_back(
         {"KBNKPushClose.eg", &evalParams.KBNKPushClose, false, boundsNonNegative()});
+    out.push_back(
+        {"KQKRPushToEdge.eg", &evalParams.KQKRPushToEdge, false, boundsNonNegative()});
+    out.push_back(
+        {"KQKRPushClose.eg", &evalParams.KQKRPushClose, false, boundsNonNegative()});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -3414,6 +3418,8 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KXKPushToEdge) << ", // KXKPushToEdge\n";
     std::cout << "    " << fmtScore(evalParams.KXKPushClose) << ", // KXKPushClose\n";
     std::cout << "    " << fmtScore(evalParams.KBNKPushClose) << ", // KBNKPushClose\n";
+    std::cout << "    " << fmtScore(evalParams.KQKRPushToEdge) << ", // KQKRPushToEdge\n";
+    std::cout << "    " << fmtScore(evalParams.KQKRPushClose) << ", // KQKRPushClose\n";
     std::cout << "};\n";
 }
 

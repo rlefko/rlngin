@@ -364,6 +364,19 @@ struct EvalParams {
     // tuned separately rather than shared with the generic KXK gradient.
     // Eg-only; mg structurally zero.
     Score KBNKPushClose;
+
+    // KQKR push-to-edge gradient. In Q vs R, mate technique relies on
+    // driving the defender king to the edge so the queen can pry the
+    // rook from its king and pick it off. The per-square weight is
+    // tuned independently from the generic KXK term because the
+    // queen-vs-rook race rewards a steeper edge push than mate against
+    // a bare king. Eg-only.
+    Score KQKRPushToEdge;
+
+    // KQKR kings-together pull. Bringing the strong king closer
+    // accelerates the rook-stripping plan, so this term reinforces the
+    // edge push gradient. Eg-only.
+    Score KQKRPushClose;
 };
 
 extern EvalParams evalParams;

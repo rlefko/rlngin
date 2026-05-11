@@ -1231,50 +1231,6 @@ static int scaleFactor(const Board &board) {
         }
     }
 
-    // Rule-based KQKP fortress: defender has K + 1 pawn one push from
-    // promotion on the a or h file with the defender king blockading on
-    // the promotion square, attacker has K + Q only and the attacking
-    // king is too far to help. The known-draw shape is narrow but
-    // recurs in practice and the search cannot resolve it within the
-    // 50-move horizon without help.
-    for (int c = 0; c < 2; c++) {
-        Color weak = static_cast<Color>(c);
-        Color strong = static_cast<Color>(c ^ 1);
-        if (board.pieceCount[weak][Pawn] != 1) continue;
-        if (board.pieceCount[weak][Knight] || board.pieceCount[weak][Bishop] ||
-            board.pieceCount[weak][Rook] || board.pieceCount[weak][Queen])
-            continue;
-        if (board.pieceCount[strong][Queen] != 1) continue;
-        if (board.pieceCount[strong][Pawn] || board.pieceCount[strong][Knight] ||
-            board.pieceCount[strong][Bishop] || board.pieceCount[strong][Rook])
-            continue;
-
-        Bitboard weakPawn = board.byPiece[Pawn] & board.byColor[weak];
-        Bitboard rookFilePawn = weakPawn & (FileABB | FileHBB);
-        if (rookFilePawn != weakPawn) continue;
-
-        int pawnSq = lsb(weakPawn);
-        int relRank = (weak == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
-        if (relRank != 6) continue; // one push from promotion
-
-        bool onA = (weakPawn & FileABB) != 0;
-        int promoSq = onA ? (weak == White ? 56 : 0) : (weak == White ? 63 : 7);
-        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
-        Bitboard strongKingBB = board.byPiece[King] & board.byColor[strong];
-        if (!weakKingBB || !strongKingBB) continue;
-
-        int weakKingSq = lsb(weakKingBB);
-        int strongKingSq = lsb(strongKingBB);
-        // Defender king blockades on the promotion square or its
-        // immediate neighbour.
-        if (chebyshev(weakKingSq, promoSq) > 1) continue;
-        // Attacker king must be far enough that it cannot drive the
-        // defender out before the queen-vs-pawn race resolves.
-        if (chebyshev(strongKingSq, promoSq) <= 3) continue;
-
-        return 0;
-    }
-
     // Philidor third-rank defence: defender holds K + R against K + R + P
     // when its rook sits on the third rank from its perspective (the
     // attacker's fifth rank) and the attacker's pawn is still far enough

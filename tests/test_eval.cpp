@@ -1221,14 +1221,15 @@ TEST_CASE("Eval: rook attacking enemy queen earns a threat bonus", "[eval][threa
 
     // White rook on d1 and black queen on d5 with a clear file between
     // them: the rook attacks the queen and should score positively for
-    // the attacking side.
-    board.setFen("4k3/8/8/3q4/8/8/8/3RK3 w - - 0 1");
+    // the attacking side. The white pawn on a2 keeps the material off
+    // the KQKR dispatch so the natural threat-by-rook term applies.
+    board.setFen("4k3/8/8/3q4/8/8/P7/3RK3 w - - 0 1");
     int rookThreatensQueen = evaluate(board);
 
     // Same material but the rook sits on a1 and no longer attacks the
     // queen. Threat-by-rook on the queen is gone and the eval relative
     // delta drops.
-    board.setFen("4k3/8/8/3q4/8/8/8/R3K3 w - - 0 1");
+    board.setFen("4k3/8/8/3q4/8/8/P7/R3K3 w - - 0 1");
     int rookIdle = evaluate(board);
 
     CHECK(rookThreatensQueen > rookIdle);

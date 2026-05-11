@@ -228,6 +228,10 @@ std::vector<TunableSpec> buildRegistry() {
         makeScoreHalfSpec("KXKPushCloseEg", &evalParams.KXKPushClose, false, 0, 60, 4.0, 1.5));
     out.push_back(
         makeScoreHalfSpec("KBNKPushCloseEg", &evalParams.KBNKPushClose, false, 0, 60, 4.0, 1.5));
+    out.push_back(
+        makeScoreHalfSpec("KQKRPushToEdgeEg", &evalParams.KQKRPushToEdge, false, 0, 80, 5.0, 2.0));
+    out.push_back(
+        makeScoreHalfSpec("KQKRPushCloseEg", &evalParams.KQKRPushClose, false, 0, 80, 5.0, 2.0));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

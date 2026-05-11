@@ -156,6 +156,37 @@ TEST_CASE("KRKN: separating the weak king from its knight scores better than kee
     CHECK(far > near);
 }
 
+TEST_CASE("KQKR: pushing the defender king toward the edge improves the queen side's score",
+          "[endgame][kqkr]") {
+    Board center;
+    center.setFen("8/8/8/3k4/3r4/8/8/3KQ3 w - - 0 1");
+    int centered = evaluate(center);
+
+    Board edge;
+    edge.setFen("k7/8/8/8/r7/8/8/3KQ3 w - - 0 1");
+    int onEdge = evaluate(edge);
+
+    CHECK(onEdge > centered);
+}
+
+TEST_CASE("KQKP: rook-file fortress holds the draw when the defender king blockades the corner",
+          "[endgame][kqkp]") {
+    Board fortress;
+    // Black pawn on a2 one push from promotion, black king blockading
+    // a1, white king too far to drive it out. The new KQKP evaluator
+    // returns the textbook draw.
+    fortress.setFen("8/8/8/8/8/4K3/p7/k6Q w - - 0 1");
+    int fortressEval = evaluate(fortress);
+    CHECK(std::abs(fortressEval) < 50);
+
+    // Same material with the pawn shifted to a central file: queen
+    // wins handily and the eval reflects the material excess.
+    Board winning;
+    winning.setFen("8/8/8/8/8/8/3p4/3kK2Q w - - 0 1");
+    int winningEval = evaluate(winning);
+    CHECK(winningEval > 1000);
+}
+
 TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong corner",
           "[endgame][kbnk]") {
     // Light-squared bishop drives the lone king to a light corner (h1
