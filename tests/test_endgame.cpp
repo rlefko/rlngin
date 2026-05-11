@@ -23,33 +23,33 @@ TEST_CASE("KPK bitbase: lone pawn on rook file is drawn against a king on the pr
     // White pawn on a2, white king on a1, black king on a8, white to move.
     // The defender already sits on the promotion square so no race
     // outcome favors white.
-    int wp = 8 + 0;      // a2
-    int wk = 0 + 0;      // a1
-    int bk = 56 + 0;     // a8
+    int wp = 8 + 0;  // a2
+    int wk = 0 + 0;  // a1
+    int bk = 56 + 0; // a8
     CHECK_FALSE(Kpk::probe(White, wk, wp, bk, White));
     CHECK_FALSE(Kpk::probe(White, wk, wp, bk, Black));
 }
 
-TEST_CASE("KPK bitbase: pawn one push from queening with the strong king covering the corner is won",
-          "[endgame][kpk]") {
+TEST_CASE(
+    "KPK bitbase: pawn one push from queening with the strong king covering the corner is won",
+    "[endgame][kpk]") {
     ensureInit();
     // White pawn on a7, white king on c7, black king on a5, white to move.
     // White promotes next move; the defender cannot interpose because it
     // is three king-steps away from a8.
-    int wp = 48 + 0;     // a7
-    int wk = 48 + 2;     // c7
-    int bk = 32 + 0;     // a5
+    int wp = 48 + 0; // a7
+    int wk = 48 + 2; // c7
+    int bk = 32 + 0; // a5
     CHECK(Kpk::probe(White, wk, wp, bk, White));
 }
 
-TEST_CASE("KPK bitbase: black-strong polarity mirrors the white-strong result",
-          "[endgame][kpk]") {
+TEST_CASE("KPK bitbase: black-strong polarity mirrors the white-strong result", "[endgame][kpk]") {
     ensureInit();
     // Same shape as the winning test above, mirrored vertically. Black
     // pawn on a2, black king on c2, white king on a4, black to move.
-    int bp = 8 + 0;      // a2
-    int bk = 8 + 2;      // c2
-    int wk = 24 + 0;     // a4
+    int bp = 8 + 0;  // a2
+    int bk = 8 + 2;  // c2
+    int wk = 24 + 0; // a4
     CHECK(Kpk::probe(Black, bk, bp, wk, Black));
 }
 
@@ -58,14 +58,13 @@ TEST_CASE("KPK bitbase: defender stalemate from rook-file corner is drawn", "[en
     // White pawn a7, white king a6, black king a8, black to move.
     // The classical corner stalemate trap: black to move has no legal
     // squares and is not in check, so the position is a draw.
-    int wp = 48 + 0;     // a7
-    int wk = 40 + 0;     // a6
-    int bk = 56 + 0;     // a8
+    int wp = 48 + 0; // a7
+    int wk = 40 + 0; // a6
+    int bk = 56 + 0; // a8
     CHECK_FALSE(Kpk::probe(White, wk, wp, bk, Black));
 }
 
-TEST_CASE("KXK: pushing the defender king toward the edge improves the score",
-          "[endgame][kxk]") {
+TEST_CASE("KXK: pushing the defender king toward the edge improves the score", "[endgame][kxk]") {
     // Defender on d4 (center: pushToEdge gradient minimal) with the
     // strong king tucked far away on g1 to keep both terms small.
     Board centered;
@@ -83,8 +82,7 @@ TEST_CASE("KXK: pushing the defender king toward the edge improves the score",
     CHECK(egOnEdge > egCentered);
 }
 
-TEST_CASE("KXK: color-symmetric mirror returns the same strong-side score",
-          "[endgame][kxk]") {
+TEST_CASE("KXK: color-symmetric mirror returns the same strong-side score", "[endgame][kxk]") {
     Board white;
     white.setFen("8/8/8/3Q4/8/8/8/4K2k w - - 0 1");
     int whiteSide = evaluate(white);
@@ -132,8 +130,7 @@ TEST_CASE("KRKP: rook side beats a far-back pawn but a far-advanced pawn with ki
     CHECK(draw < strong);
 }
 
-TEST_CASE("KRKB: drawish, but the rook side keeps a slope toward the edge",
-          "[endgame][krkb]") {
+TEST_CASE("KRKB: drawish, but the rook side keeps a slope toward the edge", "[endgame][krkb]") {
     Board center;
     center.setFen("8/8/8/3k4/8/2b5/8/3KR3 w - - 0 1");
     int centered = evaluate(center);
@@ -222,8 +219,7 @@ TEST_CASE("KBPsK: wrong-colored bishop with a rook-file pawn yields a fortress d
     CHECK(winningEval > 200);
 }
 
-TEST_CASE("KBPKB: opposite-colored bishops with one pawn scale toward a draw",
-          "[endgame][kbpkb]") {
+TEST_CASE("KBPKB: opposite-colored bishops with one pawn scale toward a draw", "[endgame][kbpkb]") {
     Board ocb;
     ocb.setFen("4k3/8/8/4b3/4P3/8/4B3/4K3 w - - 0 1");
     int ocbEval = evaluate(ocb);
@@ -237,7 +233,8 @@ TEST_CASE("KBPKB: opposite-colored bishops with one pawn scale toward a draw",
     CHECK(sameEval > ocbEval);
 }
 
-TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong corner",
+TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong "
+          "corner",
           "[endgame][kbnk]") {
     // Light-squared bishop drives the lone king to a light corner (h1
     // or a8). With the bishop on b3 (light square), the right corner

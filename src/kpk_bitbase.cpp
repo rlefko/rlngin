@@ -15,7 +15,7 @@ namespace {
 // pawn on rank 1 or 8 cannot occur in a legal middle-of-game position.
 // Side to move multiplies the index space by 2. The final indexable
 // space is `stm * 24 * 64 * 64 + pawnIdx * 64 * 64 + wkSq * 64 + bkSq`.
-constexpr int kPawnSlots = 4 * 6;             // 24
+constexpr int kPawnSlots = 4 * 6;                     // 24
 constexpr int kIndexCount = 2 * kPawnSlots * 64 * 64; // 196608
 
 enum Result : uint8_t {
@@ -113,8 +113,7 @@ Result classify(int stm, int wpSq, int wkSq, int bkSq, const std::vector<Result>
 
         if (wpRank == 1) {
             int twoFwd = wpSq + 16;
-            bool clear = (oneFwd != wkSq && oneFwd != bkSq) &&
-                         (twoFwd != wkSq && twoFwd != bkSq);
+            bool clear = (oneFwd != wkSq && oneFwd != bkSq) && (twoFwd != wkSq && twoFwd != bkSq);
             if (clear) {
                 anyLegal = true;
                 int succ = indexOf(1, pawnIdxOf(wpFile, 3), wkSq, bkSq);

@@ -1636,8 +1636,8 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
         if (board.byPiece[Pawn]) {
             v = v * (200 - board.halfmoveClock) / 200;
         }
-        int whitePovOverride = v + ((board.sideToMove == White) ? tempoContribution
-                                                                : -tempoContribution);
+        int whitePovOverride =
+            v + ((board.sideToMove == White) ? tempoContribution : -tempoContribution);
         overrideValue = (board.sideToMove == White) ? whitePovOverride : -whitePovOverride;
         stmResult = overrideValue;
     }

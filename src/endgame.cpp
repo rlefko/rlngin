@@ -247,7 +247,10 @@ ScaleResult scaleKRPPKRP(const Board &board, Color strongSide) {
     Bitboard allPawns = strongPawns | weakPawns;
     while (allPawns) {
         int sq = popLsb(allPawns);
-        if (squareFile(sq) >= 4) anyKingside = true; else anyQueenside = true;
+        if (squareFile(sq) >= 4)
+            anyKingside = true;
+        else
+            anyQueenside = true;
     }
     if (anyKingside && anyQueenside) return {64, 0};
 
@@ -265,8 +268,7 @@ ScaleResult scaleKRPPKRP(const Board &board, Color strongSide) {
             int q = popLsb(wp);
             if (std::abs(squareFile(q) - pFile) > 1) continue;
             int qRank = squareRank(q);
-            bool ahead =
-                (strongSide == White) ? (qRank > pRank) : (qRank < pRank);
+            bool ahead = (strongSide == White) ? (qRank > pRank) : (qRank < pRank);
             if (ahead) {
                 passer = false;
                 break;
@@ -291,8 +293,7 @@ ScaleResult scaleKBPKN(const Board &board, Color strongSide) {
     int knight = lsb(board.byPiece[Knight] & board.byColor[weakSide]);
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
     int pushSq = pawn + (strongSide == White ? 8 : -8);
-    if (pushSq >= 0 && pushSq < 64 &&
-        (knight == pushSq || weakKing == pushSq) &&
+    if (pushSq >= 0 && pushSq < 64 && (knight == pushSq || weakKing == pushSq) &&
         chebyshev(weakKing, pawn) <= 2) {
         return {16, 0};
     }
@@ -333,8 +334,8 @@ ScaleResult scaleKPKP(const Board &board, Color strongSide) {
     int strongPawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
     int weakPawn = lsb(board.byPiece[Pawn] & board.byColor[weakSide]);
 
-    bool strongWinsRace = Kpk::probe(strongSide, strongKing, strongPawn, weakKing,
-                                     board.sideToMove);
+    bool strongWinsRace =
+        Kpk::probe(strongSide, strongKing, strongPawn, weakKing, board.sideToMove);
     bool weakWinsRace = Kpk::probe(weakSide, weakKing, weakPawn, strongKing, board.sideToMove);
     if (strongWinsRace || weakWinsRace) return {64, 0};
     return {0, 0};
@@ -377,11 +378,11 @@ int evaluateKRKP(const Board &board, Color strongSide) {
 
     bool inFrontOfPawn;
     if (weakSide == White) {
-        inFrontOfPawn = squareFile(strongKing) == pawnFile &&
-                        squareRank(strongKing) > squareRank(pawn);
+        inFrontOfPawn =
+            squareFile(strongKing) == pawnFile && squareRank(strongKing) > squareRank(pawn);
     } else {
-        inFrontOfPawn = squareFile(strongKing) == pawnFile &&
-                        squareRank(strongKing) < squareRank(pawn);
+        inFrontOfPawn =
+            squareFile(strongKing) == pawnFile && squareRank(strongKing) < squareRank(pawn);
     }
 
     int result;
