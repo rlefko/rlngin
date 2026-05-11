@@ -39,17 +39,6 @@ uint64_t makeKey(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb,
     return k;
 }
 
-// Geometric helpers shared by every evaluator in this module. Each one
-// returns a non-negative integer in 0..7 so the caller can multiply by a
-// tunable per-square weight to produce a continuous gradient.
-inline int pushToEdge(int sq) {
-    int file = squareFile(sq);
-    int rank = squareRank(sq);
-    int fileDist = std::min(file, 7 - file);
-    int rankDist = std::min(rank, 7 - rank);
-    return 7 - std::min(fileDist, rankDist);
-}
-
 // Distance metric toward the two corners that match the given square
 // color (light or dark). Used by KBNK and any future endgame that
 // drives the lone king toward bishop-controllable corners.
