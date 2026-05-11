@@ -64,27 +64,21 @@ inline int pushClose(int a, int b) {
     return 7 - chebyshev(a, b);
 }
 
-// Sum the eg-side material value of every non-king, non-pawn piece on
-// the given color. The lone-king side has none of these, so this is the
-// material excess that drives the absolute eval of a KXK position.
-int strongMaterialEg(const Board &board, Color strongSide) {
-    int v = 0;
-    for (int pt = Knight; pt <= Queen; pt++) {
-        v += board.pieceCount[strongSide][pt] * eg_value(evalParams.PieceScore[pt]);
-    }
-    return v;
-}
-
-int evaluateKXK(const Board &board, Color strongSide) {
+// Generic mate-the-lone-king gradient applied as a scale-style eg
+// adjustment. The natural eval already carries the strong side's
+// material excess, PST bonuses, mobility, and king-safety pressure on
+// the lone king; the module's job is to inject a continuous push
+// toward the edge and toward king-king proximity so the search finds
+// the conversion plan within the horizon. Scale stays at 64 so the
+// rest of the eg passes through unchanged.
+ScaleResult scaleKXK(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
     int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
-
-    int materialEg = strongMaterialEg(board, strongSide);
     int gradient = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) +
                    pushClose(strongKing, weakKing) * eg_value(evalParams.KXKPushClose);
-    int whitePov = materialEg + gradient;
-    return (strongSide == White) ? whitePov : -whitePov;
+    if (strongSide == Black) gradient = -gradient;
+    return {64, gradient};
 }
 
 // K + B + pawns vs K. The textbook wrong-rook-pawn fortress applies
@@ -359,7 +353,9 @@ ScaleResult scaleKPK(const Board &board, Color strongSide) {
 // decomposition into four cases handles each of "strong king in front
 // of the pawn", "weak king too far to defend", "advanced supported
 // pawn", and a graduated middle ground that combines king-distance and
-// pawn-rank terms into a continuous score.
+// pawn-rank terms into a continuous score. Kept as a value evaluator
+// because the race resolution does not factor cleanly into a scale
+// modulation of the natural eval.
 int evaluateKRKP(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
@@ -402,53 +398,54 @@ int evaluateKRKP(const Board &board, Color strongSide) {
     return (strongSide == White) ? result : -result;
 }
 
-// K + R vs K + B. The defender holds with reasonable play; the score is
-// near zero with a token slope toward the edge to keep the search
-// pointed at the strongest defensive setup rather than wandering.
-int evaluateKRKB(const Board &board, Color strongSide) {
+// K + R vs K + B. The defender holds with reasonable play; the natural
+// eval already carries the rook-vs-bishop material edge, and the scale
+// halves the eg to reflect the practical drawishness while still
+// rewarding driving the defender king toward the edge.
+ScaleResult scaleKRKB(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
     int gradient = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) / 4;
-    int whitePov = gradient;
-    return (strongSide == White) ? whitePov : -whitePov;
+    if (strongSide == Black) gradient = -gradient;
+    return {32, gradient};
 }
 
 // K + R vs K + N. Less drawish than KRKB because the knight is much
-// less mobile than a bishop. The evaluator rewards separating the weak
-// king from its knight so the rook can pick off the knight after a
-// king sequence drives the defender into a corner.
-int evaluateKRKN(const Board &board, Color strongSide) {
+// less mobile than a bishop. The scale halves the eg to reflect
+// practical drawishness, and the gradient rewards both pushing the
+// defender king toward the edge and prying knight support away.
+ScaleResult scaleKRKN(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
     int knight = lsb(board.byPiece[Knight] & board.byColor[weakSide]);
     int edgePush = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) / 3;
     int separation = chebyshev(weakKing, knight) * eg_value(evalParams.KXKPushClose) / 2;
-    int whitePov = edgePush + separation;
-    return (strongSide == White) ? whitePov : -whitePov;
+    int gradient = edgePush + separation;
+    if (strongSide == Black) gradient = -gradient;
+    return {32, gradient};
 }
 
-// K + Q vs K + R. Queen wins with technique: drive the weak king to the
-// edge so the queen can pry the defender's rook from king support, then
-// pick it off. The eval encodes the material excess together with the
-// per-square edge push and kings-together gradients tuned specifically
-// for this material configuration.
-int evaluateKQKR(const Board &board, Color strongSide) {
+// K + Q vs K + R. Queen wins with technique. The natural eval carries
+// the queen-vs-rook material edge; the scale-style adjustment injects
+// edge-push and kings-together gradients so the search converts.
+ScaleResult scaleKQKR(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-
-    int matEg = eg_value(evalParams.PieceScore[Queen]) - eg_value(evalParams.PieceScore[Rook]);
     int edgePush = pushToEdge(weakKing) * eg_value(evalParams.KQKRPushToEdge);
     int closePush = pushClose(strongKing, weakKing) * eg_value(evalParams.KQKRPushClose);
-    int whitePov = matEg + edgePush + closePush;
-    return (strongSide == White) ? whitePov : -whitePov;
+    int gradient = edgePush + closePush;
+    if (strongSide == Black) gradient = -gradient;
+    return {64, gradient};
 }
 
 // K + Q vs K + P. The queen wins almost everywhere; the exception is a
 // rook-file pawn one push from promotion with the defender king
 // blockading the corner and the attacker king too far to dislodge it.
-// The fortress check here subsumes the inline rule in scaleFactor.
-int evaluateKQKP(const Board &board, Color strongSide) {
+// The fortress check returns scale zero to kill the natural eg; every
+// other configuration keeps the natural eval and adds a kings-together
+// pull through egAdjust.
+ScaleResult scaleKQKP(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
@@ -456,40 +453,16 @@ int evaluateKQKP(const Board &board, Color strongSide) {
 
     int pawnFile = squareFile(pawn);
     int pawnRelRank = relativeRank(weakSide, pawn);
-
-    // Rook-file pawn fortress: defender king on or next to the
-    // promotion square and the attacker king at least four king-steps
-    // away. Returning zero in this slim band of positions stops the
-    // search from converting a textbook draw into an imagined win.
     if (pawnRelRank == 6 && (pawnFile == 0 || pawnFile == 7)) {
         int promoSq = (weakSide == White) ? (56 + pawnFile) : pawnFile;
         if (chebyshev(weakKing, promoSq) <= 1 && chebyshev(strongKing, promoSq) > 3) {
-            return 0;
+            return {0, 0};
         }
     }
 
-    int matEg = eg_value(evalParams.PieceScore[Queen]) - eg_value(evalParams.PieceScore[Pawn]);
     int gradient = pushClose(strongKing, weakKing) * eg_value(evalParams.KXKPushClose);
-    int whitePov = matEg + gradient;
-    return (strongSide == White) ? whitePov : -whitePov;
-}
-
-// K + N + N vs K is a draw because two knights without a defender pawn
-// cannot force mate against optimal defense. Return zero so the search
-// stops chasing the imagined material advantage.
-int evaluateKNNK(const Board &board, Color strongSide) {
-    (void)board;
-    (void)strongSide;
-    return 0;
-}
-
-// K + minor vs K. A single minor piece against a lone king is a
-// textbook draw. The shared evaluator covers KNK and KBK from either
-// side and returns zero unconditionally.
-int evaluateKMinorK(const Board &board, Color strongSide) {
-    (void)board;
-    (void)strongSide;
-    return 0;
+    if (strongSide == Black) gradient = -gradient;
+    return {64, gradient};
 }
 
 // K + minor vs K + minor (pawnless). Any of KNKN, KBKB, KBKN, KNKB
@@ -502,31 +475,19 @@ ScaleResult scaleMinorVsMinorDraw(const Board &board, Color strongSide) {
     return {0, 0};
 }
 
-// K + N + N vs K + P. The Troitsky-line theory gives winning chances
-// only when the defender pawn is suitably restrained, but the band of
-// winning positions is narrow and search-only conversion is unreliable.
-// Apply a token edge-push gradient toward driving the defender king to
-// a corner without overcommitting to a material-based win signal.
-int evaluateKNNKP(const Board &board, Color strongSide) {
-    Color weakSide = (strongSide == White) ? Black : White;
-    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-    int gradient = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) / 4;
-    int whitePov = gradient;
-    return (strongSide == White) ? whitePov : -whitePov;
-}
-
-int evaluateKBNK(const Board &board, Color strongSide) {
+// K + B + N vs K. The colored-corner push gradient and kings-together
+// pull are folded into eg as a scale-style adjustment so the natural
+// eval's material and PST contributions survive intact.
+ScaleResult scaleKBNK(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
     int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
     Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
     bool bishopLight = (strongBishop & LightSquaresBB) != 0;
-
-    int materialEg = strongMaterialEg(board, strongSide);
     int gradient = pushToColoredCorner(weakKing, bishopLight) * eg_value(evalParams.KBNKCornerEg) +
                    pushClose(strongKing, weakKing) * eg_value(evalParams.KBNKPushClose);
-    int whitePov = materialEg + gradient;
-    return (strongSide == White) ? whitePov : -whitePov;
+    if (strongSide == Black) gradient = -gradient;
+    return {64, gradient};
 }
 
 void registerValue(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb, int br, int bq,
@@ -537,16 +498,16 @@ void registerValue(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int b
     g_valueMap[kb] = {fn, Black};
 }
 
-void registerValueVsLoneKing(int wp, int wn, int wb, int wr, int wq, ValueFn fn) {
-    registerValue(wp, wn, wb, wr, wq, 0, 0, 0, 0, 0, fn);
-}
-
 void registerScale(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb, int br, int bq,
                    ScaleFn fn) {
     uint64_t kw = makeKey(wp, wn, wb, wr, wq, bp, bn, bb, br, bq);
     uint64_t kb = makeKey(bp, bn, bb, br, bq, wp, wn, wb, wr, wq);
     g_scaleMap[kw] = {fn, White};
     g_scaleMap[kb] = {fn, Black};
+}
+
+void registerScaleVsLoneKing(int wp, int wn, int wb, int wr, int wq, ScaleFn fn) {
+    registerScale(wp, wn, wb, wr, wq, 0, 0, 0, 0, 0, fn);
 }
 
 bool g_initialized = false;
@@ -563,55 +524,51 @@ void init() {
     // configurations enumerated here are the material excesses that
     // suffice to mate without help from any pawn structure; rarer
     // pile-ons like K + 3Q vs K stay on the natural gradient because
-    // the material alone already drives the search.
-    registerValueVsLoneKing(0, 0, 0, 0, 1, evaluateKXK); // KQK
-    registerValueVsLoneKing(0, 0, 0, 1, 0, evaluateKXK); // KRK
-    registerValueVsLoneKing(0, 0, 0, 0, 2, evaluateKXK); // KQQK
-    registerValueVsLoneKing(0, 0, 0, 1, 1, evaluateKXK); // KQRK
-    registerValueVsLoneKing(0, 0, 0, 2, 0, evaluateKXK); // KRRK
-    registerValueVsLoneKing(0, 0, 1, 0, 1, evaluateKXK); // KQBK
-    registerValueVsLoneKing(0, 1, 0, 0, 1, evaluateKXK); // KQNK
-    registerValueVsLoneKing(0, 0, 1, 1, 0, evaluateKXK); // KRBK
-    registerValueVsLoneKing(0, 1, 0, 1, 0, evaluateKXK); // KRNK
+    // the material alone already drives the search. The scale-style
+    // dispatch keeps the natural eval (material, PST, mobility, king
+    // safety) intact and folds the lone-king push gradient into eg.
+    registerScaleVsLoneKing(0, 0, 0, 0, 1, scaleKXK); // KQK
+    registerScaleVsLoneKing(0, 0, 0, 1, 0, scaleKXK); // KRK
+    registerScaleVsLoneKing(0, 0, 0, 0, 2, scaleKXK); // KQQK
+    registerScaleVsLoneKing(0, 0, 0, 1, 1, scaleKXK); // KQRK
+    registerScaleVsLoneKing(0, 0, 0, 2, 0, scaleKXK); // KRRK
+    registerScaleVsLoneKing(0, 0, 1, 0, 1, scaleKXK); // KQBK
+    registerScaleVsLoneKing(0, 1, 0, 0, 1, scaleKXK); // KQNK
+    registerScaleVsLoneKing(0, 0, 1, 1, 0, scaleKXK); // KRBK
+    registerScaleVsLoneKing(0, 1, 0, 1, 0, scaleKXK); // KRNK
 
     // KBNK uses the colored-corner gradient instead of the generic
     // edge push because the bishop only controls one corner color.
-    registerValueVsLoneKing(0, 1, 1, 0, 0, evaluateKBNK);
+    registerScaleVsLoneKing(0, 1, 1, 0, 0, scaleKBNK);
 
     // K + R vs K + P: rook-vs-pawn race. The dispatched evaluator
     // weighs strong-king-vs-promotion-square distance against
-    // weak-king support to discriminate wins from drawing races.
+    // weak-king support to discriminate wins from drawing races; this
+    // race-specific formula does not factor into a scale modulation
+    // and stays a value evaluator.
     registerValue(0, 0, 0, 1, 0, 1, 0, 0, 0, 0, evaluateKRKP);
 
-    // K + R vs K + B: drawish. The rook side keeps a token edge but
-    // the evaluator collapses the score so the search does not chase
-    // illusory wins against a coordinated bishop and king.
-    registerValue(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, evaluateKRKB);
+    // K + R vs K + B: drawish. Natural eval carries the rook-vs-bishop
+    // material edge; the scale halves the eg to reflect practical
+    // drawishness while still rewarding pushing the defender king to
+    // the edge.
+    registerScale(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, scaleKRKB);
 
     // K + R vs K + N: drawish with a slight edge for the rook side
-    // when the defending king and knight are separated. The evaluator
-    // rewards driving the weak king to the edge and prying knight
-    // support away.
-    registerValue(0, 0, 0, 1, 0, 0, 1, 0, 0, 0, evaluateKRKN);
+    // when the defending king and knight are separated. Natural eval
+    // carries material; the scale halves the eg and the gradient
+    // rewards edge push plus knight-king separation.
+    registerScale(0, 0, 0, 1, 0, 0, 1, 0, 0, 0, scaleKRKN);
 
-    // K + Q vs K + R: queen wins by technique. The dedicated evaluator
-    // tracks edge push and king proximity rather than the generic KXK
-    // gradient because the rook can defend more squares than a lone
-    // king and the conversion plan is shaped by the rook's mobility.
-    registerValue(0, 0, 0, 0, 1, 0, 0, 0, 1, 0, evaluateKQKR);
+    // K + Q vs K + R: queen wins by technique. Natural eval carries
+    // the queen-vs-rook material edge; the gradient injects edge-push
+    // and kings-together pulls so the search finds the conversion.
+    registerScale(0, 0, 0, 0, 1, 0, 0, 0, 1, 0, scaleKQKR);
 
     // K + Q vs K + P: queen wins everywhere except the textbook
     // rook-file fortress with the defender king on the promotion
     // square and the attacker king too far away to drive it out.
-    registerValue(0, 0, 0, 0, 1, 1, 0, 0, 0, 0, evaluateKQKP);
-
-    // K + N + N vs K: pure draw (two knights cannot force mate against
-    // the lone king without help from a defender pawn).
-    registerValueVsLoneKing(0, 2, 0, 0, 0, evaluateKNNK);
-
-    // K + N + N vs K + P: drawish with narrow winning chances; the
-    // evaluator scores edge-push only.
-    registerValue(0, 2, 0, 0, 0, 1, 0, 0, 0, 0, evaluateKNNKP);
+    registerScale(0, 0, 0, 0, 1, 1, 0, 0, 0, 0, scaleKQKP);
 
     // K + P vs K: bitbase scaling. The strong pawn side keeps the full
     // eg gradient for winning bitbase entries and collapses to zero for
@@ -669,9 +626,12 @@ void init() {
         registerScale(0, 0, 0, 0, 1, n, 0, 0, 1, 0, scaleKQKRPs);
     }
 
-    // K + minor vs K: drawn with insufficient material.
-    registerValueVsLoneKing(0, 1, 0, 0, 0, evaluateKMinorK); // KNK
-    registerValueVsLoneKing(0, 0, 1, 0, 0, evaluateKMinorK); // KBK
+    // K + minor vs K: drawn with insufficient material. Scale zero
+    // kills eg so the natural eg drops to zero while the mg residual
+    // (mostly PSTs at low phase) survives, matching the legacy
+    // pawnless-minor-only inline behavior.
+    registerScaleVsLoneKing(0, 1, 0, 0, 0, scaleMinorVsMinorDraw); // KNK
+    registerScaleVsLoneKing(0, 0, 1, 0, 0, scaleMinorVsMinorDraw); // KBK
 
     // K + minor vs K + minor (pawnless): drawn with proper defense.
     registerScale(0, 1, 0, 0, 0, 0, 1, 0, 0, 0, scaleMinorVsMinorDraw); // KNKN

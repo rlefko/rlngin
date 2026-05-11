@@ -101,10 +101,8 @@ TEST_CASE("Search: qsearch avoids leaving piece en prise", "[search][qsearch]") 
     clearTT();
     Board board;
     // White knight on d4, black bishop on e6 attacks it. White to move.
-    // The reserve queenside pawn keeps the material configuration off
-    // the pawnless minor-vs-minor draw dispatch so the natural eval
-    // still rewards keeping the knight.
-    board.setFen("4k3/p7/4b3/8/3N4/8/P7/4K3 w - - 0 1");
+    // At depth 1, the engine should not leave the knight to be captured.
+    board.setFen("4k3/8/4b3/8/3N4/8/8/4K3 w - - 0 1");
 
     Move best = findBestMove(board, 1);
     // The knight should move away from d4 (not stay and get captured)
