@@ -85,8 +85,15 @@ bool isWrongRookPawnFortress(const Board &board, Color strongSide) {
     if (promoLight == bishopLight) return false;
 
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-    int leadPawn = (strongSide == White) ? msb(ourPawns) : lsb(ourPawns);
-    int pushes = (strongSide == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
+    // Race deadline is set by the furthest-back pawn: the defender king
+    // needs to be in the corner by the time the trailing pawn finally
+    // queens, not the leading pawn, because the strong side cannot push
+    // the rear pawn through until every pawn ahead has cleared. lsb for
+    // white gives the lowest-rank pawn; msb for black gives the highest-
+    // rank pawn (lowest from black's perspective). Matches the legacy
+    // inline rule's choice.
+    int rearPawn = (strongSide == White) ? lsb(ourPawns) : msb(ourPawns);
+    int pushes = (strongSide == White) ? (7 - squareRank(rearPawn)) : squareRank(rearPawn);
     return chebyshev(weakKing, promoSq) <= pushes;
 }
 
