@@ -219,6 +219,28 @@ int evaluateKQKP(const Board &board, Color strongSide) {
     return (strongSide == White) ? whitePov : -whitePov;
 }
 
+// K + N + N vs K is a draw because two knights without a defender pawn
+// cannot force mate against optimal defense. Return zero so the search
+// stops chasing the imagined material advantage.
+int evaluateKNNK(const Board &board, Color strongSide) {
+    (void)board;
+    (void)strongSide;
+    return 0;
+}
+
+// K + N + N vs K + P. The Troitsky-line theory gives winning chances
+// only when the defender pawn is suitably restrained, but the band of
+// winning positions is narrow and search-only conversion is unreliable.
+// Apply a token edge-push gradient toward driving the defender king to
+// a corner without overcommitting to a material-based win signal.
+int evaluateKNNKP(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int gradient = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) / 4;
+    int whitePov = gradient;
+    return (strongSide == White) ? whitePov : -whitePov;
+}
+
 int evaluateKBNK(const Board &board, Color strongSide) {
     Color weakSide = (strongSide == White) ? Black : White;
     int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
@@ -308,6 +330,14 @@ void init() {
     // rook-file fortress with the defender king on the promotion
     // square and the attacker king too far away to drive it out.
     registerValue(0, 0, 0, 0, 1, 1, 0, 0, 0, 0, evaluateKQKP);
+
+    // K + N + N vs K: pure draw (two knights cannot force mate against
+    // the lone king without help from a defender pawn).
+    registerValueVsLoneKing(0, 2, 0, 0, 0, evaluateKNNK);
+
+    // K + N + N vs K + P: drawish with narrow winning chances; the
+    // evaluator scores edge-push only.
+    registerValue(0, 2, 0, 0, 0, 1, 0, 0, 0, 0, evaluateKNNKP);
 
     // K + P vs K: bitbase scaling. The strong pawn side keeps the full
     // eg gradient for winning bitbase entries and collapses to zero for

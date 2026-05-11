@@ -3,6 +3,8 @@
 #include "eval.h"
 #include "kpk_bitbase.h"
 
+#include <cstdlib>
+
 namespace {
 
 // Helper that initializes the engine globals so the bitbase build runs
@@ -185,6 +187,20 @@ TEST_CASE("KQKP: rook-file fortress holds the draw when the defender king blocka
     winning.setFen("8/8/8/8/8/8/3p4/3kK2Q w - - 0 1");
     int winningEval = evaluate(winning);
     CHECK(winningEval > 1000);
+}
+
+TEST_CASE("KNNK: two knights vs lone king evaluates to roughly zero", "[endgame][knnk]") {
+    // KNNK is a known draw, so the value evaluator returns zero. The
+    // small residual the harness reads is the tempo contribution that
+    // applies uniformly across every position; the score stays within
+    // a few internal units of zero regardless of king placement.
+    Board centered;
+    centered.setFen("4k3/8/8/8/8/2N5/3N4/4K3 w - - 0 1");
+    CHECK(std::abs(evaluate(centered)) < 20);
+
+    Board corner;
+    corner.setFen("7k/8/8/8/8/2N5/3N4/4K3 w - - 0 1");
+    CHECK(std::abs(evaluate(corner)) < 20);
 }
 
 TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong corner",
