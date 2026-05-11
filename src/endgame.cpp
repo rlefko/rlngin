@@ -148,6 +148,123 @@ ScaleResult scaleKBPPKB(const Board &board, Color strongSide) {
     return {fileDiff <= 1 ? 16 : 38, 0};
 }
 
+// K + R + P vs K + R. Recognizes the three named patterns:
+//
+//   * Philidor third-rank defense: defender rook on the fifth rank
+//     (attacker POV) with the attacker pawn no further than rank 4.
+//     The textbook draw - return scale zero.
+//   * Lucena bridge: attacker king on rank 7 or 8 in front of the
+//     pawn on rank 6, defender king cut off two files away, pawn
+//     off the rook file. Winning by bridge-building: scale stays at
+//     64 and the LucenaEg additive nudges the search toward the
+//     conversion plan.
+//   * Otherwise: full scale; the natural eg gradient and the
+//     attacker's material edge drive the search.
+ScaleResult scaleKRPKR(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int strongPawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
+    int weakRook = lsb(board.byPiece[Rook] & board.byColor[weakSide]);
+
+    int pawnRelRank = relativeRank(strongSide, strongPawn);
+    int weakRookRelRank = relativeRank(strongSide, weakRook);
+    int weakKingRelRank = relativeRank(strongSide, weakKing);
+
+    // Philidor third-rank defense: defender's rook sits on its own
+    // third rank (= attacker's sixth, relative rank 5) while the
+    // attacker pawn is still no further than rank 4 and the defender
+    // king hangs back on the seventh or eighth rank.
+    if (pawnRelRank >= 1 && pawnRelRank <= 4 && weakRookRelRank == 5 && weakKingRelRank >= 6) {
+        return {0, 0};
+    }
+
+    // Lucena bridge configuration.
+    if (pawnRelRank == 5) {
+        int strongKingRelRank = relativeRank(strongSide, strongKing);
+        int pawnFile = squareFile(strongPawn);
+        int strongKingFile = squareFile(strongKing);
+        int weakKingFile = squareFile(weakKing);
+        bool kingInFront = strongKingRelRank >= 6 && std::abs(strongKingFile - pawnFile) <= 1;
+        bool cutOff = std::abs(weakKingFile - pawnFile) >= 2;
+        bool centerFile = pawnFile != 0 && pawnFile != 7;
+        if (kingInFront && cutOff && centerFile) {
+            int adjust = eg_value(evalParams.LucenaEg);
+            if (strongSide == Black) adjust = -adjust;
+            return {64, adjust};
+        }
+    }
+
+    return {64, 0};
+}
+
+// K + R + P vs K + B. The defender holds if the bishop controls the
+// promotion square and the defender king is close enough to block the
+// pawn's advance.
+ScaleResult scaleKRPKB(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongPawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
+
+    int pawnFile = squareFile(strongPawn);
+    int promoSq = (strongSide == White) ? (56 + pawnFile) : pawnFile;
+    bool promoLight = (squareBB(promoSq) & LightSquaresBB) != 0;
+    bool bishopLight = (weakBishop & LightSquaresBB) != 0;
+    if (bishopLight == promoLight && chebyshev(weakKing, promoSq) <= 3) {
+        return {8, 0};
+    }
+    return {64, 0};
+}
+
+// K + R + 2 P vs K + R + P. Drawish when neither attacker pawn is
+// passed and all three pawns sit on the same flank: the defender rook
+// keeps the position from progressing despite the material edge.
+ScaleResult scaleKRPPKRP(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    Bitboard strongPawns = board.byPiece[Pawn] & board.byColor[strongSide];
+    Bitboard weakPawns = board.byPiece[Pawn] & board.byColor[weakSide];
+
+    // Files in 0..7. Track flanks: kingside (4..7) and queenside (0..3).
+    bool anyKingside = false;
+    bool anyQueenside = false;
+    Bitboard allPawns = strongPawns | weakPawns;
+    while (allPawns) {
+        int sq = popLsb(allPawns);
+        if (squareFile(sq) >= 4) anyKingside = true; else anyQueenside = true;
+    }
+    if (anyKingside && anyQueenside) return {64, 0};
+
+    // Both attacker pawns must be unpassed for the drawish slope.
+    Bitboard sp = strongPawns;
+    bool hasPasser = false;
+    while (sp) {
+        int p = popLsb(sp);
+        int pFile = squareFile(p);
+        int pRank = squareRank(p);
+        // A passer has no enemy pawn ahead on the same or adjacent file.
+        bool passer = true;
+        Bitboard wp = weakPawns;
+        while (wp) {
+            int q = popLsb(wp);
+            if (std::abs(squareFile(q) - pFile) > 1) continue;
+            int qRank = squareRank(q);
+            bool ahead =
+                (strongSide == White) ? (qRank > pRank) : (qRank < pRank);
+            if (ahead) {
+                passer = false;
+                break;
+            }
+        }
+        if (passer) {
+            hasPasser = true;
+            break;
+        }
+    }
+    if (!hasPasser) return {32, 0};
+    return {64, 0};
+}
+
 // K + B + P vs K + N. The bishop side usually wins but the knight can
 // blockade the pawn from a defended square, especially when the
 // defender king also sits in front of the pawn. The scale drops in
@@ -493,6 +610,20 @@ void init() {
 
     // K + P vs K + P race resolution via two bitbase probes.
     registerScale(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, scaleKPKP);
+
+    // K + R + P vs K + R: Philidor third-rank defense and the
+    // Lucena bridge configuration. The eg additive folded in by the
+    // Lucena branch absorbs the inline LucenaEg path from
+    // endgameEgAdjust.
+    registerScale(1, 0, 0, 1, 0, 0, 0, 0, 1, 0, scaleKRPKR);
+
+    // K + R + P vs K + B: rook-pawn-vs-bishop fortress when the
+    // bishop controls the promotion square.
+    registerScale(1, 0, 0, 1, 0, 0, 0, 1, 0, 0, scaleKRPKB);
+
+    // K + R + 2 P vs K + R + P: drawish slope when the attacker has
+    // no passer and all pawns sit on the same flank.
+    registerScale(2, 0, 0, 1, 0, 1, 0, 0, 1, 0, scaleKRPPKRP);
 }
 
 const ValueEntry *probeValue(uint64_t materialKey) {

@@ -1185,114 +1185,15 @@ static int scaleFactor(const Board &board) {
         }
     }
 
-    // Philidor third-rank defence: defender holds K + R against K + R + P
-    // when its rook sits on the third rank from its perspective (the
-    // attacker's fifth rank) and the attacker's pawn is still far enough
-    // back that pushing it past the rook line is not yet possible. The
-    // defender king hangs back near the promotion square so the attacker
-    // king cannot outflank, and the rook controls the rank the attacker
-    // king would have to cross to support the pawn. Recognising this
-    // shape as scale 0 stops the engine from converting K+R+P vs K+R as
-    // a stock material win when it is in fact a textbook draw.
-    for (int c = 0; c < 2; c++) {
-        Color strong = static_cast<Color>(c);
-        Color weak = static_cast<Color>(c ^ 1);
-        if (board.pieceCount[strong][Pawn] != 1) continue;
-        if (board.pieceCount[strong][Rook] != 1) continue;
-        if (board.pieceCount[strong][Knight] || board.pieceCount[strong][Bishop] ||
-            board.pieceCount[strong][Queen])
-            continue;
-        if (board.pieceCount[weak][Rook] != 1) continue;
-        if (board.pieceCount[weak][Pawn] || board.pieceCount[weak][Knight] ||
-            board.pieceCount[weak][Bishop] || board.pieceCount[weak][Queen])
-            continue;
-
-        Bitboard strongPawn = board.byPiece[Pawn] & board.byColor[strong];
-        int pawnSq = lsb(strongPawn);
-        int pawnRank = (strong == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
-        // Pawn must still be on rank 4 or earlier (attacker's POV) so the
-        // defender's rook on rank 5 (attacker's POV) is not yet attacked
-        // by the pawn from the same rank.
-        if (pawnRank < 1 || pawnRank > 4) continue;
-
-        Bitboard weakRook = board.byPiece[Rook] & board.byColor[weak];
-        int weakRookSq = lsb(weakRook);
-        int weakRookRank =
-            (strong == White) ? squareRank(weakRookSq) : (7 - squareRank(weakRookSq));
-        if (weakRookRank != 5) continue;
-
-        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
-        if (!weakKingBB) continue;
-        int weakKingSq = lsb(weakKingBB);
-        int weakKingRank =
-            (strong == White) ? squareRank(weakKingSq) : (7 - squareRank(weakKingSq));
-        // Defender king must be on the back two ranks so it can step in
-        // front of the pawn when it eventually pushes.
-        if (weakKingRank < 6) continue;
-
-        return 0;
-    }
-
     return 64;
 }
 
-// Endgame-only score adjustment in white-perspective eg units. Applied
-// in evaluate() before the scale factor multiplies the eg half. Holds
-// the inline endgame patterns that have not yet been migrated to the
-// dedicated endgame module; the function returns zero once every
-// pattern lives behind a material-key dispatch.
+// Endgame-only score adjustment in white-perspective eg units. The
+// inline endgame patterns have all been migrated to the dedicated
+// endgame module so the function returns zero unconditionally and is
+// retired in a follow-up cleanup commit.
 static int endgameEgAdjust(const Board &board) {
-    // Lucena bridge-building win: K + R + P vs K + R with the pawn on
-    // rank 6 (attacker's POV), the strong king parked on rank 7 or 8
-    // in front of the pawn, and the defender king cut off at least
-    // two files away. The pawn cannot sit on the a or h file because
-    // the corner stalemate trap kills the bridge. Material already
-    // says winning; the eg bonus drives the search toward this
-    // configuration so the conversion plan surfaces earlier than the
-    // raw material gradient alone allows.
-    for (int c = 0; c < 2; c++) {
-        Color strong = static_cast<Color>(c);
-        Color weak = static_cast<Color>(c ^ 1);
-        if (board.pieceCount[strong][Pawn] != 1) continue;
-        if (board.pieceCount[strong][Rook] != 1) continue;
-        if (board.pieceCount[strong][Knight] || board.pieceCount[strong][Bishop] ||
-            board.pieceCount[strong][Queen])
-            continue;
-        if (board.pieceCount[weak][Rook] != 1) continue;
-        if (board.pieceCount[weak][Pawn] || board.pieceCount[weak][Knight] ||
-            board.pieceCount[weak][Bishop] || board.pieceCount[weak][Queen])
-            continue;
-
-        Bitboard strongPawn = board.byPiece[Pawn] & board.byColor[strong];
-        int pawnSq = lsb(strongPawn);
-        int pawnFile = squareFile(pawnSq);
-        // Rook-file pawn falls into the corner-stalemate trap; the
-        // bridge does not work there.
-        if (pawnFile == 0 || pawnFile == 7) continue;
-        int pawnRank = (strong == White) ? squareRank(pawnSq) : (7 - squareRank(pawnSq));
-        if (pawnRank != 6) continue;
-
-        Bitboard strongKingBB = board.byPiece[King] & board.byColor[strong];
-        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
-        if (!strongKingBB || !weakKingBB) continue;
-        int strongKingSq = lsb(strongKingBB);
-        int weakKingSq = lsb(weakKingBB);
-
-        int strongKingRank =
-            (strong == White) ? squareRank(strongKingSq) : (7 - squareRank(strongKingSq));
-        // Strong king must be on rank 7 or 8 in front of the pawn,
-        // within one file of the pawn so it actually blocks promotion.
-        if (strongKingRank < 7) continue;
-        if (std::abs(squareFile(strongKingSq) - pawnFile) > 1) continue;
-
-        // Defender king cut off: at least two files away from the pawn
-        // file. With closer king, the defender is in time to block.
-        if (std::abs(squareFile(weakKingSq) - pawnFile) < 2) continue;
-
-        int bonus = eg_value(evalParams.LucenaEg);
-        return (strong == White) ? bonus : -bonus;
-    }
-
+    (void)board;
     return 0;
 }
 
