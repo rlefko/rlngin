@@ -145,13 +145,17 @@ ScaleResult scaleKRPKR(const Board &board, Color strongSide) {
         return {0, 0};
     }
 
-    // Lucena bridge configuration.
-    if (pawnRelRank == 5) {
+    // Lucena bridge configuration: attacker pawn on relative rank 6
+    // (chess rank 7 for white), attacker king on relative rank 7 (chess
+    // rank 8) within one file of the pawn, defender king cut off two
+    // files away, and the pawn off the a/h rook files. Matches the
+    // legacy inline Lucena rule exactly.
+    if (pawnRelRank == 6) {
         int strongKingRelRank = relativeRank(strongSide, strongKing);
         int pawnFile = squareFile(strongPawn);
         int strongKingFile = squareFile(strongKing);
         int weakKingFile = squareFile(weakKing);
-        bool kingInFront = strongKingRelRank >= 6 && std::abs(strongKingFile - pawnFile) <= 1;
+        bool kingInFront = strongKingRelRank == 7 && std::abs(strongKingFile - pawnFile) <= 1;
         bool cutOff = std::abs(weakKingFile - pawnFile) >= 2;
         bool centerFile = pawnFile != 0 && pawnFile != 7;
         if (kingInFront && cutOff && centerFile) {
