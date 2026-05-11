@@ -344,6 +344,26 @@ struct EvalParams {
     // the raw material gradient alone would. Mg structurally zero;
     // only the eg half is tunable.
     Score LucenaEg;
+
+    // Generic mate-the-lone-king gradient applied per square of edge
+    // closeness (0 at the center, 7 at the edge). KX vs K positions
+    // (queen, rook, or sufficient mating material against a lone king)
+    // win on material alone; this term provides the search a continuous
+    // gradient that steers the defender toward the edge so mate becomes
+    // findable inside the horizon. Eg-only; mg structurally zero.
+    Score KXKPushToEdge;
+
+    // Generic kings-together pull for mate-the-lone-king positions.
+    // Bonus per square of Chebyshev closeness between the kings (0 at
+    // maximum distance, 7 when adjacent). The defender losing room
+    // accelerates the conversion plan. Eg-only.
+    Score KXKPushClose;
+
+    // Kings-together pull specific to KBNK. KBNK has a corner-color
+    // constraint (driven by KBNKCornerEg) so the king-proximity term is
+    // tuned separately rather than shared with the generic KXK gradient.
+    // Eg-only; mg structurally zero.
+    Score KBNKPushClose;
 };
 
 extern EvalParams evalParams;

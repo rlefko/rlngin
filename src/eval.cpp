@@ -1370,49 +1370,11 @@ static int scaleFactor(const Board &board) {
 }
 
 // Endgame-only score adjustment in white-perspective eg units. Applied
-// in evaluate() before the scale factor multiplies the eg half. Encodes
-// the few specialized endgame patterns where the rest of the eval has
-// no useful gradient: KBNK pushes the weak king toward the corner the
-// bishop attacks. Returns 0 for everything else.
+// in evaluate() before the scale factor multiplies the eg half. Holds
+// the inline endgame patterns that have not yet been migrated to the
+// dedicated endgame module; the function returns zero once every
+// pattern lives behind a material-key dispatch.
 static int endgameEgAdjust(const Board &board) {
-    // KBNK: strong side has K + B + N exactly, weak side has K only.
-    // Drive the weak king toward the corner whose colour matches the
-    // strong bishop. Without this gradient the search cannot distinguish
-    // the right corner from the wrong one inside the 50-move horizon.
-    // The per-square eg weight is tunable via KBNKCornerEg so SPSA /
-    // Texel can refine the magnitude against the rest of the eval.
-    for (int c = 0; c < 2; c++) {
-        Color strong = static_cast<Color>(c);
-        Color weak = static_cast<Color>(c ^ 1);
-        if (board.pieceCount[strong][Bishop] != 1) continue;
-        if (board.pieceCount[strong][Knight] != 1) continue;
-        if (board.pieceCount[strong][Pawn] || board.pieceCount[strong][Rook] ||
-            board.pieceCount[strong][Queen])
-            continue;
-        if (board.pieceCount[weak][Pawn] || board.pieceCount[weak][Knight] ||
-            board.pieceCount[weak][Bishop] || board.pieceCount[weak][Rook] ||
-            board.pieceCount[weak][Queen])
-            continue;
-
-        Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strong];
-        bool bishopLight = (strongBishop & LightSquaresBB) != 0;
-        // Square colour: (file + rank) parity. The light-coloured
-        // corners are h1 (sq 7) and a8 (sq 56); the dark-coloured
-        // corners are a1 (sq 0) and h8 (sq 63). The mating side
-        // pushes the lone king to whichever same-colour corner it can
-        // reach faster, so we score the closer of the two.
-        int corner1 = bishopLight ? 7 : 0;
-        int corner2 = bishopLight ? 56 : 63;
-
-        Bitboard weakKingBB = board.byPiece[King] & board.byColor[weak];
-        if (!weakKingBB) continue;
-        int weakKingSq = lsb(weakKingBB);
-        int dist = std::min(chebyshev(weakKingSq, corner1), chebyshev(weakKingSq, corner2));
-        int closeness = 7 - dist;
-        int bonus = closeness * eg_value(evalParams.KBNKCornerEg);
-        return (strong == White) ? bonus : -bonus;
-    }
-
     // Lucena bridge-building win: K + R + P vs K + R with the pawn on
     // rank 6 (attacker's POV), the strong king parked on rank 7 or 8
     // in front of the pawn, and the defender king cut off at least

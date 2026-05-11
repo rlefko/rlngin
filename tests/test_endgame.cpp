@@ -61,3 +61,55 @@ TEST_CASE("KPK bitbase: defender stalemate from rook-file corner is drawn", "[en
     int bk = 56 + 0;     // a8
     CHECK_FALSE(Kpk::probe(White, wk, wp, bk, Black));
 }
+
+TEST_CASE("KXK: pushing the defender king toward the edge improves the score",
+          "[endgame][kxk]") {
+    // Defender on d4 (center: pushToEdge gradient minimal) with the
+    // strong king tucked far away on g1 to keep both terms small.
+    Board centered;
+    centered.setFen("8/8/8/8/3k4/8/4Q3/6K1 w - - 0 1");
+    int egCentered = evaluate(centered);
+
+    // Defender driven to the a8 corner; the strong side keeps the same
+    // king and queen squares. The KXK gradient earns a higher
+    // push-to-edge contribution, so this position must score strictly
+    // higher than the centered defender.
+    Board onEdge;
+    onEdge.setFen("k7/8/8/8/8/8/4Q3/6K1 w - - 0 1");
+    int egOnEdge = evaluate(onEdge);
+
+    CHECK(egOnEdge > egCentered);
+}
+
+TEST_CASE("KXK: color-symmetric mirror returns the same strong-side score",
+          "[endgame][kxk]") {
+    Board white;
+    white.setFen("8/8/8/3Q4/8/8/8/4K2k w - - 0 1");
+    int whiteSide = evaluate(white);
+
+    // Vertical mirror with the side-to-move flipped: the strong side
+    // is now black and black moves first. Color symmetry plus the
+    // STM-perspective return means the strong-side score is the same
+    // magnitude in both positions.
+    Board black;
+    black.setFen("4k2K/8/8/8/3q4/8/8/8 b - - 0 1");
+    int blackSide = evaluate(black);
+
+    CHECK(whiteSide == blackSide);
+}
+
+TEST_CASE("KBNK: defender on the correct corner scores worse for the strong side than on the wrong corner",
+          "[endgame][kbnk]") {
+    // Light-squared bishop drives the lone king to a light corner (h1
+    // or a8). With the bishop on b3 (light square), the right corner
+    // is a8 / h1; the wrong corner is a1 / h8.
+    Board wrongCorner;
+    wrongCorner.setFen("8/8/8/8/8/1B6/3N4/k3K3 w - - 0 1");
+    int wrong = evaluate(wrongCorner);
+
+    Board rightCorner;
+    rightCorner.setFen("k7/8/8/8/8/1B6/3N4/4K3 w - - 0 1");
+    int right = evaluate(rightCorner);
+
+    CHECK(right > wrong);
+}

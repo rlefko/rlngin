@@ -1,5 +1,7 @@
 #include "endgame.h"
 
+#include "bitboard.h"
+#include "eval_params.h"
 #include "kpk_bitbase.h"
 #include "zobrist.h"
 
@@ -33,13 +35,76 @@ uint64_t makeKey(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb,
     k ^= zobrist::material_keys[Black][Rook][br];
     k ^= zobrist::material_keys[Black][Queen][bq];
     k ^= zobrist::material_keys[Black][King][1];
-    // The empty-slot zobrist entries XOR in for every piece type whose
-    // count is zero; they cancel by symmetry against the natural board
-    // setup since computeMaterialKey iterates every piece type and looks
-    // up material_keys[c][pt][pieceCount[c][pt]] regardless of whether
-    // the count is zero. The lookup above mirrors that behavior so the
-    // generated key matches Board::computeMaterialKey byte for byte.
     return k;
+}
+
+// Geometric helpers shared by every evaluator in this module. Each one
+// returns a non-negative integer in 0..7 so the caller can multiply by a
+// tunable per-square weight to produce a continuous gradient.
+inline int pushToEdge(int sq) {
+    int file = squareFile(sq);
+    int rank = squareRank(sq);
+    int fileDist = std::min(file, 7 - file);
+    int rankDist = std::min(rank, 7 - rank);
+    return 7 - std::min(fileDist, rankDist);
+}
+
+// Distance metric toward the two corners that match the given square
+// color (light or dark). Used by KBNK and any future endgame that
+// drives the lone king toward bishop-controllable corners.
+inline int pushToColoredCorner(int sq, bool light) {
+    int c1 = light ? 7 : 0;
+    int c2 = light ? 56 : 63;
+    int d = std::min(chebyshev(sq, c1), chebyshev(sq, c2));
+    return 7 - d;
+}
+
+inline int pushClose(int a, int b) {
+    return 7 - chebyshev(a, b);
+}
+
+// Sum the eg-side material value of every non-king, non-pawn piece on
+// the given color. The lone-king side has none of these, so this is the
+// material excess that drives the absolute eval of a KXK position.
+int strongMaterialEg(const Board &board, Color strongSide) {
+    int v = 0;
+    for (int pt = Knight; pt <= Queen; pt++) {
+        v += board.pieceCount[strongSide][pt] * eg_value(evalParams.PieceScore[pt]);
+    }
+    return v;
+}
+
+int evaluateKXK(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+
+    int materialEg = strongMaterialEg(board, strongSide);
+    int gradient = pushToEdge(weakKing) * eg_value(evalParams.KXKPushToEdge) +
+                   pushClose(strongKing, weakKing) * eg_value(evalParams.KXKPushClose);
+    int whitePov = materialEg + gradient;
+    return (strongSide == White) ? whitePov : -whitePov;
+}
+
+int evaluateKBNK(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
+    bool bishopLight = (strongBishop & LightSquaresBB) != 0;
+
+    int materialEg = strongMaterialEg(board, strongSide);
+    int gradient = pushToColoredCorner(weakKing, bishopLight) * eg_value(evalParams.KBNKCornerEg) +
+                   pushClose(strongKing, weakKing) * eg_value(evalParams.KBNKPushClose);
+    int whitePov = materialEg + gradient;
+    return (strongSide == White) ? whitePov : -whitePov;
+}
+
+void registerValueBothColors(int wp, int wn, int wb, int wr, int wq, ValueFn fn) {
+    uint64_t kw = makeKey(wp, wn, wb, wr, wq, 0, 0, 0, 0, 0);
+    uint64_t kb = makeKey(0, 0, 0, 0, 0, wp, wn, wb, wr, wq);
+    g_valueMap[kw] = {fn, White};
+    g_valueMap[kb] = {fn, Black};
 }
 
 bool g_initialized = false;
@@ -50,11 +115,26 @@ void init() {
     if (g_initialized) return;
     g_initialized = true;
     Kpk::init();
-    // Subsequent commits will populate g_valueMap and g_scaleMap with
-    // registrations for the recognized material configurations. The
-    // scaffold leaves both maps empty so dispatch always falls through
-    // to the generic eval until evaluators land.
-    (void)makeKey;
+
+    // Generic mating material against a lone king. Each registration
+    // covers both color polarities so dispatch is symmetric. The
+    // configurations enumerated here are the material excesses that
+    // suffice to mate without help from any pawn structure; rarer
+    // pile-ons like K + 3Q vs K stay on the natural gradient because
+    // the material alone already drives the search.
+    registerValueBothColors(0, 0, 0, 0, 1, evaluateKXK); // KQK
+    registerValueBothColors(0, 0, 0, 1, 0, evaluateKXK); // KRK
+    registerValueBothColors(0, 0, 0, 0, 2, evaluateKXK); // KQQK
+    registerValueBothColors(0, 0, 0, 1, 1, evaluateKXK); // KQRK
+    registerValueBothColors(0, 0, 0, 2, 0, evaluateKXK); // KRRK
+    registerValueBothColors(0, 0, 1, 0, 1, evaluateKXK); // KQBK
+    registerValueBothColors(0, 1, 0, 0, 1, evaluateKXK); // KQNK
+    registerValueBothColors(0, 0, 1, 1, 0, evaluateKXK); // KRBK
+    registerValueBothColors(0, 1, 0, 1, 0, evaluateKXK); // KRNK
+
+    // KBNK uses the colored-corner gradient instead of the generic
+    // edge push because the bishop only controls one corner color.
+    registerValueBothColors(0, 1, 1, 0, 0, evaluateKBNK);
 }
 
 const ValueEntry *probeValue(uint64_t materialKey) {
