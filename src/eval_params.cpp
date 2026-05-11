@@ -239,11 +239,6 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 0), // KingPawnDistEg
     S(0, 78), // KBNKCornerEg
     S(0, 627), // LucenaEg
-    S(0, 20), // KXKPushToEdge
-    S(0, 10), // KXKPushClose
-    S(0, 10), // KBNKPushClose
-    S(0, 25), // KQKRPushToEdge
-    S(0, 15), // KQKRPushClose
 };
 
 // clang-format on

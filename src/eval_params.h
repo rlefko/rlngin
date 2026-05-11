@@ -345,38 +345,6 @@ struct EvalParams {
     // only the eg half is tunable.
     Score LucenaEg;
 
-    // Generic mate-the-lone-king gradient applied per square of edge
-    // closeness (0 at the center, 7 at the edge). KX vs K positions
-    // (queen, rook, or sufficient mating material against a lone king)
-    // win on material alone; this term provides the search a continuous
-    // gradient that steers the defender toward the edge so mate becomes
-    // findable inside the horizon. Eg-only; mg structurally zero.
-    Score KXKPushToEdge;
-
-    // Generic kings-together pull for mate-the-lone-king positions.
-    // Bonus per square of Chebyshev closeness between the kings (0 at
-    // maximum distance, 7 when adjacent). The defender losing room
-    // accelerates the conversion plan. Eg-only.
-    Score KXKPushClose;
-
-    // Kings-together pull specific to KBNK. KBNK has a corner-color
-    // constraint (driven by KBNKCornerEg) so the king-proximity term is
-    // tuned separately rather than shared with the generic KXK gradient.
-    // Eg-only; mg structurally zero.
-    Score KBNKPushClose;
-
-    // KQKR push-to-edge gradient. In Q vs R, mate technique relies on
-    // driving the defender king to the edge so the queen can pry the
-    // rook from its king and pick it off. The per-square weight is
-    // tuned independently from the generic KXK term because the
-    // queen-vs-rook race rewards a steeper edge push than mate against
-    // a bare king. Eg-only.
-    Score KQKRPushToEdge;
-
-    // KQKR kings-together pull. Bringing the strong king closer
-    // accelerates the rook-stripping plan, so this term reinforces the
-    // edge push gradient. Eg-only.
-    Score KQKRPushClose;
 };
 
 extern EvalParams evalParams;
