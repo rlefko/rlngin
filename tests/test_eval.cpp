@@ -331,12 +331,14 @@ TEST_CASE("Eval: undefended king zone squares penalize defender", "[eval][kingsa
 TEST_CASE("Eval: passed pawn scores higher than blocked pawn", "[eval][pawn]") {
     Board board;
 
-    // White pawn on e5, no black pawns on d/e/f files ahead = passed
-    board.setFen("4k3/8/8/4P3/8/8/8/4K3 w - - 0 1");
+    // White passed e-pawn supported by a queen-side reserve pawn so the
+    // material configuration stays off the KPK / KPKP dispatch and the
+    // natural passer machinery drives the comparison.
+    board.setFen("4k3/8/8/4P3/8/8/P7/4K3 w - - 0 1");
     int passedScore = evaluate(board);
 
-    // White pawn on e5, black pawn on e6 blocks = not passed
-    board.setFen("4k3/8/4p3/4P3/8/8/8/4K3 w - - 0 1");
+    // Same structure but with a black pawn on e6 blocking the e-pawn.
+    board.setFen("4k3/8/4p3/4P3/8/8/P7/4K3 w - - 0 1");
     int blockedScore = evaluate(board);
 
     CHECK(passedScore > blockedScore);
@@ -526,13 +528,14 @@ TEST_CASE("Eval: isolated pawn is worse when unopposed than when opposed", "[eva
 
     // White a2 is isolated and blocked from being a passer by a black b3
     // pawn on the adjacent file, but nothing sits on the a file ahead of
-    // it, so the a pawn is "weak unopposed".
-    board.setFen("4k3/8/8/8/8/1p6/P7/4K3 w - - 0 1");
+    // it, so the a pawn is "weak unopposed". The h-pawn keeps the
+    // material off the KPKP dispatch so the natural penalty applies.
+    board.setFen("4k3/8/8/8/8/1p6/P6P/4K3 w - - 0 1");
     int unopposed = evaluate(board);
 
     // Same idea, but the blocker now lives on the a file, so white's a
     // pawn is opposed and the weak-unopposed surcharge no longer fires.
-    board.setFen("4k3/p7/8/8/8/8/P7/4K3 w - - 0 1");
+    board.setFen("4k3/p7/8/8/8/8/P6P/4K3 w - - 0 1");
     int opposed = evaluate(board);
 
     CHECK(opposed > unopposed);

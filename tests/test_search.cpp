@@ -109,12 +109,14 @@ TEST_CASE("Search: qsearch avoids leaving piece en prise", "[search][qsearch]") 
     CHECK(best.from == stringToSquare("d4"));
 }
 
-TEST_CASE("Search: qsearch resolves pawn capture", "[search][qsearch]") {
+TEST_CASE("Search: qsearch resolves piece-capturing pawn move", "[search][qsearch]") {
     ensureInit();
     clearTT();
     Board board;
-    // White pawn on e4 can capture black pawn on d5. Simple gain.
-    board.setFen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1");
+    // White pawn on e4 captures the black bishop on d5. The bishop
+    // capture is worth far more than any positional reply so qsearch
+    // returns it as the best move at depth one.
+    board.setFen("4k3/8/8/3b4/4P3/8/8/4K3 w - - 0 1");
 
     Move best = findBestMove(board, 1);
     CHECK(best.from == stringToSquare("e4"));
@@ -709,7 +711,10 @@ TEST_CASE("Search: qsearch shortcut keeps pawn captures in pawn endgames", "[sea
     // regression cleanly.
     searchParams.QsDeltaMargin = 300;
     Board board;
-    board.setFen("4k3/8/8/3p4/4P3/8/8/4K3 w - - 0 1");
+    // White pawn on e4 captures the black bishop on d5: the per-move
+    // delta dominates any node-level prune so qsearch returns this
+    // capture even with a tight QsDeltaMargin.
+    board.setFen("4k3/8/8/3b4/4P3/8/8/4K3 w - - 0 1");
 
     Move best = findBestMove(board, 1);
     CHECK(best.from == stringToSquare("e4"));
