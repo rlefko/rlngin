@@ -1,5 +1,6 @@
 #include "endgame.h"
 
+#include "kpk_bitbase.h"
 #include "zobrist.h"
 
 #include <unordered_map>
@@ -48,6 +49,7 @@ bool g_initialized = false;
 void init() {
     if (g_initialized) return;
     g_initialized = true;
+    Kpk::init();
     // Subsequent commits will populate g_valueMap and g_scaleMap with
     // registrations for the recognized material configurations. The
     // scaffold leaves both maps empty so dispatch always falls through
