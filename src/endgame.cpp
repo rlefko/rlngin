@@ -573,11 +573,22 @@ void init() {
         registerScale(n, 0, 1, 0, 0, 0, 0, 0, 0, 0, scaleKBPsK);
     }
 
-    // K + B + P vs K + B (opposite or same-colored bishops).
+    // K + B + P vs K + B (opposite or same-colored bishops). The
+    // wrong-rook-pawn fortress check inside scaleKBPKB also catches
+    // KBPKB drawn shapes regardless of the defender bishop color.
     registerScale(1, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPKB);
 
     // K + B + 2 P vs K + B.
     registerScale(2, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPPKB);
+
+    // K + B + N pawns vs K + B for 3..8 pawns. The wrong-rook-pawn
+    // fortress check is the only meaningful drawishness signal for
+    // these uncommon configurations; routing them through scaleKBPsK
+    // exposes the same check without forcing the inline scaleFactor
+    // to keep a duplicate path for the defender-bishop case.
+    for (int n = 3; n <= 8; n++) {
+        registerScale(n, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPsK);
+    }
 
     // K + B + P vs K + N.
     registerScale(1, 0, 1, 0, 0, 0, 1, 0, 0, 0, scaleKBPKN);
