@@ -98,27 +98,30 @@ bool isWrongRookPawnFortress(const Board &board, Color strongSide) {
 }
 
 // Unified bishop-and-pawns vs king-with-optional-bishop scale
-// evaluator. Checks the textbook wrong-rook-pawn fortress first; if
-// that fails and the defender holds a bishop, applies the same
-// opposite-colored-bishop pawn-count damping the legacy inline rule
-// used (scale 10 for one pawn, 26 for two or three, 38 for four or
-// more). Otherwise the natural eg passes through unchanged.
+// evaluator. Mirrors the legacy inline rule's ordering: opposite-
+// colored-bishop pawn-count damping fires first when the defender
+// holds a bishop on the other color (scale 10 for one pawn, 26 for
+// two or three, 38 for four or more), then the wrong-rook-pawn
+// fortress check runs for the no-defender-bishop and same-colored-
+// bishop branches. Anything else leaves the natural eg untouched.
 ScaleResult scaleKBPsK(const Board &board, Color strongSide) {
-    if (isWrongRookPawnFortress(board, strongSide)) return {0, 0};
-
     Color weakSide = (strongSide == White) ? Black : White;
     Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
-    if (!weakBishop) return {64, 0};
 
-    Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
-    bool strongLight = (strongBishop & LightSquaresBB) != 0;
-    bool weakLight = (weakBishop & LightSquaresBB) != 0;
-    if (strongLight == weakLight) return {64, 0};
+    if (weakBishop) {
+        Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
+        bool strongLight = (strongBishop & LightSquaresBB) != 0;
+        bool weakLight = (weakBishop & LightSquaresBB) != 0;
+        if (strongLight != weakLight) {
+            int strongPawns = popcount(board.byPiece[Pawn] & board.byColor[strongSide]);
+            if (strongPawns <= 1) return {10, 0};
+            if (strongPawns <= 3) return {26, 0};
+            return {38, 0};
+        }
+    }
 
-    int strongPawns = popcount(board.byPiece[Pawn] & board.byColor[strongSide]);
-    if (strongPawns <= 1) return {10, 0};
-    if (strongPawns <= 3) return {26, 0};
-    return {38, 0};
+    if (isWrongRookPawnFortress(board, strongSide)) return {0, 0};
+    return {64, 0};
 }
 
 // K + R + P vs K + R. Recognizes the three named patterns:
