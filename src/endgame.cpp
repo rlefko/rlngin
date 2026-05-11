@@ -214,12 +214,19 @@ ScaleResult scaleKQKP(const Board &board, Color strongSide) {
 }
 
 // K + minor vs K + minor (pawnless). Any of KNKN, KBKB, KBKN, KNKB
-// without pawns is a draw with proper defense. The shared scale
-// evaluator returns zero to subsume the inline pawnless-minor-only
-// recognizer in scaleFactor.
+// without pawns is a draw with proper defense. KBKB with opposite-
+// colored bishops keeps the legacy OCB damping magnitude of ten so
+// the eg matches the inline rule it replaces; every other pawnless-
+// minor configuration collapses fully to zero.
 ScaleResult scaleMinorVsMinorDraw(const Board &board, Color strongSide) {
-    (void)board;
     (void)strongSide;
+    if (board.pieceCount[White][Bishop] == 1 && board.pieceCount[Black][Bishop] == 1) {
+        Bitboard whiteBishop = board.byPiece[Bishop] & board.byColor[White];
+        Bitboard blackBishop = board.byPiece[Bishop] & board.byColor[Black];
+        bool whiteLight = (whiteBishop & LightSquaresBB) != 0;
+        bool blackLight = (blackBishop & LightSquaresBB) != 0;
+        if (whiteLight != blackLight) return {10, 0};
+    }
     return {0, 0};
 }
 
