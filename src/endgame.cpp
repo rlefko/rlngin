@@ -178,62 +178,6 @@ ScaleResult scaleKRPKR(const Board &board, Color strongSide) {
     return {64, 0};
 }
 
-// K + B + P vs K + N. The bishop side usually wins; the scale only
-// drops when the defender king itself blockades the pawn's push square
-// because a knight on the push square is normally captured by the
-// bishop on the next move rather than holding a fortress.
-ScaleResult scaleKBPKN(const Board &board, Color strongSide) {
-    Color weakSide = (strongSide == White) ? Black : White;
-    int pawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
-    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-    int pushSq = pawn + (strongSide == White ? 8 : -8);
-    if (pushSq >= 0 && pushSq < 64 && weakKing == pushSq) {
-        return {16, 0};
-    }
-    return {64, 0};
-}
-
-// K + pawns vs K. Multi-pawn extension of the rook-file fortress: if
-// every strong-side pawn sits on a single rook file and the defender
-// king reaches the promotion corner before the lead pawn queens, the
-// position is drawn even without a bishop on the wrong color.
-ScaleResult scaleKPsK(const Board &board, Color strongSide) {
-    Color weakSide = (strongSide == White) ? Black : White;
-    Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[strongSide];
-    if (!ourPawns) return {64, 0};
-
-    Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
-    if (rookFilePawns != ourPawns) return {64, 0};
-    bool onA = (ourPawns & FileABB) != 0;
-    bool onH = (ourPawns & FileHBB) != 0;
-    if (onA && onH) return {64, 0};
-
-    int promoSq = onA ? (strongSide == White ? 56 : 0) : (strongSide == White ? 63 : 7);
-    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-    int leadPawn = (strongSide == White) ? msb(ourPawns) : lsb(ourPawns);
-    int pushes = (strongSide == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
-    if (chebyshev(weakKing, promoSq) <= pushes) return {0, 0};
-    return {64, 0};
-}
-
-// K + P vs K + P. Each side wants to promote first; the KPK bitbase
-// answers each side's race independently. If neither race wins, the
-// position is drawn and the eg collapses; otherwise the natural
-// gradient decides.
-ScaleResult scaleKPKP(const Board &board, Color strongSide) {
-    Color weakSide = (strongSide == White) ? Black : White;
-    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
-    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-    int strongPawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
-    int weakPawn = lsb(board.byPiece[Pawn] & board.byColor[weakSide]);
-
-    bool strongWinsRace =
-        Kpk::probe(strongSide, strongKing, strongPawn, weakKing, board.sideToMove);
-    bool weakWinsRace = Kpk::probe(weakSide, weakKing, weakPawn, strongKing, board.sideToMove);
-    if (strongWinsRace || weakWinsRace) return {64, 0};
-    return {0, 0};
-}
-
 // KPK is wired as a scale evaluator: a bitbase WIN keeps the full
 // endgame gradient (material plus KingPawnDistEg plus the natural pawn
 // structure terms drive the conversion plan) while a bitbase DRAW
@@ -346,19 +290,6 @@ void init() {
     for (int n = 1; n <= 8; n++) {
         registerScale(n, 0, 1, 0, 0, 0, 0, 1, 0, 0, scaleKBPsK);
     }
-
-    // K + B + P vs K + N.
-    registerScale(1, 0, 1, 0, 0, 0, 1, 0, 0, 0, scaleKBPKN);
-
-    // K + pawns vs K with multiple pawns: register two-through-eight
-    // pawn variants. Single-pawn KPK is already handled by the bitbase
-    // path above.
-    for (int n = 2; n <= 8; n++) {
-        registerScale(n, 0, 0, 0, 0, 0, 0, 0, 0, 0, scaleKPsK);
-    }
-
-    // K + P vs K + P race resolution via two bitbase probes.
-    registerScale(1, 0, 0, 0, 0, 1, 0, 0, 0, 0, scaleKPKP);
 
     // K + R + P vs K + R: Philidor third-rank defense and the
     // Lucena bridge configuration. The eg additive folded in by the
