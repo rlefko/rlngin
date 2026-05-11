@@ -210,6 +210,36 @@ TEST_CASE("KNNK: two knights vs lone king falls through to the natural material 
     CHECK(evaluate(corner) > 500);
 }
 
+TEST_CASE("KBPKB: wrong-rook-pawn fortress holds regardless of defender bishop color",
+          "[endgame][kbpkb][fortress]") {
+    Board init;
+    (void)evaluate(init);
+
+    // Same-color bishops, white h-pawn pushing toward dark h8 corner
+    // with a light bishop that cannot evict the defender king. Pre-
+    // bitbase recognized this as fortress; the regression audit
+    // exposed that the per-material KBPKB scale was missing the
+    // wrong-rook-pawn shortcut, so this test pins the corrected
+    // behavior.
+    Board sameColor;
+    sameColor.setFen("7k/7P/8/8/8/7B/4b3/4K3 w - - 0 1");
+    int sameColorEval = evaluate(sameColor);
+    CHECK(std::abs(sameColorEval) < 100);
+
+    // Opposite-colored bishops in the same fortress shape.
+    Board ocb;
+    ocb.setFen("7k/7P/8/8/8/7B/3b4/4K3 w - - 0 1");
+    int ocbEval = evaluate(ocb);
+    CHECK(std::abs(ocbEval) < 100);
+
+    // Non-fortress: defender king on e8 cannot reach h8 in time, so
+    // the natural eval still scores the position as clearly winning.
+    Board nonFortress;
+    nonFortress.setFen("4k3/7P/8/8/8/7B/4b3/4K3 w - - 0 1");
+    int nonFortressEval = evaluate(nonFortress);
+    CHECK(nonFortressEval > 200);
+}
+
 TEST_CASE("KBPsK: wrong-colored bishop with a rook-file pawn yields a fortress draw",
           "[endgame][kbpsk]") {
     Board fortress;

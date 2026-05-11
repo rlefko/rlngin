@@ -81,42 +81,52 @@ ScaleResult scaleKXK(const Board &board, Color strongSide) {
     return {64, gradient};
 }
 
+// Returns true when the strong side has a bishop plus one or more
+// pawns on a single rook file, the bishop is on the wrong color to
+// control the promotion corner, and the defending king can reach the
+// promotion square before the lead pawn queens. The textbook fortress
+// holds regardless of any defender bishop, knight, or other minor that
+// the position may carry, so the check is factored out and reused by
+// every bishop-and-rook-file-pawns scale evaluator.
+bool isWrongRookPawnFortress(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[strongSide];
+    Bitboard ourBishop = board.byPiece[Bishop] & board.byColor[strongSide];
+    if (!ourPawns || !ourBishop) return false;
+
+    Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
+    if (rookFilePawns != ourPawns) return false;
+    bool onA = (ourPawns & FileABB) != 0;
+    bool onH = (ourPawns & FileHBB) != 0;
+    if (onA && onH) return false;
+
+    int promoSq = onA ? (strongSide == White ? 56 : 0) : (strongSide == White ? 63 : 7);
+    bool promoLight = (squareBB(promoSq) & LightSquaresBB) != 0;
+    bool bishopLight = (ourBishop & LightSquaresBB) != 0;
+    if (promoLight == bishopLight) return false;
+
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int leadPawn = (strongSide == White) ? msb(ourPawns) : lsb(ourPawns);
+    int pushes = (strongSide == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
+    return chebyshev(weakKing, promoSq) <= pushes;
+}
+
 // K + B + pawns vs K. The textbook wrong-rook-pawn fortress applies
 // when every strong-side pawn sits on a single rook file and the
 // bishop cannot control the corresponding promotion corner. The
 // defender king holds the draw by reaching the corner before the lead
 // pawn queens; any other configuration evaluates normally.
 ScaleResult scaleKBPsK(const Board &board, Color strongSide) {
-    Color weakSide = (strongSide == White) ? Black : White;
-    Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[strongSide];
-    Bitboard ourBishop = board.byPiece[Bishop] & board.byColor[strongSide];
-    if (!ourPawns || !ourBishop) return {64, 0};
-
-    Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
-    if (rookFilePawns != ourPawns) return {64, 0};
-    bool onA = (ourPawns & FileABB) != 0;
-    bool onH = (ourPawns & FileHBB) != 0;
-    if (onA && onH) return {64, 0};
-
-    int promoSq = onA ? (strongSide == White ? 56 : 0) : (strongSide == White ? 63 : 7);
-    bool promoLight = (squareBB(promoSq) & LightSquaresBB) != 0;
-    bool bishopLight = (ourBishop & LightSquaresBB) != 0;
-    if (promoLight == bishopLight) return {64, 0};
-
-    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
-    int leadPawn = (strongSide == White) ? msb(ourPawns) : lsb(ourPawns);
-    int pushes = (strongSide == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
-    if (chebyshev(weakKing, promoSq) <= pushes) return {0, 0};
-    return {64, 0};
+    return isWrongRookPawnFortress(board, strongSide) ? ScaleResult{0, 0} : ScaleResult{64, 0};
 }
 
 // K + B + P vs K + B. Same-colored bishops give the pawn side the
-// usual winning chances; opposite-colored bishops drop the scale far
-// toward a draw because the defender can erect a blockade the pawn
-// cannot break without bishop support on the right diagonal. The
-// drawish scale matches the legacy single-pawn OCB inline value so the
-// dispatch does not inflate the eval relative to pre-bitbase play.
+// usual winning chances; opposite-colored bishops drop the scale to
+// the legacy single-pawn OCB inline value. The wrong-rook-pawn
+// fortress takes precedence over the OCB scaling because the
+// defender's bishop is irrelevant once the corner is unreachable.
 ScaleResult scaleKBPKB(const Board &board, Color strongSide) {
+    if (isWrongRookPawnFortress(board, strongSide)) return {0, 0};
     Color weakSide = (strongSide == White) ? Black : White;
     Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
     Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
@@ -126,11 +136,12 @@ ScaleResult scaleKBPKB(const Board &board, Color strongSide) {
     return {10, 0};
 }
 
-// K + B + 2 P vs K + B. Opposite-bishop endings with two pawns are
-// drawish; the uniform scale matches the legacy two-or-three-pawn
-// OCB inline value so the dispatch stays consistent with pre-bitbase
-// play. Same-color bishops keep the full eg.
+// K + B + 2 P vs K + B. Wrong-rook-pawn fortress wins over OCB
+// scaling. Otherwise opposite-bishop endings with two pawns are
+// drawish at the legacy two-or-three-pawn OCB inline value and
+// same-color bishops keep the full eg.
 ScaleResult scaleKBPPKB(const Board &board, Color strongSide) {
+    if (isWrongRookPawnFortress(board, strongSide)) return {0, 0};
     Color weakSide = (strongSide == White) ? Black : White;
     Bitboard strongBishop = board.byPiece[Bishop] & board.byColor[strongSide];
     Bitboard weakBishop = board.byPiece[Bishop] & board.byColor[weakSide];
