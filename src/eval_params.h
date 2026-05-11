@@ -344,7 +344,6 @@ struct EvalParams {
     // the raw material gradient alone would. Mg structurally zero;
     // only the eg half is tunable.
     Score LucenaEg;
-
 };
 
 extern EvalParams evalParams;
