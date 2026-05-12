@@ -1461,14 +1461,22 @@ int evaluate(const Board &board) {
     // adjustment ahead of the scale so the gradient survives even when
     // the scaled eg would otherwise flatline.
     if (mgPhase <= 10) {
+        // Combine specialized recognizers with the generic OCB / non-OCB
+        // scaling rather than replacing it. A handler that returns the
+        // default {64, 0} (i.e. "no draw signal here") should not silently
+        // disable the generic scaleFactor draw logic that was already
+        // covering this material class. For exact-draw recognizers
+        // (KPsK fortress, KPK bitbase draw) the specialized handler
+        // returns a scale below 64 and the min() collapses to the
+        // tighter result; for the rest, the generic OCB damping still
+        // gets to apply. egAdjust is purely additive (Lucena bonus,
+        // KBNK corner-push gradient, etc.) and rides on top.
+        int scale = scaleFactor(board);
         int egAdjust = 0;
-        int scale;
         if (const auto *se = Endgame::probeScale(board.materialKey)) {
             Endgame::ScaleResult r = se->fn(board, se->strongSide);
-            scale = r.scale;
-            egAdjust = r.egAdjust;
-        } else {
-            scale = scaleFactor(board);
+            scale = std::min(scale, r.scale);
+            egAdjust += r.egAdjust;
         }
         eg = (eg + egAdjust) * scale / 64;
     }
@@ -1577,15 +1585,12 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     int scale = 64;
     int scaledEg = eg;
     int egAdjust = 0;
-    const Endgame::ScaleEntry *scaleEntry =
-        (mgPhase <= 10) ? Endgame::probeScale(board.materialKey) : nullptr;
     if (mgPhase <= 10) {
-        if (scaleEntry) {
-            Endgame::ScaleResult r = scaleEntry->fn(board, scaleEntry->strongSide);
-            scale = r.scale;
-            egAdjust = r.egAdjust;
-        } else {
-            scale = scaleFactor(board);
+        scale = scaleFactor(board);
+        if (const auto *se = Endgame::probeScale(board.materialKey)) {
+            Endgame::ScaleResult r = se->fn(board, se->strongSide);
+            scale = std::min(scale, r.scale);
+            egAdjust += r.egAdjust;
         }
         scaledEg = (eg + egAdjust) * scale / 64;
     }

@@ -219,19 +219,24 @@ std::vector<TunableSpec> buildRegistry() {
                                     100, 5.0, 2.0));
     out.push_back(
         makeScoreHalfSpec("KingPawnDistEg", &evalParams.KingPawnDistEg, false, -50, 0, 4.0, 1.5));
+    // Tighter caps on the mating-conversion gradients and Lucena
+    // bonus: the previous 0..50 / 0..300 ceilings let game-result
+    // Texel saturate every winning-shape feature at the cap, and
+    // the engine ended up over-pressing geometry over tactics. Caps
+    // below match the second-opinion review.
     out.push_back(
-        makeScoreHalfSpec("KBNKCornerEg", &evalParams.KBNKCornerEg, false, 0, 50, 4.0, 1.5));
-    out.push_back(makeScoreHalfSpec("LucenaEg", &evalParams.LucenaEg, false, 0, 300, 12.0, 4.0));
+        makeScoreHalfSpec("KBNKCornerEg", &evalParams.KBNKCornerEg, false, 0, 40, 3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("LucenaEg", &evalParams.LucenaEg, false, 0, 250, 10.0, 3.0));
     out.push_back(
-        makeScoreHalfSpec("KXKPushToEdgeEg", &evalParams.KXKPushToEdge, false, 0, 50, 4.0, 1.5));
+        makeScoreHalfSpec("KXKPushToEdgeEg", &evalParams.KXKPushToEdge, false, 0, 30, 3.0, 1.0));
     out.push_back(
-        makeScoreHalfSpec("KXKPushCloseEg", &evalParams.KXKPushClose, false, 0, 50, 4.0, 1.5));
+        makeScoreHalfSpec("KXKPushCloseEg", &evalParams.KXKPushClose, false, 0, 25, 3.0, 1.0));
     out.push_back(
-        makeScoreHalfSpec("KBNKPushCloseEg", &evalParams.KBNKPushClose, false, 0, 50, 4.0, 1.5));
+        makeScoreHalfSpec("KBNKPushCloseEg", &evalParams.KBNKPushClose, false, 0, 25, 3.0, 1.0));
     out.push_back(
-        makeScoreHalfSpec("KQKRPushToEdgeEg", &evalParams.KQKRPushToEdge, false, 0, 50, 4.0, 1.5));
+        makeScoreHalfSpec("KQKRPushToEdgeEg", &evalParams.KQKRPushToEdge, false, 0, 30, 3.0, 1.0));
     out.push_back(
-        makeScoreHalfSpec("KQKRPushCloseEg", &evalParams.KQKRPushClose, false, 0, 50, 4.0, 1.5));
+        makeScoreHalfSpec("KQKRPushCloseEg", &evalParams.KQKRPushClose, false, 0, 15, 3.0, 1.0));
     out.push_back(makeScoreHalfSpec("KPsKFortressScaleEg", &evalParams.KPsKFortressScale, false, 0,
                                     32, 3.0, 1.0));
     out.push_back(makeScoreHalfSpec("KBPKNDrawishScaleEg", &evalParams.KBPKNDrawishScale, false, 0,
@@ -292,7 +297,7 @@ std::vector<TunableSpec> buildRegistry() {
                                     &evalParams.RookBehindTheirPasserBonus, true, -50, 60, 5.0,
                                     2.0));
     out.push_back(makeScoreHalfSpec("RookBehindTheirPasserBonusEg",
-                                    &evalParams.RookBehindTheirPasserBonus, false, 0, 80, 6.0,
+                                    &evalParams.RookBehindTheirPasserBonus, false, 0, 120, 6.0,
                                     2.0));
 
     // --- Minor behind pawn: small bonus applied per shielded minor,

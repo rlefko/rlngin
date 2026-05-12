@@ -56,17 +56,17 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // expected score; the KingPawnDistEg term subtracts a chebyshev-
     // distance penalty for the king sitting four squares from the pawn.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 190);
+    CHECK(evaluate(board) == 240);
 
     // Knight or bishop versus a bare king is a textbook draw. The
     // pawnless-minor-only scale evaluator collapses eg to zero so only
     // the tapered middlegame residual survives, which is small at
     // phase 1 with a single minor.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 26);
+    CHECK(evaluate(board) == 22);
 
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 46);
+    CHECK(evaluate(board) == 42);
 
     // Rook on a1 vs a lone king: the scale-style KXK dispatch keeps
     // the natural rook eval (material, PSTs, rook mobility, open file
@@ -227,7 +227,7 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // depends on the tuned king-safety weights and may need refreshing
     // after retunes.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 47);
+    CHECK(evaluate(board) == 42);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
@@ -512,7 +512,7 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // king sits on h8 to keep the position outside the KPK rook-file
     // fortress envelope.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 190);
+    CHECK(evaluate(board) == 240);
 
     // Textbook K + P vs K with the strong king escorting a rook pawn
     // one square from promotion. The KPK bitbase confirms WIN, so the
@@ -1609,24 +1609,39 @@ TEST_CASE("Eval: exposed king with no safe squares scores worse than sheltered",
           "[eval][king-safety]") {
     Board board;
 
-    // White king centralized on e4 facing two black attackers (queen
-    // and rook) with no escape squares it can reach without walking
-    // into the attackers' fire. The new KingMobilityFactor should
-    // remove no danger from the accumulator, so the king-safety
-    // penalty bites.
+    auto kingSafetyMg = [](const Board &b) {
+        std::ostringstream os;
+        evaluateVerbose(b, os);
+        const std::string text = os.str();
+        size_t pos = text.find("King safety");
+        REQUIRE(pos != std::string::npos);
+        size_t eol = text.find('\n', pos);
+        const std::string line = text.substr(pos, eol - pos);
+        // Each row prints "mg= <int> eg= <int>" with width 6.
+        size_t mgPos = line.find("mg=");
+        REQUIRE(mgPos != std::string::npos);
+        return std::stoi(line.substr(mgPos + 3));
+    };
+
+    // White king centralized on e4 with two black attackers (queen and
+    // rook); the king has no escape squares it can reach safely. With
+    // no mobility relief the accumulated king-safety penalty is large
+    // and negative for white.
     board.setFen("4k3/8/8/3qr3/4K3/8/8/8 w - - 0 1");
-    int exposedKing = evaluate(board);
+    int exposedKsMg = kingSafetyMg(board);
 
-    // Same attackers and same material balance, but the king is
-    // tucked into the corner with two non-attacked escape squares
-    // available (h1 and h2 are reachable; the queen and rook on b3
-    // and c3 do not cover them). The mobility differential subtracts
-    // KingMobilityFactor from the accumulator twice, softening the
-    // king-safety penalty.
+    // Same attackers and material balance, but the king is tucked into
+    // the corner with two unattacked escape squares (h1, h2, g2). The
+    // mobility differential subtracts KingMobilityFactor from the
+    // accumulator, so the king-safety penalty should be significantly
+    // smaller (less negative) than the exposed position. The total
+    // blended eval is dominated by king PST in low-phase positions, so
+    // this test isolates the king-safety bucket directly rather than
+    // the post-blend score.
     board.setFen("4k3/8/8/8/8/1qr5/8/7K w - - 0 1");
-    int corneredKing = evaluate(board);
+    int corneredKsMg = kingSafetyMg(board);
 
-    CHECK(corneredKing > exposedKing);
+    CHECK(corneredKsMg > exposedKsMg);
 }
 
 // --- Hanging ---

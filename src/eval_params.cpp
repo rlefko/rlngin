@@ -236,19 +236,32 @@ static const EvalParams kDefaultEvalParams = {
     S(41, 0), // KnightOnQueen
     S(-250, -72), // PawnlessFlank
     S(0, 36), // QueenInfiltration
-    S(0, 0), // KingPawnDistEg
-    S(0, 50), // KBNKCornerEg
-    S(0, 300), // LucenaEg
-    S(0, 50), // KXKPushToEdge
-    S(0, 50), // KXKPushClose
-    S(0, 50), // KBNKPushClose
-    S(0, 50), // KQKRPushToEdge
-    S(0, 50), // KQKRPushClose
-    S(0, 0), // KPsKFortressScale
-    S(0, 2), // KBPKNDrawishScale
-    S(0, 16), // KRKPDrawishScale
-    S(0, 16), // KRKMinorScale
-    S(0, 0), // KNNKDrawScale
+    // The previous Texel pass saturated most endgame conversion weights
+    // at the constraint catalog's upper bound (KBNKCornerEg=50,
+    // LucenaEg=300, every KXK / KBNK / KQKR push gradient at 50). That
+    // is the classic boundary-saturation symptom: game-result Texel
+    // cannot tell "winning but wandering" from "winning and converting,"
+    // so it slams the conversion features to the ceiling. Combined with
+    // KRKMinorScale=16 (right at the lower bound, treating KRKB/KRKN
+    // closer to dead-drawn than the heuristic intends) and the
+    // override-vs-combine bug that wiped out the generic OCB damping
+    // for any registered material key, the engine was over-confident in
+    // mating geometry and under-rewarding practical pressure. The
+    // values below are hand-picked conservative defaults drawn from the
+    // second-opinion review pending a tablebase-supervised retune.
+    S(0, -16), // KingPawnDistEg
+    S(0, 32),  // KBNKCornerEg
+    S(0, 200), // LucenaEg
+    S(0, 25),  // KXKPushToEdge
+    S(0, 15),  // KXKPushClose
+    S(0, 15),  // KBNKPushClose
+    S(0, 25),  // KQKRPushToEdge
+    S(0, 5),   // KQKRPushClose
+    S(0, 0),   // KPsKFortressScale
+    S(0, 16),  // KBPKNDrawishScale
+    S(0, 24),  // KRKPDrawishScale
+    S(0, 24),  // KRKMinorScale
+    S(0, 0),   // KNNKDrawScale
 };
 
 // clang-format on

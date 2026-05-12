@@ -137,22 +137,24 @@ static std::vector<ParamRef> collectParams() {
     out.push_back(
         {"KingPawnDistEg.eg", &evalParams.KingPawnDistEg, false, boundsRange(-50, 0)});
     out.push_back(
-        {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsRange(0, 50)});
+        {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsRange(0, 40)});
     out.push_back(
-        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsRange(0, 300)});
-    // Mating-conversion push gradients: per-square eg weights. The
-    // total bonus is weight * (0..7), so an unbounded weight would
-    // dwarf material. Cap at fifty to match the SPSA upper bound.
+        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsRange(0, 250)});
+    // Mating-conversion push gradients: per-square eg weights. After
+    // the pushToEdge feature was normalized to 0..3 the per-unit
+    // signal got smaller, so the old 0..50 cap let Texel turn each
+    // gradient into a residual sink. Caps match the tighter SPSA
+    // ranges below.
     out.push_back(
-        {"KXKPushToEdgeEg.eg", &evalParams.KXKPushToEdge, false, boundsRange(0, 50)});
+        {"KXKPushToEdgeEg.eg", &evalParams.KXKPushToEdge, false, boundsRange(0, 30)});
     out.push_back(
-        {"KXKPushCloseEg.eg", &evalParams.KXKPushClose, false, boundsRange(0, 50)});
+        {"KXKPushCloseEg.eg", &evalParams.KXKPushClose, false, boundsRange(0, 25)});
     out.push_back(
-        {"KBNKPushCloseEg.eg", &evalParams.KBNKPushClose, false, boundsRange(0, 50)});
+        {"KBNKPushCloseEg.eg", &evalParams.KBNKPushClose, false, boundsRange(0, 25)});
     out.push_back(
-        {"KQKRPushToEdgeEg.eg", &evalParams.KQKRPushToEdge, false, boundsRange(0, 50)});
+        {"KQKRPushToEdgeEg.eg", &evalParams.KQKRPushToEdge, false, boundsRange(0, 30)});
     out.push_back(
-        {"KQKRPushCloseEg.eg", &evalParams.KQKRPushClose, false, boundsRange(0, 50)});
+        {"KQKRPushCloseEg.eg", &evalParams.KQKRPushClose, false, boundsRange(0, 15)});
 
     // Drawishness scales: ScaleResult multiplier in 0..64 (values
     // above 64 would amplify the eg rather than damp it). Lower
