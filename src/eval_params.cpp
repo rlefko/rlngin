@@ -82,187 +82,174 @@
 
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
-    S(161, 33), // ThreatByPawn
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(110, 0), S(87, 0), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(139, 0), S(0, 0)},
-    S(87, 0), // ThreatByKing
-    S(62, 19), // Hanging
-    S(17, 0), // WeakQueen
-    S(24, 16), // SafePawnPush
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 18), S(0, 30), S(0, 37), S(0, 37), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 11), S(0, 30), S(0, 56), S(0, 66), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(-23, -24), S(-23, -41), S(-23, -65), S(-258, -93), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 20), S(10, 49), S(124, 82), S(124, 378), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(35, 28), S(35, 28), S(101, 28), S(101, 28), S(0, 0)},
+    S(236, 225), // ThreatByPawn
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(154, 76), S(61, 244), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(134, 293), S(0, 0)},
+    S(81, 1), // ThreatByKing
+    S(59, 20), // Hanging
+    S(503, 82), // WeakQueen
+    S(22, 0), // SafePawnPush
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 19), S(0, 28), S(0, 36), S(0, 37), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 12), S(0, 31), S(0, 58), S(0, 70), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(-23, -25), S(-23, -41), S(-23, -67), S(-245, -94), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 20), S(3, 52), S(113, 81), S(126, 379), S(0, 0)},
+    {S(0, 0), S(0, 0), S(0, 0), S(32, 28), S(32, 28), S(102, 28), S(102, 28), S(0, 0)},
     S(0, 44), // RookOn7thBonus
-    S(-15, 0), // BadBishop
-    S(-6, -6), // BishopPawns
-    S(46, 0), // Tempo
-    {S(0, 0), S(211, 208), S(768, 569), S(851, 532), S(1259, 849), S(2262, 1782), S(0, 0)}, // PieceScore
+    S(-14, 0), // BadBishop
+    S(-6, -7), // BishopPawns
+    S(42, 0), // Tempo
+    {S(0, 0), S(203, 210), S(755, 588), S(832, 554), S(1238, 877), S(2236, 1833), S(0, 0)}, // PieceScore
     // PawnPST
     {
         S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0),
-        S(-45, -10), S(-26, -6), S(-20, -4), S(-38, -34), S(-24, -25), S(-2, 1), S(-26, -6), S(-49, -20),
-        S(-78, -32), S(-66, -20), S(-45, -23), S(-70, -48), S(-47, -34), S(-41, -20), S(-58, -27), S(-88, -31),
-        S(-37, -12), S(-46, -15), S(-22, -29), S(1, -43), S(3, -41), S(-20, -25), S(-45, -19), S(-40, -20),
-        S(3, 20), S(-8, 16), S(11, -1), S(91, -3), S(109, 5), S(19, 1), S(-13, 14), S(5, 18),
-        S(16, 32), S(23, 34), S(47, 21), S(97, 25), S(100, 27), S(49, 22), S(22, 30), S(14, 35),
-        S(18, 28), S(27, 28), S(51, 27), S(81, 33), S(82, 34), S(51, 27), S(26, 27), S(18, 29),
+        S(-44, -9), S(-27, -5), S(-21, -3), S(-37, -32), S(-22, -24), S(-3, 3), S(-27, -4), S(-48, -18),
+        S(-78, -29), S(-69, -18), S(-48, -22), S(-70, -47), S(-47, -33), S(-45, -18), S(-62, -25), S(-88, -30),
+        S(-37, -11), S(-47, -14), S(-22, -30), S(0, -45), S(3, -43), S(-20, -25), S(-45, -20), S(-40, -19),
+        S(4, 20), S(-6, 15), S(11, -2), S(88, -4), S(107, 3), S(19, 0), S(-11, 14), S(6, 18),
+        S(19, 29), S(25, 32), S(48, 20), S(98, 23), S(101, 25), S(50, 21), S(24, 28), S(17, 32),
+        S(21, 25), S(28, 26), S(53, 26), S(83, 32), S(84, 33), S(53, 26), S(27, 25), S(21, 26),
         S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0)
     },
     // KnightPST (half-board)
     {
-        S(-154, -35), S(-176, -25), S(-139, -25), S(-91, -16),
-        S(-116, -27), S(-95, -12), S(-95, -18), S(-77, -5),
-        S(-106, -21), S(-50, -9), S(-27, -9), S(9, 14),
-        S(-7, -3), S(16, 8), S(37, 25), S(34, 29),
-        S(28, 3), S(54, 14), S(69, 33), S(77, 37),
-        S(36, -11), S(64, 7), S(94, 25), S(106, 35),
-        S(37, -15), S(54, -8), S(77, 1), S(100, 31),
-        S(30, -24), S(49, -9), S(69, 6), S(84, 15)
+        S(-145, -37), S(-166, -25), S(-131, -23), S(-85, -14),
+        S(-109, -29), S(-88, -11), S(-88, -16), S(-71, -4),
+        S(-101, -20), S(-46, -9), S(-27, -8), S(10, 16),
+        S(-12, -4), S(11, 7), S(28, 24), S(28, 29),
+        S(23, 3), S(46, 13), S(62, 32), S(70, 37),
+        S(37, -11), S(62, 6), S(91, 24), S(105, 36),
+        S(35, -18), S(49, -9), S(74, 2), S(102, 33),
+        S(26, -26), S(46, -9), S(69, 10), S(86, 19)
     },
     // BishopPST (half-board)
     {
-        S(-5, -20), S(13, -8), S(-94, -12), S(-90, -14),
-        S(6, -14), S(-16, -39), S(-5, -4), S(-59, -8),
-        S(-22, -16), S(7, 6), S(-11, -13), S(8, 13),
-        S(-7, -13), S(16, 6), S(42, 14), S(33, 7),
-        S(-28, -18), S(28, 9), S(42, 20), S(53, 17),
-        S(9, -1), S(21, 19), S(33, 6), S(55, 27),
-        S(-16, -12), S(-26, -7), S(12, 20), S(29, 26),
-        S(-24, -16), S(-16, 7), S(-2, 8), S(6, 10)
+        S(-3, -18), S(16, -8), S(-88, -11), S(-82, -12),
+        S(7, -15), S(-14, -39), S(-2, -4), S(-53, -7),
+        S(-21, -16), S(8, 5), S(-11, -11), S(9, 14),
+        S(-10, -16), S(15, 3), S(35, 14), S(29, 7),
+        S(-30, -20), S(21, 7), S(38, 20), S(49, 18),
+        S(10, -3), S(21, 17), S(34, 6), S(56, 27),
+        S(-17, -11), S(-28, -6), S(11, 21), S(31, 25),
+        S(-26, -13), S(-16, 8), S(0, 8), S(9, 10)
     },
     // RookPST (half-board)
     {
-        S(-106, -24), S(-49, -31), S(-43, -26), S(-10, -31),
-        S(-83, -34), S(-18, -35), S(-25, -30), S(-13, -27),
-        S(-53, -27), S(-1, -21), S(-10, -17), S(6, -20),
-        S(-27, -8), S(12, 3), S(7, 10), S(14, 0),
-        S(-25, 23), S(20, 34), S(41, 28), S(43, 20),
-        S(-7, 27), S(36, 35), S(60, 36), S(80, 29),
-        S(-18, -2), S(-4, 0), S(37, 7), S(63, 11),
-        S(-3, 18), S(15, 24), S(40, 25), S(44, 21)
+        S(-102, -25), S(-48, -31), S(-43, -25), S(-11, -32),
+        S(-81, -32), S(-18, -36), S(-25, -31), S(-12, -28),
+        S(-51, -28), S(-3, -22), S(-13, -17), S(6, -22),
+        S(-31, -9), S(8, 0), S(3, 6), S(10, -1),
+        S(-27, 21), S(18, 33), S(41, 27), S(40, 18),
+        S(-8, 27), S(35, 35), S(60, 35), S(82, 27),
+        S(-18, -1), S(-3, 0), S(40, 6), S(63, 11),
+        S(-1, 20), S(19, 25), S(44, 25), S(47, 22)
     },
     // QueenPST (half-board)
     {
-        S(-3, -87), S(37, -79), S(13, -74), S(29, -58),
-        S(13, -76), S(24, -74), S(44, -56), S(37, -39),
-        S(13, -44), S(41, -24), S(46, -8), S(28, -1),
-        S(41, -13), S(54, 9), S(45, 35), S(26, 42),
-        S(4, -22), S(20, 10), S(14, 38), S(12, 68),
-        S(6, 0), S(-14, 21), S(-17, 56), S(-6, 80),
-        S(-47, 4), S(-88, 16), S(-52, 50), S(-34, 69),
-        S(-72, 12), S(-75, 33), S(-65, 48), S(-51, 54)
+        S(1, -90), S(37, -80), S(15, -71), S(28, -56),
+        S(16, -78), S(23, -73), S(44, -56), S(36, -36),
+        S(16, -45), S(39, -23), S(42, -3), S(28, 1),
+        S(35, -14), S(47, 8), S(37, 39), S(21, 44),
+        S(1, -26), S(17, 8), S(6, 42), S(7, 70),
+        S(6, -5), S(-12, 19), S(-15, 55), S(-5, 81),
+        S(-44, 2), S(-85, 18), S(-51, 51), S(-31, 71),
+        S(-69, 8), S(-71, 33), S(-63, 48), S(-54, 57)
     },
     // KingPST (half-board)
     {
-        S(123, -148), S(83, -101), S(17, -75), S(-120, -56),
-        S(130, -105), S(88, -71), S(-7, -51), S(-41, -40),
-        S(26, -68), S(16, -44), S(-23, -28), S(-30, -20),
-        S(-16, -26), S(-7, -3), S(-17, 6), S(-28, 6),
-        S(-16, 19), S(-11, 34), S(-13, 38), S(-18, 34),
-        S(-12, 44), S(-5, 61), S(-7, 61), S(-12, 55),
-        S(-13, 48), S(-8, 59), S(-10, 60), S(-12, 62),
-        S(-15, 48), S(-11, 55), S(-10, 60), S(-10, 62)
+        S(116, -148), S(76, -101), S(13, -74), S(-115, -57),
+        S(123, -103), S(82, -69), S(-8, -50), S(-35, -39),
+        S(23, -65), S(13, -42), S(-21, -27), S(-25, -19),
+        S(-16, -23), S(-8, -1), S(-15, 7), S(-24, 7),
+        S(-12, 21), S(-12, 35), S(-12, 39), S(-18, 34),
+        S(-8, 45), S(-5, 61), S(-6, 62), S(-11, 56),
+        S(-10, 47), S(-7, 58), S(-9, 60), S(-10, 62),
+        S(-11, 48), S(-9, 54), S(-8, 59), S(-7, 62)
     },
     {
         {},
         {},
-        {S(-112, -98), S(-72, -58), S(-35, -21), S(-13, 0), S(9, 15), S(28, 26), S(44, 26), S(53, 26), S(53, 26)},
-        {S(-18, 83), S(17, 88), S(51, 108), S(71, 122), S(94, 144), S(109, 151), S(113, 155), S(116, 155), S(116, 155), S(121, 155), S(124, 155), S(124, 155), S(124, 155), S(124, 155)},
-        {S(-57, 282), S(-28, 298), S(-9, 305), S(9, 311), S(9, 314), S(19, 323), S(24, 332), S(36, 335), S(46, 341), S(52, 347), S(54, 352), S(54, 355), S(54, 355), S(54, 355), S(54, 355)},
-        {S(99, 278), S(99, 303), S(104, 306), S(110, 317), S(111, 342), S(121, 366), S(125, 375), S(139, 375), S(142, 385), S(153, 385), S(157, 388), S(162, 397), S(165, 403), S(167, 403), S(172, 403), S(173, 403), S(179, 403), S(179, 403), S(179, 403), S(185, 403), S(196, 403), S(196, 403), S(210, 403), S(219, 403), S(228, 403), S(228, 403), S(228, 403), S(239, 428)},
+        {S(-112, -98), S(-72, -58), S(-36, -22), S(-15, 0), S(6, 15), S(23, 26), S(40, 26), S(51, 26), S(51, 26)},
+        {S(-14, 82), S(18, 86), S(53, 106), S(70, 121), S(92, 144), S(105, 151), S(111, 155), S(114, 155), S(114, 155), S(118, 155), S(122, 155), S(124, 155), S(124, 155), S(124, 155)},
+        {S(-47, 273), S(-21, 293), S(-5, 302), S(11, 309), S(11, 312), S(19, 323), S(25, 332), S(35, 335), S(46, 340), S(52, 346), S(54, 352), S(54, 355), S(54, 355), S(54, 355), S(54, 355)},
+        {S(116, 238), S(116, 263), S(116, 288), S(116, 313), S(116, 338), S(125, 362), S(128, 372), S(140, 372), S(143, 385), S(153, 385), S(157, 389), S(162, 399), S(166, 403), S(170, 403), S(172, 403), S(176, 403), S(179, 403), S(179, 403), S(182, 403), S(188, 403), S(196, 403), S(196, 403), S(207, 403), S(207, 403), S(228, 403), S(228, 403), S(228, 403), S(230, 428)},
         {},
     },
-    {S(0, 0), S(-39, 12), S(-39, 20), S(-39, 22), S(0, 103), S(141, 292), S(436, 474), S(0, 0)},
-    {S(0, 0), S(-14, 3), S(26, 11), S(38, 11), S(65, 31), S(82, 70), S(82, 173), S(0, 0)},
-    S(96, 11), // RookOpenFileBonus
-    S(39, 11), // RookSemiOpenFileBonus
-    S(11, 0), // RookOnQueenFile
-    S(49, 24), // KnightOutpostBonus
-    S(65, 13), // BishopOutpostBonus
-    S(-52, 0), // TrappedRookByKingPenalty
-    S(27, 26), // RookBehindOurPasserBonus
-    S(-23, 83), // RookBehindTheirPasserBonus
-    S(34, 13), // MinorBehindPawnBonus
-    S(37, 0), // MinorOnKingRing
+    {S(0, 0), S(-39, 9), S(-39, 19), S(-39, 20), S(0, 108), S(130, 301), S(410, 489), S(0, 0)},
+    {S(0, 0), S(-14, 2), S(28, 8), S(39, 9), S(61, 31), S(79, 74), S(79, 189), S(0, 0)},
+    S(90, 14), // RookOpenFileBonus
+    S(37, 14), // RookSemiOpenFileBonus
+    S(15, 0), // RookOnQueenFile
+    S(53, 28), // KnightOutpostBonus
+    S(67, 16), // BishopOutpostBonus
+    S(-48, 0), // TrappedRookByKingPenalty
+    S(26, 28), // RookBehindOurPasserBonus
+    S(-15, 86), // RookBehindTheirPasserBonus
+    S(33, 13), // MinorBehindPawnBonus
+    S(34, 0), // MinorOnKingRing
     S(0, 0), // RookOnKingRing
-    S(-14, 0), // KingProtector
-    S(54, 10), // BishopPair
+    S(-13, 0), // KingProtector
+    S(48, 11), // BishopPair
     {
-        {S(0, 0), S(96, 0), S(107, 0), S(65, 0), S(45, 0), S(49, 0), S(172, 0)},
-        {S(-56, 0), S(168, 0), S(89, 0), S(41, 0), S(0, 0), S(39, 0), S(0, 0)},
-        {S(0, 0), S(136, 0), S(45, 0), S(45, 0), S(17, 0), S(43, 0), S(92, 0)},
-        {S(0, 0), S(97, 0), S(28, 0), S(22, 0), S(54, 0), S(22, 0), S(70, 0)}
+        {S(0, 0), S(91, 0), S(102, 0), S(62, 0), S(44, 0), S(49, 0), S(165, 0)},
+        {S(-49, 0), S(163, 0), S(88, 0), S(43, 0), S(0, 0), S(35, 0), S(0, 0)},
+        {S(0, 0), S(130, 0), S(44, 0), S(44, 0), S(17, 0), S(38, 0), S(70, 0)},
+        {S(0, 0), S(91, 0), S(25, 0), S(19, 0), S(51, 0), S(26, 0), S(71, 0)}
     }, // Shelter
     {
-        {S(0, 0), S(0, 0), S(0, 0), S(90, 0), S(19, 0), S(0, 0), S(16, 0)},
-        {S(0, 0), S(0, 0), S(15, 0), S(16, 0), S(0, 0), S(0, 0), S(9, 0)},
-        {S(0, 0), S(0, 0), S(138, 0), S(60, 0), S(18, 0), S(0, 0), S(2, 0)},
-        {S(0, 0), S(0, 0), S(72, 0), S(33, 0), S(1, 0), S(0, 0), S(0, 0)}
+        {S(0, 0), S(0, 0), S(0, 0), S(85, 0), S(18, 0), S(0, 0), S(15, 0)},
+        {S(0, 0), S(0, 0), S(10, 0), S(16, 0), S(0, 0), S(0, 0), S(7, 0)},
+        {S(0, 0), S(0, 0), S(119, 0), S(56, 0), S(16, 0), S(0, 0), S(1, 0)},
+        {S(0, 0), S(0, 0), S(53, 0), S(32, 0), S(3, 0), S(0, 0), S(0, 0)}
     }, // UnblockedStorm
-    {S(0, 0), S(0, 0), S(165, 0), S(11, 0), S(15, 0), S(13, 0), S(17, 0)}, // BlockedStorm
-    S(-31, -4), // UndefendedKingZoneSq
-    S(14, 55), // KingMobilityFactor
-    S(28, 0), // KingAttackByKnight
-    S(5, 0), // KingAttackByBishop
-    S(28, 8), // KingAttackByRook
+    {S(0, 0), S(0, 0), S(158, 0), S(12, 0), S(13, 0), S(14, 0), S(21, 0)}, // BlockedStorm
+    S(-27, -4), // UndefendedKingZoneSq
+    S(15, 55), // KingMobilityFactor
+    S(27, 0), // KingAttackByKnight
+    S(4, 0), // KingAttackByBishop
+    S(28, 7), // KingAttackByRook
     S(28, 8), // KingAttackByQueen
     {S(0, 0), S(0, 0), S(32, 0), S(34, 619), S(32, 0), S(32, 0), S(0, 0)}, // KingSafeCheck
     S(4, 0), // KingRingWeakWeight
-    S(5, 0), // KingNoQueenDiscount
+    S(6, 0), // KingNoQueenDiscount
     S(0, 0), // IsolatedPawnPenalty
-    S(-1, -25), // DoubledPawnPenalty
-    S(-19, -5), // BackwardPawnPenalty
-    S(-33, -10), // WeakUnopposedPenalty
-    S(-41, -44), // DoubledIsolatedPenalty
-    {S(0, -23), S(0, 0)}, // BlockedPawnPenalty (rel rank 5, 6)
-    S(-40, -16), // PawnIslandPenalty
-    {S(32, 0), S(4, 0)}, // CentralPawnBonus
-    S(28, 20), // BishopLongDiagonalBonus
+    S(-2, -26), // DoubledPawnPenalty
+    S(-16, -5), // BackwardPawnPenalty
+    S(-32, -12), // WeakUnopposedPenalty
+    S(-38, -45), // DoubledIsolatedPenalty
+    {S(-4, -25), S(0, 0)}, // BlockedPawnPenalty (rel rank 5, 6)
+    S(-38, -16), // PawnIslandPenalty
+    {S(30, 0), S(3, 0)}, // CentralPawnBonus
+    S(28, 19), // BishopLongDiagonalBonus
     S(-19, 0), // BishopXrayPawns
     S(0, 25), // InitiativePasser
     S(0, 12), // InitiativePawnCount
     S(0, 4), // InitiativeOutflank
     S(0, 0), // InitiativeTension
-    S(0, 48), // InitiativeInfiltrate
+    S(0, 46), // InitiativeInfiltrate
     S(0, 0), // InitiativePureBase
     S(0, -1), // InitiativeConstant
-    S(55, 30), // SliderOnQueenBishop
-    S(22, 0), // SliderOnQueenRook
-    S(10, 0), // RestrictedPiece
-    S(29, 0), // ThreatByPawnPush
-    S(-22, -7), // WeakQueenDefender
-    S(41, 0), // KnightOnQueen
-    S(-250, -72), // PawnlessFlank
-    S(0, 36), // QueenInfiltration
-    // The previous Texel pass saturated most endgame conversion weights
-    // at the constraint catalog's upper bound (KBNKCornerEg=50,
-    // LucenaEg=300, every KXK / KBNK / KQKR push gradient at 50). That
-    // is the classic boundary-saturation symptom: game-result Texel
-    // cannot tell "winning but wandering" from "winning and converting,"
-    // so it slams the conversion features to the ceiling. Combined with
-    // KRKMinorScale=16 (right at the lower bound, treating KRKB/KRKN
-    // closer to dead-drawn than the heuristic intends) and the
-    // override-vs-combine bug that wiped out the generic OCB damping
-    // for any registered material key, the engine was over-confident in
-    // mating geometry and under-rewarding practical pressure. The
-    // values below are hand-picked conservative defaults drawn from the
-    // second-opinion review pending a tablebase-supervised retune.
-    S(0, -16), // KingPawnDistEg
-    S(0, 32),  // KBNKCornerEg
-    S(0, 200), // LucenaEg
-    S(0, 25),  // KXKPushToEdge
-    S(0, 15),  // KXKPushClose
-    S(0, 15),  // KBNKPushClose
-    S(0, 25),  // KQKRPushToEdge
-    S(0, 5),   // KQKRPushClose
-    S(0, 0),   // KPsKFortressScale
-    S(0, 16),  // KBPKNDrawishScale
-    S(0, 24),  // KRKPDrawishScale
-    S(0, 24),  // KRKMinorScale
-    S(0, 0),   // KNNKDrawScale
-    S(0, 16),  // EscapableThreatScale: 25% of full credit for escapable victims
+    S(53, 89), // SliderOnQueenBishop
+    S(100, 58), // SliderOnQueenRook
+    S(10, 2), // RestrictedPiece
+    S(27, 32), // ThreatByPawnPush
+    S(-21, -4), // WeakQueenDefender
+    S(42, 0), // KnightOnQueen
+    S(-232, -73), // PawnlessFlank
+    S(0, 44), // QueenInfiltration
+    S(0, 0), // KingPawnDistEg
+    S(0, 39), // KBNKCornerEg
+    S(0, 250), // LucenaEg
+    S(0, 30), // KXKPushToEdge
+    S(0, 25), // KXKPushClose
+    S(0, 25), // KBNKPushClose
+    S(0, 30), // KQKRPushToEdge
+    S(0, 15), // KQKRPushClose
+    S(0, 0), // KPsKFortressScale
+    S(0, 1), // KBPKNDrawishScale
+    S(0, 16), // KRKPDrawishScale
+    S(0, 16), // KRKMinorScale
+    S(0, 0), // KNNKDrawScale
+    S(0, 54), // EscapableThreatScale
 };
 
 // clang-format on
