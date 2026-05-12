@@ -130,12 +130,16 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsNonNegative());
     addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, boundsNonPositive());
     addMgEgConstr("QueenInfiltration", &evalParams.QueenInfiltration, boundsNonNegative());
+    // Align Texel bounds with the matching SPSA spec ranges so both
+    // tuners explore the same feasible region. Otherwise Texel can push
+    // a parameter far past SPSA's clamp and the compiled defaults
+    // silently violate the spec.
     out.push_back(
-        {"KingPawnDistEg.eg", &evalParams.KingPawnDistEg, false, boundsNonPositive()});
+        {"KingPawnDistEg.eg", &evalParams.KingPawnDistEg, false, boundsRange(-50, 0)});
     out.push_back(
-        {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsNonNegative()});
+        {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsRange(0, 50)});
     out.push_back(
-        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsNonNegative()});
+        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsRange(0, 300)});
     // Mating-conversion push gradients: per-square eg weights. The
     // total bonus is weight * (0..7), so an unbounded weight would
     // dwarf material. Cap at fifty to match the SPSA upper bound.

@@ -236,19 +236,30 @@ static const EvalParams kDefaultEvalParams = {
     S(59, 0), // KnightOnQueen
     S(-277, -68), // PawnlessFlank
     S(0, 13), // QueenInfiltration
-    S(0, 0), // KingPawnDistEg
-    S(0, 309), // KBNKCornerEg
-    S(0, 841), // LucenaEg
-    S(0, 50), // KXKPushToEdge
-    S(0, 50), // KXKPushClose
-    S(0, 50), // KBNKPushClose
-    S(0, 50), // KQKRPushToEdge
-    S(0, 50), // KQKRPushClose
-    S(0, 1), // KPsKFortressScale
-    S(0, 1), // KBPKNDrawishScale
-    S(0, 16), // KRKPDrawishScale
-    S(0, 16), // KRKMinorScale
-    S(0, 0), // KNNKDrawScale
+    // The previous tuned snapshot pushed KBNKCornerEg to 309 and
+    // LucenaEg to 841 because the Texel constraint catalog used
+    // boundsNonNegative() with no upper limit; both values exceeded
+    // the SPSA spec range (0..50 and 0..300 respectively) and the
+    // mating-conversion gradients all saturated at the 0..50 cap
+    // because pushToEdge() had a constant 4..7 baseline that the
+    // tuner absorbed as a residual sink. The feature has since been
+    // normalized to 0..3, and the Texel constraints now match the
+    // SPSA ranges, so the defaults below are reset to within-bounds
+    // mid-range values pending another Texel pass on the corrected
+    // surface.
+    S(0, -16), // KingPawnDistEg: negative as a penalty for king-far-from-pawns
+    S(0, 32),  // KBNKCornerEg: per-square corner-push weight
+    S(0, 200), // LucenaEg: one-shot bridge-building bonus
+    S(0, 25),  // KXKPushToEdge: per-square edge push, now in 0..3 feature space
+    S(0, 25),  // KXKPushClose
+    S(0, 25),  // KBNKPushClose
+    S(0, 25),  // KQKRPushToEdge
+    S(0, 25),  // KQKRPushClose
+    S(0, 0),   // KPsKFortressScale: hard fortress draw
+    S(0, 16),  // KBPKNDrawishScale: heuristic damping
+    S(0, 32),  // KRKPDrawishScale: race-too-close damping
+    S(0, 24),  // KRKMinorScale: drawish rook-vs-minor edge
+    S(0, 0),   // KNNKDrawScale: dead draw
 };
 
 // clang-format on

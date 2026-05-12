@@ -37,6 +37,23 @@ TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     }
 }
 
+TEST_CASE("Tunable registry: compiled defaults live inside every SPSA bound",
+          "[tunable][defaults]") {
+    // Catches stale tuned snapshots that ended up outside the spec
+    // range (Texel running against a wider constraint catalog, copy-
+    // paste field-order mismatches, or a fresh field whose default
+    // never got registered). Without this check, the engine boots up
+    // with parameters the tuner would project out on the next pass.
+    resetEvalParams();
+    resetSearchParams();
+    for (const TunableSpec &spec : tunables()) {
+        CAPTURE(spec.name);
+        const int live = spec.get();
+        CHECK(live >= spec.minValue);
+        CHECK(live <= spec.maxValue);
+    }
+}
+
 TEST_CASE("Tunable registry: findTunable round-trips known names", "[tunable]") {
     const TunableSpec *nmp = findTunable("NmpBase");
     REQUIRE(nmp != nullptr);

@@ -210,7 +210,7 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(
         makeScoreHalfSpec("KnightOnQueenEg", &evalParams.KnightOnQueen, false, 0, 100, 5.0, 2.0));
     out.push_back(
-        makeScoreHalfSpec("PawnlessFlankMg", &evalParams.PawnlessFlank, true, -100, 0, 5.0, 2.0));
+        makeScoreHalfSpec("PawnlessFlankMg", &evalParams.PawnlessFlank, true, -350, 0, 5.0, 2.0));
     out.push_back(
         makeScoreHalfSpec("PawnlessFlankEg", &evalParams.PawnlessFlank, false, -200, 0, 8.0, 3.0));
     out.push_back(makeScoreHalfSpec("QueenInfiltrationMg", &evalParams.QueenInfiltration, true, 0,
@@ -289,7 +289,8 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("RookBehindOurPasserBonusEg",
                                     &evalParams.RookBehindOurPasserBonus, false, 0, 80, 6.0, 2.0));
     out.push_back(makeScoreHalfSpec("RookBehindTheirPasserBonusMg",
-                                    &evalParams.RookBehindTheirPasserBonus, true, 0, 60, 5.0, 2.0));
+                                    &evalParams.RookBehindTheirPasserBonus, true, -50, 60, 5.0,
+                                    2.0));
     out.push_back(makeScoreHalfSpec("RookBehindTheirPasserBonusEg",
                                     &evalParams.RookBehindTheirPasserBonus, false, 0, 80, 6.0,
                                     2.0));
@@ -389,7 +390,7 @@ std::vector<TunableSpec> buildRegistry() {
     out.push_back(makeScoreHalfSpec("KingMobilityFactorMg", &evalParams.KingMobilityFactor, true, 0,
                                     60, 4.0, 1.5));
     out.push_back(makeScoreHalfSpec("KingMobilityFactorEg", &evalParams.KingMobilityFactor, false,
-                                    0, 60, 4.0, 1.5));
+                                    0, 120, 4.0, 1.5));
 
     return out;
 }

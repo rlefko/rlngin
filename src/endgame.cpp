@@ -38,16 +38,19 @@ uint64_t makeKey(int wp, int wn, int wb, int wr, int wq, int bp, int bn, int bb,
     return k;
 }
 
-// Closeness to the nearest board edge, returned as 0..7 where 7 is on
-// the edge and 0 is on a central square. Used by the mating-conversion
-// gradients (KXK, KQKR) to drive the lone king toward an edge so the
-// search converges to mate inside the 50-move horizon.
+// Closeness to the nearest board edge, returned as 0..3 where 3 is on
+// the edge and 0 is on a centermost square (d4 / d5 / e4 / e5). The
+// minimum of file-distance and rank-distance to an edge is 0..3 on an
+// 8x8 board, so subtracting from 3 normalizes the feature to 0..3
+// without a constant baseline. Without this normalization the
+// feature would always contribute a flat bonus of 4 * weight, which
+// the tuner would amplify into the weight cap as a residual sink.
 inline int pushToEdge(int sq) {
     int file = squareFile(sq);
     int rank = squareRank(sq);
     int fileDist = std::min(file, 7 - file);
     int rankDist = std::min(rank, 7 - rank);
-    return 7 - std::min(fileDist, rankDist);
+    return 3 - std::min(fileDist, rankDist);
 }
 
 // Closeness of two squares, returned as 0..7 where 7 is adjacent and 0
@@ -58,9 +61,14 @@ inline int pushClose(int a, int b) {
     return 7 - chebyshev(a, b);
 }
 
-// Distance metric toward the two corners that match the given square
-// color (light or dark). Used by KBNK and any future endgame that
-// drives the lone king toward bishop-controllable corners.
+// Closeness to the nearer of the two corners that match the given
+// square color (light or dark). On the wrong-color corner the
+// chebyshev distance is 7, so the feature returns 0; on the right
+// corner it returns 7. The minimum achievable distance to either of
+// two diagonally opposite same-color corners is 0 (corner itself),
+// so the feature legitimately spans 0..7 with no constant baseline.
+// Used by KBNK to drive the lone king toward bishop-controllable
+// corners.
 inline int pushToColoredCorner(int sq, bool light) {
     int c1 = light ? 7 : 0;
     int c2 = light ? 56 : 63;
