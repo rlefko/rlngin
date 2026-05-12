@@ -99,6 +99,15 @@ static std::function<Bounds()> boundsRange(int lo, int hi) {
     return [lo, hi] { return Bounds{lo, hi}; };
 }
 
+// Global "freeze material" toggle. When true, collectParams() omits
+// PieceScore[Pawn..Queen] and BishopPair so the tuner cannot move
+// material values during the pass. Used in two-stage retunes after a
+// material drift: freeze first, retune everything else against the
+// frozen material baseline, then optionally unfreeze for a joint
+// polish pass. Set via the --freeze-material CLI flag or the
+// FREEZE_MATERIAL=1 environment variable.
+static bool g_freezeMaterial = false;
+
 static std::vector<ParamRef> collectParams() {
     std::vector<ParamRef> out;
     auto addMgEg = [&](const std::string &name, Score *s, bool mg = true, bool eg = true) {
@@ -289,8 +298,16 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
     // --- Material (skip None and King; both are structurally zero) ---
-    for (int pt = Pawn; pt <= Queen; pt++)
-        addMgEg("PieceScore[" + std::to_string(pt) + "]", &evalParams.PieceScore[pt]);
+    // Optionally frozen via --freeze-material so a follow-up tune can
+    // refine the positional terms against a fixed material baseline.
+    // Without freezing, game-result Texel can drift PieceScore[Pawn]
+    // and the activity / threat / PST terms together such that a
+    // one-pawn material edge gets eaten by inflated positional bonuses,
+    // which is the failure mode the Scandinavian canary surfaced.
+    if (!g_freezeMaterial) {
+        for (int pt = Pawn; pt <= Queen; pt++)
+            addMgEg("PieceScore[" + std::to_string(pt) + "]", &evalParams.PieceScore[pt]);
+    }
 
     // --- Piece-square tables. Each PST has 64 squares; skip the back/
     // front ranks of the pawn PST because they are always zero. King
@@ -467,8 +484,12 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Bishop pair: universally accepted positive imbalance, locked
     // non-negative so the tuner cannot push the term into a residual
-    // role that contradicts the prior.
-    addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
+    // role that contradicts the prior. Frozen alongside PieceScore
+    // under --freeze-material since the pair bonus is part of the
+    // material gauge the freeze pass aims to fix.
+    if (!g_freezeMaterial) {
+        addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
+    }
 
     // --- Shelter and storm grids (mg only). Shelter is structurally a
     // middlegame concept and the eg halves stay at their compile-time
@@ -3496,10 +3517,15 @@ int main(int argc, char **argv) {
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
         std::cerr << "            [--adam-epochs N] [--adam-lr X]\n";
         std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--val-gate-patience N]\n";
-        std::cerr << "            [--val-gate] [--leaf-depth N]\n";
+        std::cerr << "            [--val-gate] [--leaf-depth N] [--freeze-material]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
+        std::cerr << "\n";
+        std::cerr << "  --freeze-material  Skip PieceScore[Pawn..Queen] and BishopPair from\n";
+        std::cerr << "                     the parameter set so positional terms tune against\n";
+        std::cerr << "                     a fixed material baseline. Also accepts\n";
+        std::cerr << "                     FREEZE_MATERIAL=1 via env.\n";
     };
 
     // Dump subcommand: load a checkpoint and emit the printCurrentValues
@@ -3603,6 +3629,13 @@ int main(int argc, char **argv) {
         double v = std::strtod(env, &endp);
         return (endp == env) ? 1.0 : v;
     }();
+    // Freeze-material flag: also honors FREEZE_MATERIAL=1 in the env
+    // so the texel pipeline shell wrapper can flip the mode without
+    // editing the CLI invocation.
+    g_freezeMaterial = [] {
+        const char *env = std::getenv("FREEZE_MATERIAL");
+        return env && std::string(env) == "1";
+    }();
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -3642,6 +3675,9 @@ int main(int argc, char **argv) {
         } else if (a == "--leaf-depth" && argIdx + 1 < argc) {
             leafDepth = std::atoi(argv[argIdx + 1]);
             argIdx += 2;
+        } else if (a == "--freeze-material") {
+            g_freezeMaterial = true;
+            argIdx += 1;
         } else {
             break;
         }
@@ -3661,6 +3697,11 @@ int main(int argc, char **argv) {
     // which depends on the bitboard attack tables; evaluate()'s usual
     // lazy init can race in the tuner's multi-threaded loss loop.
     initBitboards();
+
+    if (g_freezeMaterial) {
+        std::cerr << "freezing material (PieceScore[Pawn..Queen] and BishopPair) - "
+                     "positional terms will tune against a fixed material baseline\n";
+    }
 
     if (!fromCheckpoint.empty()) {
         auto params = collectParams();
