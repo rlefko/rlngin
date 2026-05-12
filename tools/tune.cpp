@@ -616,13 +616,26 @@ static std::vector<ParamRef> collectParams() {
     // (see eval_params.h:206-208) and live entirely in the eg half. The
     // first six are positive features; InitiativeConstant is the
     // negative baseline shift.
-    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, boundsNonNegative()});
+    //
+    // Per-feature upper bounds were added after evaluateVerbose probes of
+    // the Scandinavian Mieses gambit (1.e4 d5 2.exd5 c6 3.dxc6 Nxc6) and
+    // the Marshall recapture (1.e4 d5 2.exd5 Nf6 3.Nf3 Nxd5) showed the
+    // Initiative term swinging by ~450 cp between the two positions in
+    // the eg half. The dominant offender was `InitiativePawnCount * 14`
+    // (14 pawns on the board) producing an egMag of ~700 cp by itself,
+    // amplified by the sign-of-eg ramp into a 100-300 cp directional
+    // bonus that flipped the engine's verdict on otherwise balanced
+    // openings. Stockfish-lineage reference values for `popcount(allPawns)`
+    // bonuses sit around 7-10 in the same magnitude space, so the cap
+    // here forces Texel to reallocate the term across the other features
+    // (passers, infiltration, outflank) instead of letting raw pawn
+    // count dominate.
+    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, boundsRange(0, 25)});
     out.push_back({"InitiativePawnCount.eg", &evalParams.InitiativePawnCount, false,
-                   boundsNonNegative()});
-    out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false,
-                   boundsNonNegative()});
+                   boundsRange(0, 12)});
+    out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false, boundsRange(0, 4)});
     out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
-                   boundsNonNegative()});
+                   boundsRange(0, 48)});
     // InitiativePureBase fires only in pure-pawn endgames; it is a
     // binary feature that can absorb a lot of correlation if left
     // unbounded. Cap at 48 (~2.5x the original default of 18) to keep
