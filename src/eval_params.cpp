@@ -244,6 +244,11 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 16), // KBNKPushClose
     S(0, 20), // KQKRPushToEdge
     S(0, 16), // KQKRPushClose
+    S(0, 0),  // KPsKFortressScale
+    S(0, 16), // KBPKNDrawishScale
+    S(0, 32), // KRKPDrawishScale
+    S(0, 24), // KRKMinorScale
+    S(0, 0),  // KNNKDrawScale
 };
 
 // clang-format on

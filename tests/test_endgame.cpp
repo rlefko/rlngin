@@ -191,23 +191,21 @@ TEST_CASE("KQKP: rook-file fortress drops the scale far below the winning positi
     CHECK(fortressEval * 2 < winningEval);
 }
 
-TEST_CASE("KNNK: two knights vs lone king falls through to the natural material eval",
+TEST_CASE("KNNK: two knights vs lone king collapses to a draw via the KNNKDrawScale tunable",
           "[endgame][knnk]") {
-    // KNNK is a theoretical draw without a defender pawn, but the
-    // module deliberately does not register it: forcing eval to zero
-    // here would suppress the rest of the eval pipeline including
-    // material, PSTs, and king safety on the lone king. The natural
-    // eval treats the two-knight side as nominally winning, and the
-    // search resolves the actual drawishness through the 50-move
-    // horizon. Both positions therefore score positive for the strong
-    // side.
+    // Two knights cannot force mate against best defense. The module
+    // damps eg by KNNKDrawScale (default zero), leaving only the mg
+    // residual so the engine does not chase the illusory two-minor
+    // material edge. The remaining mg+PST contribution is small,
+    // strictly below the rook-equivalent threshold the prior
+    // pre-bitbase eval used to claim as winning.
     Board centered;
     centered.setFen("4k3/8/8/8/8/2N5/3N4/4K3 w - - 0 1");
-    CHECK(evaluate(centered) > 500);
+    CHECK(std::abs(evaluate(centered)) < 300);
 
     Board corner;
     corner.setFen("7k/8/8/8/8/2N5/3N4/4K3 w - - 0 1");
-    CHECK(evaluate(corner) > 500);
+    CHECK(std::abs(evaluate(corner)) < 300);
 }
 
 TEST_CASE("KBPKB: wrong-rook-pawn fortress holds regardless of defender bishop color",

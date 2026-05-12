@@ -146,6 +146,16 @@ static std::vector<ParamRef> collectParams() {
         {"KQKRPushToEdgeEg.eg", &evalParams.KQKRPushToEdge, false, boundsNonNegative()});
     out.push_back(
         {"KQKRPushCloseEg.eg", &evalParams.KQKRPushClose, false, boundsNonNegative()});
+    out.push_back(
+        {"KPsKFortressScaleEg.eg", &evalParams.KPsKFortressScale, false, boundsNonNegative()});
+    out.push_back(
+        {"KBPKNDrawishScaleEg.eg", &evalParams.KBPKNDrawishScale, false, boundsNonNegative()});
+    out.push_back(
+        {"KRKPDrawishScaleEg.eg", &evalParams.KRKPDrawishScale, false, boundsNonNegative()});
+    out.push_back(
+        {"KRKMinorScaleEg.eg", &evalParams.KRKMinorScale, false, boundsNonNegative()});
+    out.push_back(
+        {"KNNKDrawScaleEg.eg", &evalParams.KNNKDrawScale, false, boundsNonNegative()});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -3420,6 +3430,11 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KBNKPushClose) << ", // KBNKPushClose\n";
     std::cout << "    " << fmtScore(evalParams.KQKRPushToEdge) << ", // KQKRPushToEdge\n";
     std::cout << "    " << fmtScore(evalParams.KQKRPushClose) << ", // KQKRPushClose\n";
+    std::cout << "    " << fmtScore(evalParams.KPsKFortressScale) << ", // KPsKFortressScale\n";
+    std::cout << "    " << fmtScore(evalParams.KBPKNDrawishScale) << ", // KBPKNDrawishScale\n";
+    std::cout << "    " << fmtScore(evalParams.KRKPDrawishScale) << ", // KRKPDrawishScale\n";
+    std::cout << "    " << fmtScore(evalParams.KRKMinorScale) << ", // KRKMinorScale\n";
+    std::cout << "    " << fmtScore(evalParams.KNNKDrawScale) << ", // KNNKDrawScale\n";
     std::cout << "};\n";
 }
 

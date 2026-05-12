@@ -199,6 +199,93 @@ ScaleResult scaleKPK(const Board &board, Color strongSide) {
     return {win ? 64 : 0, 0};
 }
 
+// K + pawns vs lone K, all pawns on a single rook file. The defender
+// king holds the textbook draw if it reaches the promotion corner
+// before the most-advanced pawn queens; defender-to-move gains one
+// extra tempo. The strong king cannot break this fortress without
+// support (the bishop's wrong color or, here, no bishop at all).
+// Single-pawn KPK already routes through the bitbase, so this fires
+// only for the multi-pawn extension.
+ScaleResult scaleKPsK(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[strongSide];
+    if (!ourPawns) return {64, 0};
+
+    Bitboard rookFilePawns = ourPawns & (FileABB | FileHBB);
+    if (rookFilePawns != ourPawns) return {64, 0};
+    bool onA = (ourPawns & FileABB) != 0;
+    bool onH = (ourPawns & FileHBB) != 0;
+    if (onA && onH) return {64, 0};
+
+    int promoSq = onA ? (strongSide == White ? 56 : 0) : (strongSide == White ? 63 : 7);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int leadPawn = (strongSide == White) ? msb(ourPawns) : lsb(ourPawns);
+    int pushes = (strongSide == White) ? (7 - squareRank(leadPawn)) : squareRank(leadPawn);
+    if (board.sideToMove == weakSide) pushes++;
+
+    if (chebyshev(weakKing, promoSq) <= pushes) {
+        return {eg_value(evalParams.KPsKFortressScale), 0};
+    }
+    return {64, 0};
+}
+
+// K + B + P vs K + N. The bishop side normally wins, but if the
+// defender king sits on the pawn's push square AND the knight is
+// close enough to support the king (within two squares), the
+// blockade is hard to break without sacrificing the bishop. The
+// tunable scale damps the eg in that pattern; everywhere else the
+// natural eval flows through.
+ScaleResult scaleKBPKN(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int pawn = lsb(board.byPiece[Pawn] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int weakKnight = lsb(board.byPiece[Knight] & board.byColor[weakSide]);
+    int pushSq = pawn + (strongSide == White ? 8 : -8);
+    if (pushSq >= 0 && pushSq < 64 && weakKing == pushSq && chebyshev(weakKnight, weakKing) <= 2) {
+        return {eg_value(evalParams.KBPKNDrawishScale), 0};
+    }
+    return {64, 0};
+}
+
+// K + R vs K + P. The rook side normally wins, but if the pawn is
+// already on its 6th or 7th rank (relative to the defender) with the
+// defender king sitting next to it and the rook-side king more than
+// three squares from the promotion square, the race tilts toward a
+// draw because the rook alone cannot both attack the pawn and cover
+// the promotion square while the defender king and pawn coordinate.
+ScaleResult scaleKRKP(const Board &board, Color strongSide) {
+    Color weakSide = (strongSide == White) ? Black : White;
+    int strongKing = lsb(board.byPiece[King] & board.byColor[strongSide]);
+    int weakKing = lsb(board.byPiece[King] & board.byColor[weakSide]);
+    int pawn = lsb(board.byPiece[Pawn] & board.byColor[weakSide]);
+    int pawnRelRank = relativeRank(weakSide, pawn);
+    int promoSq = (weakSide == White) ? (56 + squareFile(pawn)) : squareFile(pawn);
+
+    if (pawnRelRank >= 5 && chebyshev(weakKing, pawn) <= 1 && chebyshev(strongKing, promoSq) > 3) {
+        return {eg_value(evalParams.KRKPDrawishScale), 0};
+    }
+    return {64, 0};
+}
+
+// K + R vs K + B or K + R vs K + N. The rook side holds a material
+// edge but lone-minor defenses with active king play frequently draw.
+// A uniform drawish scale damps the eg so the engine does not chase
+// the win through a sterile rook gradient.
+ScaleResult scaleKRKMinor(const Board &board, Color strongSide) {
+    (void)board;
+    (void)strongSide;
+    return {eg_value(evalParams.KRKMinorScale), 0};
+}
+
+// K + N + N vs lone K. Two knights cannot force mate against best
+// defense, so the natural material edge of two minors is illusory.
+// The tunable scale damps the eg toward zero.
+ScaleResult scaleKNNK(const Board &board, Color strongSide) {
+    (void)board;
+    (void)strongSide;
+    return {eg_value(evalParams.KNNKDrawScale), 0};
+}
+
 // K + Q vs K + P. The queen wins almost everywhere; the exception is a
 // rook-file pawn one push from promotion with the defender king
 // blockading the corner and the attacker king too far to dislodge it.
@@ -361,6 +448,28 @@ void init() {
     // Lucena branch absorbs the inline LucenaEg path from
     // endgameEgAdjust.
     registerScale(1, 0, 0, 1, 0, 0, 0, 0, 1, 0, scaleKRPKR);
+
+    // K + B + P vs K + N: damps eg when the defender king blockades
+    // the pawn's push square and the knight is close enough to support.
+    registerScale(1, 0, 1, 0, 0, 0, 1, 0, 0, 0, scaleKBPKN);
+
+    // K + R vs K + P: damps eg in the race-too-close-to-draw shape.
+    registerScale(0, 0, 0, 1, 0, 1, 0, 0, 0, 0, scaleKRKP);
+
+    // K + R vs K + minor: structurally drawish across the board.
+    registerScale(0, 0, 0, 1, 0, 0, 0, 1, 0, 0, scaleKRKMinor); // KRKB
+    registerScale(0, 0, 0, 1, 0, 0, 1, 0, 0, 0, scaleKRKMinor); // KRKN
+
+    // K + N + N vs lone K: two knights cannot force mate.
+    registerScaleVsLoneKing(0, 2, 0, 0, 0, scaleKNNK);
+
+    // K + pawns vs lone K, multi-pawn rook-file fortress. Single-pawn
+    // KPK already routes through the bitbase; register two-through-
+    // eight pawn variants so the fortress recognizer fires for the
+    // multi-pawn extension.
+    for (int n = 2; n <= 8; n++) {
+        registerScale(n, 0, 0, 0, 0, 0, 0, 0, 0, 0, scaleKPsK);
+    }
 
     // K + minor vs K: drawn with insufficient material. Scale zero
     // kills eg so the natural eg drops to zero while the mg residual

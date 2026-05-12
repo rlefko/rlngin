@@ -232,6 +232,16 @@ std::vector<TunableSpec> buildRegistry() {
         makeScoreHalfSpec("KQKRPushToEdgeEg", &evalParams.KQKRPushToEdge, false, 0, 50, 4.0, 1.5));
     out.push_back(
         makeScoreHalfSpec("KQKRPushCloseEg", &evalParams.KQKRPushClose, false, 0, 50, 4.0, 1.5));
+    out.push_back(makeScoreHalfSpec("KPsKFortressScaleEg", &evalParams.KPsKFortressScale, false, 0,
+                                    32, 3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KBPKNDrawishScaleEg", &evalParams.KBPKNDrawishScale, false, 0,
+                                    32, 3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("KRKPDrawishScaleEg", &evalParams.KRKPDrawishScale, false, 16,
+                                    48, 3.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("KRKMinorScaleEg", &evalParams.KRKMinorScale, false, 16, 48, 3.0, 1.0));
+    out.push_back(
+        makeScoreHalfSpec("KNNKDrawScaleEg", &evalParams.KNNKDrawScale, false, 0, 32, 3.0, 1.0));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

@@ -10,13 +10,13 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // One hundred is the committed SPSA surface: the ninety-five
-    // pre-mating-gradient scalars plus the five new endgame mating-
-    // conversion gradients (KXKPushToEdgeEg, KXKPushCloseEg,
-    // KBNKPushCloseEg, KQKRPushToEdgeEg, KQKRPushCloseEg) added so the
-    // engine has a tunable pull toward driving the lone king to the
-    // edge and bringing the strong king close enough to deliver mate.
-    REQUIRE(specs.size() == 100);
+    // One hundred and five is the committed SPSA surface: one hundred
+    // pre-fortress-scale scalars plus five new endgame drawishness
+    // scales (KPsKFortressScaleEg, KBPKNDrawishScaleEg,
+    // KRKPDrawishScaleEg, KRKMinorScaleEg, KNNKDrawScaleEg) that let
+    // the tuner refine the magnitude of recognized fortresses and
+    // drawish material configurations.
+    REQUIRE(specs.size() == 105);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {

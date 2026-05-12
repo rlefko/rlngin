@@ -372,6 +372,41 @@ struct EvalParams {
     // 50-move horizon. Mg zero, eg tunable.
     Score KQKRPushToEdge;
     Score KQKRPushClose;
+
+    // KPsK rook-file fortress scale: K + pawns vs lone K with every
+    // pawn on a single rook file. The textbook draw fires when the
+    // defender king reaches the promotion corner before the most-
+    // advanced pawn queens (defender-to-move gains one extra tempo).
+    // Default is zero (full fortress draw); the tuner can widen the
+    // recognized drawishness if it pays off. Mg zero, eg in 0..32.
+    Score KPsKFortressScale;
+
+    // KBPKN drawishness: K + B + P vs K + N. The bishop side usually
+    // wins, but if the defender king blockades the pawn's push square
+    // and the knight stays within two squares of the king to support,
+    // the strong side has only a residual edge. The tuner picks the
+    // damping magnitude. Mg zero, eg in 0..32.
+    Score KBPKNDrawishScale;
+
+    // KRKP drawishness: K + R vs K + P. Rook usually wins, but if the
+    // pawn is on relative rank 5 or higher (rank 6 or 7 from the
+    // defender's perspective), the defender king is adjacent to the
+    // pawn, and the rook-side king is more than three squares from
+    // the promotion square, the race tilts toward a draw. Mg zero,
+    // eg in 16..48.
+    Score KRKPDrawishScale;
+
+    // KRKB / KRKN drawishness: K + R vs K + minor without pawns. The
+    // rook holds the material edge but the lone minor with active king
+    // play often draws. The scale is applied uniformly to every KRKB
+    // and KRKN position. Mg zero, eg in 16..48.
+    Score KRKMinorScale;
+
+    // KNNK draw: two knights versus a lone king cannot force mate
+    // against best defense. Default is zero (drawn); the tuner can
+    // widen if it finds the natural material edge pays off. Mg zero,
+    // eg in 0..32.
+    Score KNNKDrawScale;
 };
 
 extern EvalParams evalParams;
