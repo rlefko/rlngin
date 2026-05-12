@@ -136,26 +136,35 @@ static std::vector<ParamRef> collectParams() {
         {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsNonNegative()});
     out.push_back(
         {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsNonNegative()});
+    // Mating-conversion push gradients: per-square eg weights. The
+    // total bonus is weight * (0..7), so an unbounded weight would
+    // dwarf material. Cap at fifty to match the SPSA upper bound.
     out.push_back(
-        {"KXKPushToEdgeEg.eg", &evalParams.KXKPushToEdge, false, boundsNonNegative()});
+        {"KXKPushToEdgeEg.eg", &evalParams.KXKPushToEdge, false, boundsRange(0, 50)});
     out.push_back(
-        {"KXKPushCloseEg.eg", &evalParams.KXKPushClose, false, boundsNonNegative()});
+        {"KXKPushCloseEg.eg", &evalParams.KXKPushClose, false, boundsRange(0, 50)});
     out.push_back(
-        {"KBNKPushCloseEg.eg", &evalParams.KBNKPushClose, false, boundsNonNegative()});
+        {"KBNKPushCloseEg.eg", &evalParams.KBNKPushClose, false, boundsRange(0, 50)});
     out.push_back(
-        {"KQKRPushToEdgeEg.eg", &evalParams.KQKRPushToEdge, false, boundsNonNegative()});
+        {"KQKRPushToEdgeEg.eg", &evalParams.KQKRPushToEdge, false, boundsRange(0, 50)});
     out.push_back(
-        {"KQKRPushCloseEg.eg", &evalParams.KQKRPushClose, false, boundsNonNegative()});
+        {"KQKRPushCloseEg.eg", &evalParams.KQKRPushClose, false, boundsRange(0, 50)});
+
+    // Drawishness scales: ScaleResult multiplier in 0..64 (values
+    // above 64 would amplify the eg rather than damp it). Lower
+    // bound matches the SPSA range for the parameter; full-fortress
+    // configurations can tune down to zero, partial-fortress shapes
+    // stay at the small positive floor.
     out.push_back(
-        {"KPsKFortressScaleEg.eg", &evalParams.KPsKFortressScale, false, boundsNonNegative()});
+        {"KPsKFortressScaleEg.eg", &evalParams.KPsKFortressScale, false, boundsRange(0, 32)});
     out.push_back(
-        {"KBPKNDrawishScaleEg.eg", &evalParams.KBPKNDrawishScale, false, boundsNonNegative()});
+        {"KBPKNDrawishScaleEg.eg", &evalParams.KBPKNDrawishScale, false, boundsRange(0, 32)});
     out.push_back(
-        {"KRKPDrawishScaleEg.eg", &evalParams.KRKPDrawishScale, false, boundsNonNegative()});
+        {"KRKPDrawishScaleEg.eg", &evalParams.KRKPDrawishScale, false, boundsRange(16, 48)});
     out.push_back(
-        {"KRKMinorScaleEg.eg", &evalParams.KRKMinorScale, false, boundsNonNegative()});
+        {"KRKMinorScaleEg.eg", &evalParams.KRKMinorScale, false, boundsRange(16, 48)});
     out.push_back(
-        {"KNNKDrawScaleEg.eg", &evalParams.KNNKDrawScale, false, boundsNonNegative()});
+        {"KNNKDrawScaleEg.eg", &evalParams.KNNKDrawScale, false, boundsRange(0, 32)});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
