@@ -247,6 +247,8 @@ std::vector<TunableSpec> buildRegistry() {
         makeScoreHalfSpec("KRKMinorScaleEg", &evalParams.KRKMinorScale, false, 16, 48, 3.0, 1.0));
     out.push_back(
         makeScoreHalfSpec("KNNKDrawScaleEg", &evalParams.KNNKDrawScale, false, 0, 32, 3.0, 1.0));
+    out.push_back(makeScoreHalfSpec("EscapableThreatScaleEg", &evalParams.EscapableThreatScale,
+                                    false, 0, 64, 4.0, 1.5));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

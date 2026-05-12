@@ -1179,6 +1179,7 @@ static int scaleFactor(const Board &board) {
 // against equally-valued victims. All terms consume the shared attack
 // maps precomputed in buildAttackMaps.
 static void evaluateThreats(const Board &board, const EvalContext &ctx, Score scores[2]) {
+    const int escScale = eg_value(evalParams.EscapableThreatScale);
     for (int c = 0; c < 2; c++) {
         Color us = static_cast<Color>(c);
         Color them = static_cast<Color>(c ^ 1);
@@ -1186,26 +1187,95 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         Bitboard theirPieces = board.byColor[them];
         Bitboard theirNonPawnNonKing = theirPieces & ~board.byPiece[Pawn] & ~board.byPiece[King];
 
-        // Threat by pawn: every enemy non-pawn/non-king attacked by one of
-        // our pawns contributes a flat bonus. Pawn attacks cannot be
-        // reciprocated by a lower-value attacker, so this is strictly
-        // additive and cannot be double counted with the minor/rook blocks.
-        Bitboard pawnThreats = ctx.pawnAttacks[us] & theirNonPawnNonKing;
-        scores[us] += evalParams.ThreatByPawn * popcount(pawnThreats);
+        // Pieces of `them` that have no quiet square to move to without
+        // landing in the attack footprint of a strictly-lower-value
+        // piece of ours. Computed per target type because the
+        // "lower-value attackers" set differs (a queen avoids P/N/B/R,
+        // a rook avoids P/N/B, a minor avoids P). Used below to split
+        // each threat term into "stuck" victims (full credit) and
+        // "escapable" victims (scaled down by EscapableThreatScale).
+        // Quiet squares only - captures are qsearch's responsibility,
+        // so we do not count "escape by capturing an undefended enemy"
+        // here.
+        Bitboard ourLowerForQueen = ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] |
+                                    ctx.attackedBy[us][Bishop] | ctx.attackedBy[us][Rook];
+        Bitboard ourLowerForRook =
+            ctx.attackedBy[us][Pawn] | ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop];
+        Bitboard ourLowerForMinor = ctx.attackedBy[us][Pawn];
+        Bitboard occ = board.occupied;
+        auto stuckFor = [&](PieceType pt, Bitboard lowerAttacks) {
+            Bitboard stuck = 0;
+            Bitboard iter = theirPieces & board.byPiece[pt];
+            while (iter) {
+                int sq = popLsb(iter);
+                Bitboard moves;
+                if (pt == Knight)
+                    moves = KnightAttacks[sq];
+                else if (pt == Bishop)
+                    moves = bishopAttacks(sq, occ);
+                else if (pt == Rook)
+                    moves = rookAttacks(sq, occ);
+                else
+                    moves = queenAttacks(sq, occ);
+                Bitboard safeQuiet = moves & ~occ & ~lowerAttacks;
+                if (!safeQuiet) stuck |= squareBB(sq);
+            }
+            return stuck;
+        };
+        Bitboard stuckQueens = stuckFor(Queen, ourLowerForQueen);
+        Bitboard stuckRooks = stuckFor(Rook, ourLowerForRook);
+        Bitboard stuckBishops = stuckFor(Bishop, ourLowerForMinor);
+        Bitboard stuckKnights = stuckFor(Knight, ourLowerForMinor);
 
-        // Threat by minor: our knights or bishops attacking an enemy rook
-        // or queen. Index by the victim so the table naturally zeroes out
-        // same-value targets and we never credit minor-on-minor threats.
+        // Combine "full credit for stuck victims" with "scaled credit
+        // for escapable victims" into a single Score. Score is packed
+        // (eg << 16) + mg, so division and large multiplications do
+        // not commute with the packing; we unpack each half, apply
+        // the per-half arithmetic, and repack via S(). The aggregate
+        // multiplier (stuck * 64 + esc * escScale) divided by 64
+        // produces the weighted total without an intermediate divide
+        // on the packed Score.
+        auto scaleByCounts = [&](const Score &full, int stuck, int esc) {
+            int factor = stuck * 64 + esc * escScale;
+            int mg = mg_value(full) * factor / 64;
+            int eg = eg_value(full) * factor / 64;
+            return S(mg, eg);
+        };
+        auto creditSplit = [&](const Score &full, Bitboard victims, Bitboard stuckSet) {
+            int stuck = popcount(victims & stuckSet);
+            int esc = popcount(victims & ~stuckSet);
+            return scaleByCounts(full, stuck, esc);
+        };
+
+        // Threat by pawn: every enemy non-pawn/non-king attacked by one
+        // of our pawns. Pawn attacks cannot be reciprocated by a lower-
+        // value attacker, but the target can still side-step the pawn
+        // by moving to a square our pawns don't cover - which is the
+        // "stuck" test for that piece type.
+        Bitboard pawnThreats = ctx.pawnAttacks[us] & theirNonPawnNonKing;
+        scores[us] +=
+            creditSplit(evalParams.ThreatByPawn, pawnThreats & board.byPiece[Queen], stuckQueens);
+        scores[us] +=
+            creditSplit(evalParams.ThreatByPawn, pawnThreats & board.byPiece[Rook], stuckRooks);
+        scores[us] +=
+            creditSplit(evalParams.ThreatByPawn, pawnThreats & board.byPiece[Bishop], stuckBishops);
+        scores[us] +=
+            creditSplit(evalParams.ThreatByPawn, pawnThreats & board.byPiece[Knight], stuckKnights);
+
+        // Threat by minor: our knights or bishops attacking an enemy
+        // rook or queen. Indexed by victim so same-value targets are
+        // naturally zero. Each victim type takes the SEE-aware split
+        // against the matching stuck-set.
         Bitboard minorAttacks = ctx.attackedBy[us][Knight] | ctx.attackedBy[us][Bishop];
         Bitboard victims = minorAttacks & theirPieces;
         Bitboard minorVsRook = victims & board.byPiece[Rook];
         Bitboard minorVsQueen = victims & board.byPiece[Queen];
-        scores[us] += evalParams.ThreatByMinor[Rook] * popcount(minorVsRook);
-        scores[us] += evalParams.ThreatByMinor[Queen] * popcount(minorVsQueen);
+        scores[us] += creditSplit(evalParams.ThreatByMinor[Rook], minorVsRook, stuckRooks);
+        scores[us] += creditSplit(evalParams.ThreatByMinor[Queen], minorVsQueen, stuckQueens);
 
         // Threat by rook: our rooks attacking an enemy queen.
         Bitboard rookVsQueen = ctx.attackedBy[us][Rook] & theirPieces & board.byPiece[Queen];
-        scores[us] += evalParams.ThreatByRook[Queen] * popcount(rookVsQueen);
+        scores[us] += creditSplit(evalParams.ThreatByRook[Queen], rookVsQueen, stuckQueens);
 
         // Threat by king: enemy pieces sitting on a square our king attacks
         // and which the enemy does not defend. Pawns and kings are excluded
@@ -1236,40 +1306,55 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         scores[us] += evalParams.Hanging * popcount(hanging);
 
         // Weak queen: enemy queen attacked by two or more of our pieces.
-        Bitboard weakQueen = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
-        if (weakQueen) scores[us] += evalParams.WeakQueen;
+        // Single queen positions are the common case so we split via the
+        // bitboard itself rather than per-square counting.
+        Bitboard weakQueens = theirPieces & board.byPiece[Queen] & ctx.attackedBy2[us];
+        if (weakQueens) {
+            int stuckCnt = popcount(weakQueens & stuckQueens);
+            int escCnt = popcount(weakQueens & ~stuckQueens);
+            scores[us] += scaleByCounts(evalParams.WeakQueen, stuckCnt, escCnt);
+        }
 
         // Slider on queen: every friendly bishop or rook whose ray to an
-        // enemy queen passes through exactly one intermediate piece. Done
-        // from the queen's square by first finding the first blockers on
-        // each ray, then re-casting with those blockers removed so the
-        // second-line attackers show up. Direct attackers are filtered
-        // out with "& ~firstDiag" / "& ~firstOrtho" so they are not
-        // double counted against the threat-by-minor and threat-by-rook
-        // bonuses that already credit the direct attack.
+        // enemy queen passes through exactly one intermediate piece. The
+        // SEE-aware split runs per queen so x-rays on a stuck queen earn
+        // full credit while x-rays on a queen with quiet retreats earn
+        // only the scaled fraction.
         Bitboard enemyQueens = theirPieces & board.byPiece[Queen];
         Bitboard ourBishops = board.byPiece[Bishop] & board.byColor[us];
         Bitboard ourRooks = board.byPiece[Rook] & board.byColor[us];
         if (enemyQueens && (ourBishops | ourRooks)) {
-            Bitboard occ = board.occupied;
-            int diagXrays = 0;
-            int orthoXrays = 0;
+            int diagXraysStuck = 0;
+            int diagXraysEsc = 0;
+            int orthoXraysStuck = 0;
+            int orthoXraysEsc = 0;
             Bitboard queensIter = enemyQueens;
             while (queensIter) {
                 int qSq = popLsb(queensIter);
+                bool stuck = (squareBB(qSq) & stuckQueens) != 0;
                 if (ourBishops) {
                     Bitboard firstDiag = bishopAttacks(qSq, occ) & occ;
                     Bitboard xraySquaresDiag = bishopAttacks(qSq, occ ^ firstDiag);
-                    diagXrays += popcount(xraySquaresDiag & ourBishops & ~firstDiag);
+                    int xrays = popcount(xraySquaresDiag & ourBishops & ~firstDiag);
+                    if (stuck)
+                        diagXraysStuck += xrays;
+                    else
+                        diagXraysEsc += xrays;
                 }
                 if (ourRooks) {
                     Bitboard firstOrtho = rookAttacks(qSq, occ) & occ;
                     Bitboard xraySquaresOrtho = rookAttacks(qSq, occ ^ firstOrtho);
-                    orthoXrays += popcount(xraySquaresOrtho & ourRooks & ~firstOrtho);
+                    int xrays = popcount(xraySquaresOrtho & ourRooks & ~firstOrtho);
+                    if (stuck)
+                        orthoXraysStuck += xrays;
+                    else
+                        orthoXraysEsc += xrays;
                 }
             }
-            scores[us] += evalParams.SliderOnQueenBishop * diagXrays;
-            scores[us] += evalParams.SliderOnQueenRook * orthoXrays;
+            scores[us] +=
+                scaleByCounts(evalParams.SliderOnQueenBishop, diagXraysStuck, diagXraysEsc);
+            scores[us] +=
+                scaleByCounts(evalParams.SliderOnQueenRook, orthoXraysStuck, orthoXraysEsc);
         }
 
         // Restricted piece: every square we attack that an enemy knight,
@@ -1288,7 +1373,9 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // safe landing squares, compute the pawn attack footprint and
         // bonus every enemy non-pawn/non-king piece that falls under it.
         // Exclude pieces already attacked by our pawns in place so the
-        // bonus is not double counted with evalParams.ThreatByPawn.
+        // bonus is not double counted with evalParams.ThreatByPawn. The
+        // SEE-aware split applies: a pushable threat against a queen
+        // with quiet retreats is much weaker than against a stuck one.
         Bitboard ourPawns = board.byPiece[Pawn] & board.byColor[us];
         Bitboard empty = ~board.occupied;
         Bitboard singlePush = (us == White) ? (ourPawns << 8) : (ourPawns >> 8);
@@ -1301,7 +1388,14 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
             pushes & ~ctx.pawnAttacks[them] & (~ctx.allAttacks[them] | ctx.allAttacks[us]);
         Bitboard pushVictims =
             pawnAttacksBB(safePushes, us) & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
-        scores[us] += evalParams.SafePawnPush * popcount(pushVictims);
+        scores[us] +=
+            creditSplit(evalParams.SafePawnPush, pushVictims & board.byPiece[Queen], stuckQueens);
+        scores[us] +=
+            creditSplit(evalParams.SafePawnPush, pushVictims & board.byPiece[Rook], stuckRooks);
+        scores[us] +=
+            creditSplit(evalParams.SafePawnPush, pushVictims & board.byPiece[Bishop], stuckBishops);
+        scores[us] +=
+            creditSplit(evalParams.SafePawnPush, pushVictims & board.byPiece[Knight], stuckKnights);
 
         // Per-square pawn-push threat: walk every push target (safe or
         // not) and tally each (push square, victim piece) pair where the
@@ -1309,15 +1403,23 @@ static void evaluateThreats(const Board &board, const EvalContext &ctx, Score sc
         // opponent must address with a tempo even when capturing the
         // pawn is on the board, so the signal is distinct from
         // SafePawnPush. Already-pawn-attacked victims are filtered out
-        // to keep the bonus orthogonal to ThreatByPawn.
-        int pushSquareThreats = 0;
+        // to keep the bonus orthogonal to ThreatByPawn. SEE-aware split
+        // accumulates stuck and escapable victims separately and
+        // applies the discount in one shot at the end.
+        int pushStuck = 0;
+        int pushEsc = 0;
         Bitboard pushIter = pushes;
         while (pushIter) {
             int psq = popLsb(pushIter);
-            Bitboard victims = PawnAttacks[us][psq] & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
-            pushSquareThreats += popcount(victims);
+            Bitboard pushVic = PawnAttacks[us][psq] & theirNonPawnNonKing & ~ctx.pawnAttacks[us];
+            Bitboard stuckSet = (pushVic & board.byPiece[Queen] & stuckQueens) |
+                                (pushVic & board.byPiece[Rook] & stuckRooks) |
+                                (pushVic & board.byPiece[Bishop] & stuckBishops) |
+                                (pushVic & board.byPiece[Knight] & stuckKnights);
+            pushStuck += popcount(stuckSet);
+            pushEsc += popcount(pushVic) - popcount(stuckSet);
         }
-        scores[us] += evalParams.ThreatByPawnPush * pushSquareThreats;
+        scores[us] += scaleByCounts(evalParams.ThreatByPawnPush, pushStuck, pushEsc);
 
         // Weak-piece-protected-only-by-queen: any friendly non-pawn
         // minor or rook under enemy attack whose only defender is the

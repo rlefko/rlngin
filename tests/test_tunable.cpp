@@ -10,13 +10,11 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // One hundred and five is the committed SPSA surface: one hundred
-    // pre-fortress-scale scalars plus five new endgame drawishness
-    // scales (KPsKFortressScaleEg, KBPKNDrawishScaleEg,
-    // KRKPDrawishScaleEg, KRKMinorScaleEg, KNNKDrawScaleEg) that let
-    // the tuner refine the magnitude of recognized fortresses and
-    // drawish material configurations.
-    REQUIRE(specs.size() == 105);
+    // One hundred and six is the committed SPSA surface: one hundred
+    // and five pre-SEE-aware-threats scalars plus EscapableThreatScaleEg,
+    // which scales down each threat term's credit for a target that
+    // has a quiet escape from our lower-value attackers.
+    REQUIRE(specs.size() == 106);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {

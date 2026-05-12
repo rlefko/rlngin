@@ -171,6 +171,8 @@ static std::vector<ParamRef> collectParams() {
         {"KRKMinorScaleEg.eg", &evalParams.KRKMinorScale, false, boundsRange(16, 48)});
     out.push_back(
         {"KNNKDrawScaleEg.eg", &evalParams.KNNKDrawScale, false, boundsRange(0, 32)});
+    out.push_back({"EscapableThreatScaleEg.eg", &evalParams.EscapableThreatScale, false,
+                   boundsRange(0, 64)});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -3463,6 +3465,8 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KRKPDrawishScale) << ", // KRKPDrawishScale\n";
     std::cout << "    " << fmtScore(evalParams.KRKMinorScale) << ", // KRKMinorScale\n";
     std::cout << "    " << fmtScore(evalParams.KNNKDrawScale) << ", // KNNKDrawScale\n";
+    std::cout << "    " << fmtScore(evalParams.EscapableThreatScale)
+              << ", // EscapableThreatScale\n";
     std::cout << "};\n";
 }
 

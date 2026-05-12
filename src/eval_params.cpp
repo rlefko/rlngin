@@ -262,6 +262,7 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 24),  // KRKPDrawishScale
     S(0, 24),  // KRKMinorScale
     S(0, 0),   // KNNKDrawScale
+    S(0, 16),  // EscapableThreatScale: 25% of full credit for escapable victims
 };
 
 // clang-format on

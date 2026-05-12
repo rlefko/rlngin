@@ -407,6 +407,19 @@ struct EvalParams {
     // widen if it finds the natural material edge pays off. Mg zero,
     // eg in 0..32.
     Score KNNKDrawScale;
+
+    // SEE-aware threat discount: scales the credit for a threat
+    // whose target has a quiet escape from our lower-value attackers.
+    // Each affected threat term in evaluateThreats splits its victims
+    // into "stuck" (no safe quiet escape) and "escapable" sets; stuck
+    // victims earn the full threat magnitude, escapable victims earn
+    // (full * EscapableThreatScale.eg / 64). Without this, a queen
+    // attacked by a knight prices as a permanent loss even when the
+    // queen has obvious retreats, and the engine prefers gambits that
+    // are capture-resolved at the horizon over principled recaptures
+    // that leave the queen attacked. Mg structurally zero; the eg
+    // half holds the integer scale in 0..64.
+    Score EscapableThreatScale;
 };
 
 extern EvalParams evalParams;
