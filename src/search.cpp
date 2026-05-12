@@ -246,6 +246,28 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
+// Returns true when the side with `queenSide`'s queen has at least one
+// queen attacked by a lower-value piece (pawn, knight, bishop, or rook)
+// from the other side. Used by the queen-threat search extension: a
+// quiet move that newly puts the enemy queen in this state typically
+// forces a quiet retreat that pure capture-resolving qsearch cannot see
+// at the leaf, so we extend the move by one ply at shallow depths.
+static bool queenAttackedByLower(const Board &b, Color queenSide) {
+    Bitboard queens = b.byPiece[Queen] & b.byColor[queenSide];
+    if (!queens) return false;
+    Color attackerSide = (queenSide == White) ? Black : White;
+    Bitboard their = b.byColor[attackerSide];
+    Bitboard occ = b.occupied;
+    while (queens) {
+        int q = popLsb(queens);
+        if (PawnAttacks[queenSide][q] & b.byPiece[Pawn] & their) return true;
+        if (KnightAttacks[q] & b.byPiece[Knight] & their) return true;
+        if (bishopAttacks(q, occ) & b.byPiece[Bishop] & their) return true;
+        if (rookAttacks(q, occ) & b.byPiece[Rook] & their) return true;
+    }
+    return false;
+}
+
 // Tuner-leaf mode flag. While `qsearchLeafBoard` is running, delta and
 // SEE pruning are turned off so every plausible capture gets resolved
 // and the leaf the tuner labels is genuinely quiet. Real search reads
@@ -837,6 +859,17 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     ThreatMap threats;
     buildThreatMap(board, threats);
 
+    // Pre-move "is the enemy queen already attacked by a lower-value
+    // piece" snapshot. Computed once per node so the per-move queen-
+    // threat extension can detect when a quiet move newly puts the
+    // queen in trouble. Without this, capture-resolving qsearch can
+    // mistake a queen attacked by a quiet knight move for a permanent
+    // half-pawn loss at the horizon (the Scandinavian
+    // 1.e4 d5 2.exd5 Qxd5 3.Nc3 leaf), and the engine ends up
+    // preferring lines where the threat is resolved by captures.
+    Color queenThreatThem = (board.sideToMove == White) ? Black : White;
+    bool enemyQueenWasAttacked = queenAttackedByLower(board, queenThreatThem);
+
     // Staged move picker: the excluded move is threaded through as `skipMove`
     // so the singular-extension path never sees the excluded candidate in any
     // phase, including from the TT slot.
@@ -923,6 +956,25 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // per-path cap keeps forcing lines from exploding.
         if (givesCheck && checkExtPass) {
             moveExtension = std::max(moveExtension, 1);
+        }
+
+        // Queen-threat extension: a quiet move that newly attacks the
+        // enemy queen with a lower-value piece typically forces a
+        // quiet queen retreat the leaf cannot see (qsearch only
+        // resolves captures and check evasions). Extending by one
+        // ply gives the search a chance to find the retreat instead
+        // of evaluating a queen-en-prise leaf and pricing the threat
+        // as a permanent loss (the Scandinavian
+        // 1.e4 d5 2.exd5 Qxd5 3.Nc3 horizon symptom). Fires at every
+        // node, not just PV, because PV ordering at shallow root
+        // depths is heavily influenced by exactly this leaf
+        // miscount and gating on pvNode misses the corrective effect
+        // until the engine has already mis-picked the root move.
+        // Only fires when no other extension has been applied to the
+        // move so the per-path extension budget is not stacked.
+        if (moveExtension == 0 && !capture && !isPromotion && depth >= 1 &&
+            !enemyQueenWasAttacked && queenAttackedByLower(board, board.sideToMove)) {
+            moveExtension = 1;
         }
         int extBudget = 2 * state.rootDepth - state.extensionsOnPath[ply];
         if (extBudget <= 0) {
