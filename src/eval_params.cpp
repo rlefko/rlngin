@@ -83,11 +83,16 @@
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
     S(236, 225), // ThreatByPawn
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(154, 76), S(61, 244), S(0, 0)},
-    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(134, 293), S(0, 0)},
+    // ThreatByMinor[victim]: index 4 is Rook, 5 is Queen. Capped at
+    // 0..100 (Rook) and 0..80 (Queen) per the second-opinion review;
+    // previous tune produced (154, 244) for Queen which over-punished
+    // the Scandinavian Qxd5 Nc3 leaf and led to gambit preference.
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(80, 76), S(60, 70), S(0, 0)},
+    // ThreatByRook[victim]: index 5 is Queen. Capped at 0..100.
+    {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(80, 90), S(0, 0)},
     S(81, 1), // ThreatByKing
     S(59, 20), // Hanging
-    S(503, 82), // WeakQueen
+    S(45, 45),  // WeakQueen (capped 0..50, was tuned to 503 mg)
     S(22, 0), // SafePawnPush
     {S(0, 0), S(0, 0), S(0, 0), S(0, 19), S(0, 28), S(0, 36), S(0, 37), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 12), S(0, 31), S(0, 58), S(0, 70), S(0, 0)},
@@ -228,8 +233,8 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 46), // InitiativeInfiltrate
     S(0, 0), // InitiativePureBase
     S(0, -1), // InitiativeConstant
-    S(53, 89), // SliderOnQueenBishop
-    S(100, 58), // SliderOnQueenRook
+    S(40, 40), // SliderOnQueenBishop (capped 0..60, was tuned to (53, 89))
+    S(50, 40), // SliderOnQueenRook (capped 0..60, was tuned to (100, 58))
     S(10, 2), // RestrictedPiece
     S(27, 32), // ThreatByPawnPush
     S(-21, -4), // WeakQueenDefender
@@ -249,7 +254,7 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 16), // KRKPDrawishScale
     S(0, 16), // KRKMinorScale
     S(0, 0), // KNNKDrawScale
-    S(0, 54), // EscapableThreatScale
+    S(0, 16),  // EscapableThreatScale (capped 0..24, was tuned to 54 which nullified the discount)
 };
 
 // clang-format on

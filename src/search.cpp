@@ -246,6 +246,30 @@ static bool isInCheck(const Board &board) {
     return isSquareAttacked(board, lsb(kingBB), opponent);
 }
 
+// Returns true when the side with `queenSide`'s queen has at least one
+// queen attacked by a pawn, knight, bishop, or rook from the other
+// side. Used by the queen-threat search extension below. The SEE-aware
+// threat eval discounts escapable queen threats statically, but PST and
+// piece-activity terms can still over-punish the post-retreat position,
+// so the extension complements the eval by giving the search extra
+// plies to find a continuation past the leaf horizon. Belt and
+// suspenders for the Scandinavian and similar queen-attacked openings.
+static bool queenAttackedByLower(const Board &b, Color queenSide) {
+    Bitboard queens = b.byPiece[Queen] & b.byColor[queenSide];
+    if (!queens) return false;
+    Color attackerSide = (queenSide == White) ? Black : White;
+    Bitboard their = b.byColor[attackerSide];
+    Bitboard occ = b.occupied;
+    while (queens) {
+        int q = popLsb(queens);
+        if (PawnAttacks[queenSide][q] & b.byPiece[Pawn] & their) return true;
+        if (KnightAttacks[q] & b.byPiece[Knight] & their) return true;
+        if (bishopAttacks(q, occ) & b.byPiece[Bishop] & their) return true;
+        if (rookAttacks(q, occ) & b.byPiece[Rook] & their) return true;
+    }
+    return false;
+}
+
 // Tuner-leaf mode flag. While `qsearchLeafBoard` is running, delta and
 // SEE pruning are turned off so every plausible capture gets resolved
 // and the leaf the tuner labels is genuinely quiet. Real search reads
@@ -837,6 +861,19 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
     ThreatMap threats;
     buildThreatMap(board, threats);
 
+    // Pre-move "is the enemy queen already attacked by a lower-value
+    // piece" snapshot. Computed once per node so the queen-threat
+    // extension can detect when a quiet move newly puts the enemy
+    // queen in trouble. The SEE-aware threat eval already discounts
+    // escapable queen attacks at the leaf, but PST and piece-activity
+    // terms can still over-punish the post-retreat position (a queen
+    // misplaced on an awkward square earns negative PST that we
+    // cannot easily disentangle from "queen in danger"); the search
+    // extension gives the search one extra ply to find the actual
+    // best retreat past the horizon.
+    Color queenThreatThem = (board.sideToMove == White) ? Black : White;
+    bool enemyQueenWasAttacked = queenAttackedByLower(board, queenThreatThem);
+
     // Staged move picker: the excluded move is threaded through as `skipMove`
     // so the singular-extension path never sees the excluded candidate in any
     // phase, including from the TT slot.
@@ -923,6 +960,23 @@ static int negamax(Board &board, int depth, int ply, int alpha, int beta, Search
         // per-path cap keeps forcing lines from exploding.
         if (givesCheck && checkExtPass) {
             moveExtension = std::max(moveExtension, 1);
+        }
+
+        // Queen-threat extension (safety net for the SEE-aware eval):
+        // a quiet move that newly puts the enemy queen under attack
+        // from a lower-value piece gets one extra ply so the search
+        // can find the retreat. The eval-side discount handles the
+        // leaf math, but PST and piece-activity terms still penalize
+        // the queen-on-an-awkward-square post-retreat shape, and at
+        // shallow depths the search can mistake "queen attacked" for
+        // "queen lost" without enough plies to play out the retreat.
+        // Fires across all nodes (not just PV) and at every depth -
+        // the queen-threat is rare enough that the extra plies do not
+        // blow up the tree; the per-path extension budget caps any
+        // pathological accumulation.
+        if (moveExtension == 0 && !capture && !isPromotion && depth >= 1 &&
+            !enemyQueenWasAttacked && queenAttackedByLower(board, board.sideToMove)) {
+            moveExtension = 1;
         }
 
         int extBudget = 2 * state.rootDepth - state.extensionsOnPath[ply];

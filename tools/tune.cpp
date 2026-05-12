@@ -116,18 +116,31 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Threats: every term here is a true bonus on attacker side, so
     // none of them should ever go negative regardless of corpus drift.
+    // Caps on queen-target and rook-target threats are set relative to
+    // pawn value (PieceScore[Pawn] is around S(200, 200)) so the tuner
+    // cannot turn a single quiet attack on a higher-value piece into a
+    // multi-pawn evaluation swing. Game-result Texel does not see the
+    // attacked piece's escape squares, so without these caps it keeps
+    // pushing queen-threat magnitudes upward and the engine starts
+    // preferring lines like the Blackburne-Kloosterboer gambit because
+    // the principled recapture leaves the queen attacked at the
+    // horizon. Magnitudes follow the second-opinion review:
+    //   ThreatByMinor[Queen]  <= 0.40 * Pawn
+    //   ThreatByRook[Queen]   <= 0.50 * Pawn
+    //   WeakQueen             <= 0.25 * Pawn
+    //   KnightOnQueen         <= 0.30 * Pawn
+    //   SliderOnQueen*        <= 0.30 * Pawn
     addMgEgConstr("ThreatByPawn", &evalParams.ThreatByPawn, boundsNonNegative());
-    for (int v = Rook; v <= Queen; v++)
-        addMgEgConstr("ThreatByMinor[" + std::to_string(v) + "]",
-                      &evalParams.ThreatByMinor[v], boundsNonNegative());
-    addMgEgConstr("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen], boundsNonNegative());
+    addMgEgConstr("ThreatByMinor[Rook]", &evalParams.ThreatByMinor[Rook], boundsRange(0, 100));
+    addMgEgConstr("ThreatByMinor[Queen]", &evalParams.ThreatByMinor[Queen], boundsRange(0, 80));
+    addMgEgConstr("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen], boundsRange(0, 100));
     addMgEgConstr("ThreatByKing", &evalParams.ThreatByKing, boundsNonNegative());
     addMgEgConstr("Hanging", &evalParams.Hanging, boundsNonNegative());
-    addMgEgConstr("WeakQueen", &evalParams.WeakQueen, boundsNonNegative());
+    addMgEgConstr("WeakQueen", &evalParams.WeakQueen, boundsRange(0, 50));
     addMgEgConstr("SafePawnPush", &evalParams.SafePawnPush, boundsNonNegative());
     addMgEgConstr("ThreatByPawnPush", &evalParams.ThreatByPawnPush, boundsNonNegative());
     addMgEgConstr("WeakQueenDefender", &evalParams.WeakQueenDefender, boundsNonPositive());
-    addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsNonNegative());
+    addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsRange(0, 60));
     addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, boundsNonPositive());
     addMgEgConstr("QueenInfiltration", &evalParams.QueenInfiltration, boundsNonNegative());
     // Align Texel bounds with the matching SPSA spec ranges so both
@@ -172,7 +185,7 @@ static std::vector<ParamRef> collectParams() {
     out.push_back(
         {"KNNKDrawScaleEg.eg", &evalParams.KNNKDrawScale, false, boundsRange(0, 32)});
     out.push_back({"EscapableThreatScaleEg.eg", &evalParams.EscapableThreatScale, false,
-                   boundsRange(0, 64)});
+                   boundsRange(0, 24)});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -653,8 +666,12 @@ static std::vector<ParamRef> collectParams() {
                    boundsRange(-1000000, -1)});
 
     // --- Slider on queen x-ray: pure bonus, both halves >= 0.
-    addMgEgConstr("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop, boundsNonNegative());
-    addMgEgConstr("SliderOnQueenRook", &evalParams.SliderOnQueenRook, boundsNonNegative());
+    // SliderOnQueen x-rays: capped at ~0.30 * Pawn so the rook-on-queen
+    // and bishop-on-queen x-ray credits cannot be pushed past chess-
+    // reasonable magnitudes by game-result Texel that has no way to
+    // see the queen's quiet escape squares.
+    addMgEgConstr("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop, boundsRange(0, 60));
+    addMgEgConstr("SliderOnQueenRook", &evalParams.SliderOnQueenRook, boundsRange(0, 60));
 
     // --- Restricted piece: rewards mutual attack on enemy non-pawns.
     addMgEgConstr("RestrictedPiece", &evalParams.RestrictedPiece, boundsNonNegative());

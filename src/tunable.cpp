@@ -247,8 +247,18 @@ std::vector<TunableSpec> buildRegistry() {
         makeScoreHalfSpec("KRKMinorScaleEg", &evalParams.KRKMinorScale, false, 16, 48, 3.0, 1.0));
     out.push_back(
         makeScoreHalfSpec("KNNKDrawScaleEg", &evalParams.KNNKDrawScale, false, 0, 32, 3.0, 1.0));
+    // EscapableThreatScale capped at 24/64 ~= 37.5% credit for
+    // escapable victims. Without this tight cap, game-result Texel
+    // observed that boosting the scale toward full-credit gave a
+    // lower training loss (queen attacks are often final once they
+    // happen) and nullified the SEE-aware discount, which is the
+    // entire point of the term. A tight ceiling keeps the discount
+    // meaningful so the engine continues to recognize "queen attacked
+    // but escapable" as a much weaker signal than "queen attacked and
+    // stuck", which is the Scandinavian / Blackburne-Kloosterboer
+    // canary the second-opinion review flagged.
     out.push_back(makeScoreHalfSpec("EscapableThreatScaleEg", &evalParams.EscapableThreatScale,
-                                    false, 0, 64, 4.0, 1.5));
+                                    false, 0, 24, 2.0, 0.5));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 
