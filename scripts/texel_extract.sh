@@ -31,10 +31,10 @@ if [ "${1:-}" = "--" ]; then
 fi
 EXTRA_ARGS=("$@")
 
-SKIP_PLIES="${SKIP_PLIES:-8}"
+SKIP_PLIES="${SKIP_PLIES:-0}"
 TAIL_PLIES="${TAIL_PLIES:-2}"
 LABEL_FROM_CP="${LABEL_FROM_CP:-1}"
-CP_SCALE="${CP_SCALE:-200}"
+CP_SCALE="${CP_SCALE:-150}"
 LOG="$OUTPUT/extract.log"
 
 if [ ! -f "$PGN" ]; then
