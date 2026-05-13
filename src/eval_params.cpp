@@ -82,7 +82,7 @@
 
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
-    S(296, 563), // ThreatByPawn
+    S(296, 400), // ThreatByPawn (eg clamped to SPSA 0..400 bound)
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(100, 100), S(80, 80), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(100, 100), S(0, 0)},
     S(47, 0), // ThreatByKing
@@ -250,6 +250,7 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 16), // KRKMinorScale
     S(0, 0), // KNNKDrawScale
     S(0, 14), // EscapableThreatScale
+    S(456, 0), // CompensationCap (2 pawns mg; eg unused)
 };
 
 // clang-format on

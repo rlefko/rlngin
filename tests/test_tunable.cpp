@@ -10,11 +10,13 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // One hundred and six is the committed SPSA surface: one hundred
-    // and five pre-SEE-aware-threats scalars plus EscapableThreatScaleEg,
-    // which scales down each threat term's credit for a target that
-    // has a quiet escape from our lower-value attackers.
-    REQUIRE(specs.size() == 106);
+    // One hundred and seven is the committed SPSA surface: one hundred
+    // and five pre-SEE-aware-threats scalars, EscapableThreatScaleEg
+    // (escapable-target threat discount), and CompensationCapMg (caps
+    // positional compensation against a material deficit so linear-
+    // feature eval cannot credit one developed piece as full
+    // compensation for a sacrificed pawn).
+    REQUIRE(specs.size() == 107);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {
