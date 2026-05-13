@@ -63,7 +63,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // the tapered middlegame residual survives, which is small at
     // phase 1 with a single minor.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 27);
+    CHECK(evaluate(board) == 21);
 
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
     CHECK(evaluate(board) == 38);

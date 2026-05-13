@@ -259,17 +259,6 @@ std::vector<TunableSpec> buildRegistry() {
     // canary the second-opinion review flagged.
     out.push_back(makeScoreHalfSpec("EscapableThreatScaleEg", &evalParams.EscapableThreatScale,
                                     false, 0, 24, 2.0, 0.5));
-    // CompensationCap controls how aggressively the imbalance-cap term
-    // scales down positional compensation when the same side is down
-    // material. Bounds 228..912 = 1..4 pawns. Below 228, a one-pawn
-    // gambit gives zero compensation (too aggressive: real gambits
-    // exist). Above 912 the cap effectively never bites (defeats the
-    // purpose). The seeded default at 456 (=2 pawns) lets a 1-pawn
-    // sacrifice keep half its positional credit, which kept the
-    // engine off the Scandinavian Blackburne-Kloosterboer gambit at
-    // every depth in the seed test. Eg half stays structurally zero.
-    out.push_back(makeScoreHalfSpec("CompensationCapMg", &evalParams.CompensationCap, true, 228,
-                                    912, 20.0, 8.0));
     out.push_back(makeScoreHalfSpec("RookOn7thBonusEg", &evalParams.RookOn7thBonus, false, 0, 200,
                                     10.0, 4.0));
 

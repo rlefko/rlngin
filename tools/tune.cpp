@@ -205,10 +205,6 @@ static std::vector<ParamRef> collectParams() {
         {"KNNKDrawScaleEg.eg", &evalParams.KNNKDrawScale, false, boundsRange(0, 32)});
     out.push_back({"EscapableThreatScaleEg.eg", &evalParams.EscapableThreatScale, false,
                    boundsRange(0, 24)});
-    // CompensationCap: 228..912 = 1..4 pawns. See tunable.cpp for the
-    // rationale. Eg half stays at 0 (compile-time constant, not tuned).
-    out.push_back({"CompensationCapMg.mg", &evalParams.CompensationCap, true,
-                   boundsRange(228, 912)});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -3541,7 +3537,6 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KNNKDrawScale) << ", // KNNKDrawScale\n";
     std::cout << "    " << fmtScore(evalParams.EscapableThreatScale)
               << ", // EscapableThreatScale\n";
-    std::cout << "    " << fmtScore(evalParams.CompensationCap) << ", // CompensationCap\n";
     std::cout << "};\n";
 }
 

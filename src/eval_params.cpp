@@ -250,7 +250,6 @@ static const EvalParams kDefaultEvalParams = {
     S(0, 16), // KRKMinorScale
     S(0, 0), // KNNKDrawScale
     S(0, 14), // EscapableThreatScale
-    S(456, 0), // CompensationCap (2 pawns mg; eg unused)
 };
 
 // clang-format on

@@ -1135,36 +1135,6 @@ static Score evaluateInitiative(const Board &board, const EvalContext &ctx,
     return S(mgDelta, egDelta);
 }
 
-// Sacrificed-material compensation cap. Linear-feature evaluators
-// systematically overpay for "one developed piece" in positions where
-// the opposing side has sacrificed material: e.g., after 1.e4 d5
-// 2.exd5 c6 3.dxc6 Nxc6, our PST and mobility credit one developed
-// black knight at ~0.8 pawn-equivalents, which almost erases the
-// pawn-up advantage white actually has. When one side is up
-// material and the other side is up positionally, scale the
-// positionally-up side's compensation by (matDeficit / cap) so the
-// linear features cannot credit more than `cap` worth of mg
-// compensation for the missing material. Returns a Score to add to
-// the (white-minus-black) differential.
-static Score evaluateCompensationCap(const Score &total, const Score matScores[2]) {
-    int cap = mg_value(evalParams.CompensationCap);
-    if (cap <= 0) return S(0, 0);
-
-    int matMgDiff = mg_value(matScores[White]) - mg_value(matScores[Black]);
-    int totalMg = mg_value(total);
-    int posMgDiff = totalMg - matMgDiff;
-
-    int matSign = (matMgDiff > 0) - (matMgDiff < 0);
-    int posSign = (posMgDiff > 0) - (posMgDiff < 0);
-    if (matSign == 0 || posSign == 0 || matSign == posSign) return S(0, 0);
-
-    int matAbs = std::abs(matMgDiff);
-    int posAbs = std::abs(posMgDiff);
-    int deficit = std::min(matAbs, cap);
-    int reduction = posAbs * deficit / cap;
-    return S(matSign * reduction, 0);
-}
-
 // Endgame scale factor in [0, 64]. Applied to the eg half of the tapered
 // score before blending with mg: at 64 the eg value passes through
 // unchanged, at 0 the eg contribution disappears entirely. Used to push
@@ -1579,7 +1549,6 @@ int evaluate(const Board &board) {
     evaluateKingSafety(board, ctx, scores);
 
     Score total = scores[White] - scores[Black] + pawnScore;
-    total += evaluateCompensationCap(total, matScores);
     total += evaluateInitiative(board, ctx, passers, total);
 
     int mg = mg_value(total);
@@ -1704,11 +1673,9 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     evaluateKingSafety(board, ctx, kingSafetyScores);
     Score kingSafetyScore = kingSafetyScores[White] - kingSafetyScores[Black];
 
-    Score totalBeforePost = pstScore + matScore + pieceScore + centerScore + passerExtrasScore +
-                            blockedPawnScore + threatScore + spaceScore + kingSafetyScore +
-                            pawnScore;
-    Score compensationScore = evaluateCompensationCap(totalBeforePost, matScores);
-    Score totalBeforeInitiative = totalBeforePost + compensationScore;
+    Score totalBeforeInitiative = pstScore + matScore + pieceScore + centerScore +
+                                  passerExtrasScore + blockedPawnScore + threatScore + spaceScore +
+                                  kingSafetyScore + pawnScore;
     Score initiativeScore = evaluateInitiative(board, ctx, passers, totalBeforeInitiative);
     Score total = totalBeforeInitiative + initiativeScore;
     int mg = mg_value(total);
@@ -1795,7 +1762,6 @@ void evaluateVerbose(const Board &board, std::ostream &os) {
     bucket("Threats", threatScores[White], threatScores[Black], threatScore);
     bucket("Space", spaceScores[White], spaceScores[Black], spaceScore);
     bucket("King safety", kingSafetyScores[White], kingSafetyScores[Black], kingSafetyScore);
-    totalOnly("Comp cap", compensationScore);
     totalOnly("Initiative", initiativeScore);
     os << "----------------+----------------+----------------+-------------------\n";
     os << " " << std::left << std::setw(14) << "Sum"

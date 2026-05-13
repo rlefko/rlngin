@@ -420,21 +420,6 @@ struct EvalParams {
     // that leave the queen attacked. Mg structurally zero; the eg
     // half holds the integer scale in 0..64.
     Score EscapableThreatScale;
-
-    // Sacrificed-material compensation cap: when one side is down
-    // material and the other side is up positionally, scale the
-    // positionally-up side's compensation by (1 - matDeficit / cap)
-    // so a linear-feature eval cannot credit "one developed knight"
-    // as full compensation for a pawn. Without this, game-result
-    // Texel converges to PSTs that make one developed piece worth
-    // ~0.8 pawn-equivalents and the engine starts gambitting for
-    // development in openings where the gambit is dubious (the
-    // Scandinavian Blackburne-Kloosterboer 2...c6 was the
-    // motivating case). Acts on mg only - the eg phase is dominated
-    // by material fundamentals and does not need the cap. Cap is
-    // in internal mg units (228 = one pawn); the eg slot stays
-    // zero and is not consumed.
-    Score CompensationCap;
 };
 
 extern EvalParams evalParams;
