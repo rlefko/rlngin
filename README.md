@@ -3,9 +3,9 @@
 <!-- BENCHMARK:START -->
 ## Latest Benchmark
 
-![Elo](https://img.shields.io/static/v1?label=Elo&message=-183.97%20%2B%2F-%2045.61&color=red) ![LOS](https://img.shields.io/static/v1?label=LOS&message=0.00%25&color=red) ![LLR](https://img.shields.io/static/v1?label=LLR&message=N%2FA&color=gray) ![W/D/L](https://img.shields.io/static/v1?label=W/D/L&message=32%20%2F%2039%20%2F%20129&color=lightgray) ![Score](https://img.shields.io/static/v1?label=Score&message=51.5%20%2F%20200%20%2825.75%25%29&color=blue) ![Draws](https://img.shields.io/static/v1?label=Draws&message=29.00%25&color=lightgray)
+![Elo](https://img.shields.io/static/v1?label=Elo&message=-92.46%20%2B%2F-%2045.47&color=red) ![LOS](https://img.shields.io/static/v1?label=LOS&message=0.00%25&color=red) ![LLR](https://img.shields.io/static/v1?label=LLR&message=N%2FA&color=gray) ![W/D/L](https://img.shields.io/static/v1?label=W/D/L&message=54%20%2F%2040%20%2F%20106&color=lightgray) ![Score](https://img.shields.io/static/v1?label=Score&message=74.0%20%2F%20200%20%2837.00%25%29&color=blue) ![Draws](https://img.shields.io/static/v1?label=Draws&message=28.00%25&color=lightgray)
 
-Ptnml(0-2): `[41, 23, 29, 6, 1]`
+Ptnml(0-2): `[28, 24, 28, 12, 8]`
 200 games (100 pairs) | tc=10+0.1 | UHO_Lichess_4852_v1.epd
 <!-- BENCHMARK:END -->
 
