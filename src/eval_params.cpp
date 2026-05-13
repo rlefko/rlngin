@@ -82,7 +82,7 @@
 
 // clang-format off
 static const EvalParams kDefaultEvalParams = {
-    S(241, 429), // ThreatByPawn
+    S(241, 400), // ThreatByPawn (eg clamped to SPSA 0..400 bound)
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(100, 100), S(80, 80), S(0, 0)},
     {S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(100, 100), S(0, 0)},
     S(67, 0), // ThreatByKing
@@ -98,7 +98,7 @@ static const EvalParams kDefaultEvalParams = {
     S(-14, 0), // BadBishop
     S(-3, -9), // BishopPawns
     S(43, 0), // Tempo
-    {S(0, 0), S(130, 237), S(546, 686), S(634, 758), S(858, 1308), S(1803, 2388), S(0, 0)}, // PieceScore
+    {S(0, 0), S(160, 237), S(546, 686), S(634, 758), S(858, 1308), S(1803, 2388), S(0, 0)}, // PieceScore (Pawn.mg anchored at 160; lower bound enforced by the tuner)
     // PawnPST
     {
         S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0), S(0, 0),

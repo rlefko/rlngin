@@ -314,8 +314,22 @@ static std::vector<ParamRef> collectParams() {
     // and the activity / threat / PST terms together such that a
     // one-pawn material edge gets eaten by inflated positional bonuses,
     // which is the failure mode the Scandinavian canary surfaced.
+    //
+    // PieceScore[Pawn].mg additionally carries a >= 150 lower-bound
+    // floor (= ~66 cp at the 228-per-pawn internal gauge). Empirically
+    // unbounded Texel kept driving it from 179 -> 130 across recent
+    // cp-label tunes; that is a degenerate gauge solution (the loss
+    // is invariant to shifting weight between PieceScore[Pawn] and
+    // pawn-related positional terms, but the *play* depends on the
+    // absolute pawn weight). The floor sits below typical
+    // chess-correct values (~175-200) so the tuner still has room
+    // to optimize, but stops the gauge from collapsing.
     if (!g_freezeMaterial) {
-        for (int pt = Pawn; pt <= Queen; pt++)
+        addMgEgConstr("PieceScore[" + std::to_string(static_cast<int>(Pawn)) + "]",
+                      &evalParams.PieceScore[Pawn], boundsRange(150, 400), true, false);
+        addMgEg("PieceScore[" + std::to_string(static_cast<int>(Pawn)) + "]",
+                &evalParams.PieceScore[Pawn], false, true); // eg unconstrained
+        for (int pt = Knight; pt <= Queen; pt++)
             addMgEg("PieceScore[" + std::to_string(pt) + "]", &evalParams.PieceScore[pt]);
     }
 
