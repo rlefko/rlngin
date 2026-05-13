@@ -28,6 +28,13 @@ tuning/texel/selfplay.log
 tuning/texel/extract.log
 tuning/texel/tune.log
 tuning/texel/checkpoint.txt
+tuning/texel/pipeline.log
+tuning/texel/pipeline.pid
+
+# Live tuner checkpoint files. tools/tune.cpp rewrites these between
+# passes; only the compiled-in defaults in src/eval_params.cpp ship.
+tuning/checkpoint.txt
+tuning/checkpoint_bestval.txt
 
 # Master games corpora pulled by scripts/fetch_val_corpus.sh (used as
 # the val partition) and scripts/fetch_train_master.sh (mixed into the
