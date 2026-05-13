@@ -42,3 +42,4 @@ tuning/checkpoint_bestval.txt
 # the pipeline auto-fetches; the EPDs are large and re-derivable.
 tuning/val/master_positions.epd
 tuning/train/master_positions.epd
+scripts/__pycache__/
