@@ -144,6 +144,65 @@ SEED_POSITIONS = [
      "Symmetric kingside development (repeat OK; canonical anchor)"),
     ("r1bqkb1r/pppp1ppp/2n2n2/4p3/4P3/2N2N2/PPPP1PPP/R1BQKB1R w KQkq - 6 5",
      "Four Knights symmetric - canonical 0cp anchor"),
+
+    # --- Single-developed-piece anchors (development-credit calibration).
+    # Each of these has exactly one minor moved from its back rank;
+    # otherwise the position is symmetric. SF should price the
+    # advantage at the small "tempo" range (single-digit to low-30s cp),
+    # which directly anchors the tuner on the right *magnitude* for one
+    # developed piece - the failure mode the Scandinavian symptom was
+    # diagnosing.
+    ("rnbqkbnr/pppppppp/8/8/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 1 1",
+     "1.Nf3 - one developed White knight, otherwise neutral"),
+    ("rnbqkb1r/pppppppp/5n2/8/8/5N2/PPPPPPPP/RNBQKB1R w KQkq - 2 2",
+     "1.Nf3 Nf6 - symmetric one developed knight each, should be ~0cp"),
+    ("rnbqkbnr/pppppppp/8/8/8/2N5/PPPPPPPP/R1BQKBNR b KQkq - 1 1",
+     "1.Nc3 - one developed knight, no central pawn, small edge"),
+    ("rnbqkbnr/pppp1ppp/8/4p3/8/5N2/PPPPPPPP/RNBQKB1R b KQkq - 0 2",
+     "1.Nf3 e5 - Black grabs center, one dev each, should be ~0cp"),
+    ("rnbqkb1r/pppppppp/5n2/8/8/2N5/PPPPPPPP/R1BQKBNR w KQkq - 2 2",
+     "1.Nc3 Nf6 - asymmetric development, should be ~0cp"),
+    ("r1bqkbnr/pppppppp/2n5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 1 2",
+     "1.e4 Nc6 - Black single-dev, White has center, small edge"),
+    ("rnbqkbnr/pppp1ppp/8/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+     "1.e4 e5 - classical anchor for the most-studied opening"),
+    ("rnbqkb1r/pppp1ppp/5n2/4p3/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 2 3",
+     "1.e4 e5 2.??? Nf6 - Black single-dev under tension"),
+
+    # --- Broader early-opening anchors (move 1-3 lines the UHO book
+    # never reaches). Each is a well-studied small-edge position. ---
+    ("rnbqkbnr/pppppppp/8/8/3P4/8/PPP1PPPP/RNBQKBNR b KQkq - 0 1",
+     "1.d4 - small edge, balanced opening"),
+    ("rnbqkbnr/pppp1ppp/8/4p3/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+     "1.d4 e5 - Englund preview, white can transpose to mainline"),
+    ("rnbqkbnr/ppp1pppp/8/3p4/3P4/8/PPP1PPPP/RNBQKBNR w KQkq - 0 2",
+     "1.d4 d5 - classical Queens-pawn start"),
+    ("rnbqkbnr/pppppppp/8/8/2P5/8/PP1PPPPP/RNBQKBNR b KQkq - 0 1",
+     "1.c4 - English opening anchor"),
+    ("rnbqkbnr/pp1ppppp/8/2p5/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+     "1.e4 c5 - Sicilian, the most-played reply to e4"),
+    ("rnbqkbnr/pp1ppppp/2p5/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2",
+     "1.e4 c6 - Caro-Kann anchor"),
+    ("rnbqkbnr/pp1ppppp/2p5/8/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2",
+     "1.e4 c6 2.Nf3 - Caro-Kann two knights, balanced"),
+    ("rnbqkbnr/pppppppp/8/8/8/1P6/P1PPPPPP/RNBQKBNR b KQkq - 0 1",
+     "1.b3 - Larsen, hypermodern, small edge to side that handles it"),
+
+    # --- Endgame anchors. The cp-relabeled corpus is dominated by
+    # middlegame phase (mg=14-24); a few exact-truth endgame rows
+    # keep the eg half of the eval honest. ---
+    ("8/8/8/4k3/8/4K3/4P3/8 w - - 0 1",
+     "KPK with the defender king blocking the pawn (opposition) - drawn"),
+    ("4k3/8/8/8/8/8/4P3/4K3 w - - 0 1",
+     "KPK with the strong king escorting the e-pawn home - winning"),
+    ("8/8/4k3/8/8/4B3/4K3/8 w - - 0 1",
+     "KBK - drawn even with the bishop (canonical 0cp anchor)"),
+    ("8/8/8/3kp3/3P4/8/4K3/8 w - - 0 1",
+     "KPKP blockaded pawns - drawn"),
+    ("8/8/8/3pk3/4Pp2/8/3K4/8 w - - 0 1",
+     "KPKP opposite kings - drawn"),
+    ("4k3/8/4K3/3B4/3N4/8/8/8 w - - 0 1",
+     "KBNK - winning for the BN side (canonical eg anchor)"),
 ]
 
 
@@ -156,16 +215,25 @@ def cp_to_label(cp: int, scale: float) -> float:
 def score_to_white_cp(score: chess.engine.PovScore) -> int:
     """Convert a python-chess PovScore to a White-perspective cp value.
 
-    Mate scores are clamped at +/- 1500 cp so the curated rows still
-    carry a usable gradient signal (the tuner already drops literal
-    mate-comment rows from self-play; here we choose to keep them at a
-    saturated logistic value rather than skip).
+    Both mate scores and tablebase-decisive cp signals are clamped to
+    +/- 1500 so a single TB-win row does not dominate the curated
+    gradient. Stockfish with Syzygy probing emits cp values in the
+    tens of thousands for in-TB winning positions; left raw, those
+    rows would saturate the logistic label to 1.0 and pull the
+    tuner toward "everything that looks like a winning endgame is
+    worth +1500 cp".
     """
     white = score.white()
-    if white.is_mate():
-        mate = white.mate()
-        return 1500 if (mate is not None and mate > 0) else -1500
-    return white.score(mate_score=1500)
+    cp = 1500 if white.is_mate() and (white.mate() or 0) > 0 \
+        else -1500 if white.is_mate() \
+        else white.score(mate_score=1500)
+    if cp is None:
+        return 0
+    if cp > 1500:
+        return 1500
+    if cp < -1500:
+        return -1500
+    return cp
 
 
 def evaluate_position(engine: chess.engine.SimpleEngine, fen: str,
