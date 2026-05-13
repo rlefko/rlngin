@@ -56,7 +56,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // expected score; the KingPawnDistEg term subtracts a chebyshev-
     // distance penalty for the king sitting four squares from the pawn.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 265);
+    CHECK(evaluate(board) == 258);
 
     // Knight or bishop versus a bare king is a textbook draw. The
     // pawnless-minor-only scale evaluator collapses eg to zero so only
@@ -66,7 +66,7 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     CHECK(evaluate(board) == 26);
 
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
-    CHECK(evaluate(board) == 38);
+    CHECK(evaluate(board) == 37);
 
     // Rook on a1 vs a lone king: the scale-style KXK dispatch keeps
     // the natural rook eval (material, PSTs, rook mobility, open file
@@ -227,7 +227,7 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // depends on the tuned king-safety weights and may need refreshing
     // after retunes.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 34);
+    CHECK(evaluate(board) == 33);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
@@ -303,11 +303,12 @@ TEST_CASE("Eval: multi-attacker gate still holds", "[eval][kingsafety]") {
     board.setFen("6k1/5ppp/8/8/8/5qq1/6PP/6K1 w - - 0 1");
     int twoQueens = evaluate(board);
 
-    // Two queens vs one queen adds one queen of material (roughly 2500
-    // internal units) but the king safety collapse drives the delta
-    // well past that purely material expectation.
+    // Two queens vs one queen adds one queen of material (roughly 2200
+    // internal units after the PST/mobility halving and chess-wisdom
+    // PST baseline reset) but the king safety collapse should drive
+    // the delta meaningfully past the purely material expectation.
     int delta = loneQueen - twoQueens;
-    CHECK(delta > 2900);
+    CHECK(delta > 2700);
 }
 
 TEST_CASE("Eval: undefended king zone squares penalize defender", "[eval][kingsafety]") {
@@ -471,8 +472,8 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     board.setFen("4k3/4p3/4n3/4P3/8/8/8/4K3 w - - 0 1");
     {
         std::string line = blockedPawnsLine(board);
-        CHECK(line.find("mg=    -4") != std::string::npos);
-        CHECK(line.find("eg=   -27") != std::string::npos);
+        CHECK(line.find("mg=     0") != std::string::npos);
+        CHECK(line.find("eg=   -20") != std::string::npos);
     }
 
     // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
@@ -516,7 +517,7 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // king sits on h8 to keep the position outside the KPK rook-file
     // fortress envelope.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 265);
+    CHECK(evaluate(board) == 258);
 
     // Textbook K + P vs K with the strong king escorting a rook pawn
     // one square from promotion. The KPK bitbase confirms WIN, so the

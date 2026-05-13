@@ -88,6 +88,12 @@ set -euo pipefail
 #                          material drift, e.g. when prior tunes
 #                          have pushed activity terms to cover for
 #                          drifting pawn values.
+#   FREEZE_POSITIONAL:     1 to hold PSTs and MobilityBonus fixed in
+#                          addition to material; threats / pawn
+#                          structure / king safety tune against
+#                          hand-coded chess-wisdom PST and mobility
+#                          baselines. Strict superset of
+#                          FREEZE_MATERIAL (default: unset).
 
 OUTPUT="${OUTPUT:-tuning/texel}"
 CORPUS="${1:-$OUTPUT/positions.epd}"
@@ -134,6 +140,9 @@ fi
 if [ "${FREEZE_MATERIAL:-0}" != "0" ]; then
     ARGS+=(--freeze-material)
 fi
+if [ "${FREEZE_POSITIONAL:-0}" != "0" ]; then
+    ARGS+=(--freeze-positional)
+fi
 
 echo "Texel tune: $CORPUS"
 echo "  threads:           $THREADS"
@@ -155,6 +164,9 @@ else
 fi
 if [ "${FREEZE_MATERIAL:-0}" != "0" ]; then
     echo "  freeze-material:   on (PieceScore[Pawn..Queen] and BishopPair held fixed)"
+fi
+if [ "${FREEZE_POSITIONAL:-0}" != "0" ]; then
+    echo "  freeze-positional: on (PSTs and MobilityBonus also held fixed; implies freeze-material)"
 fi
 if [ -n "${VAL_EPD:-}" ]; then
     echo "  val-epd (external): $VAL_EPD"

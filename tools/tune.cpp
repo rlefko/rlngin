@@ -108,6 +108,16 @@ static std::function<Bounds()> boundsRange(int lo, int hi) {
 // FREEZE_MATERIAL=1 environment variable.
 static bool g_freezeMaterial = false;
 
+// Global "freeze positional" toggle. Strict superset of
+// --freeze-material: when true, also omits all six PST tables and
+// every MobilityBonus[pt] entry from collectParams(). Used to lock in
+// chess-wisdom hand-coded PST/mobility baselines so the tuner cannot
+// re-introduce the inflated positional magnitudes that previously
+// made the engine prefer development-for-pawn gambits like the
+// Scandinavian Blackburne-Kloosterboer. Set via --freeze-positional
+// or FREEZE_POSITIONAL=1.
+static bool g_freezePositional = false;
+
 static std::vector<ParamRef> collectParams() {
     std::vector<ParamRef> out;
     auto addMgEg = [&](const std::string &name, Score *s, bool mg = true, bool eg = true) {
@@ -326,12 +336,21 @@ static std::vector<ParamRef> collectParams() {
                            boundsRange(-150, 150)});
         }
     };
-    addPST("PawnPST", evalParams.PawnPST, 8, 56);
-    addPST("KnightPST", evalParams.KnightPST, 0, 32);
-    addPST("BishopPST", evalParams.BishopPST, 0, 32);
-    addPST("RookPST", evalParams.RookPST, 0, 32);
-    addPST("QueenPST", evalParams.QueenPST, 0, 32);
-    addPST("KingPST", evalParams.KingPST, 0, 32);
+    // PST tables are skipped under --freeze-positional so the hand-
+    // coded chess-wisdom baselines stay locked while the threat /
+    // king-safety / pawn-structure terms tune against them. Without
+    // freezing, game-result Texel can re-inflate the per-square
+    // gradients (the prior tune pushed KnightPST[b1] to -161 mg,
+    // which made one developed knight worth ~half a pawn and the
+    // engine started gambitting for development).
+    if (!g_freezePositional) {
+        addPST("PawnPST", evalParams.PawnPST, 8, 56);
+        addPST("KnightPST", evalParams.KnightPST, 0, 32);
+        addPST("BishopPST", evalParams.BishopPST, 0, 32);
+        addPST("RookPST", evalParams.RookPST, 0, 32);
+        addPST("QueenPST", evalParams.QueenPST, 0, 32);
+        addPST("KingPST", evalParams.KingPST, 0, 32);
+    }
 
     // --- Mobility bonuses (only Knight..Queen rows carry values).
     // Soft chess prior: more attacked mobility-area squares is at least
@@ -354,7 +373,11 @@ static std::vector<ParamRef> collectParams() {
     // turned into a near-pawn evaluation swing that made forced
     // gambits look profitable to the engine.
     static const int mobilitySlopeMax[7] = {0, 0, 20, 18, 15, 12, 0};
-    for (int pt = Knight; pt <= Queen; pt++) {
+    // Mobility tables are skipped under --freeze-positional alongside
+    // the PSTs - both halves of the positional gauge stay fixed so the
+    // tuner cannot redistribute development credit back into mobility
+    // when PSTs are unavailable to absorb it.
+    if (!g_freezePositional) for (int pt = Knight; pt <= Queen; pt++) {
         const int n = mobilityCounts[pt];
         const int maxStep = mobilitySlopeMax[pt];
         for (int i = 0; i < n; i++) {
@@ -3526,15 +3549,23 @@ int main(int argc, char **argv) {
         std::cerr << "            [--newton-passes N] [--gauss-newton {0,1}]\n";
         std::cerr << "            [--adam-epochs N] [--adam-lr X]\n";
         std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--val-gate-patience N]\n";
-        std::cerr << "            [--val-gate] [--leaf-depth N] [--freeze-material]\n";
+        std::cerr << "            [--val-gate] [--leaf-depth N]\n";
+        std::cerr << "            [--freeze-material | --freeze-positional]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
         std::cerr << "\n";
-        std::cerr << "  --freeze-material  Skip PieceScore[Pawn..Queen] and BishopPair from\n";
-        std::cerr << "                     the parameter set so positional terms tune against\n";
-        std::cerr << "                     a fixed material baseline. Also accepts\n";
-        std::cerr << "                     FREEZE_MATERIAL=1 via env.\n";
+        std::cerr << "  --freeze-material    Skip PieceScore[Pawn..Queen] and BishopPair from\n";
+        std::cerr << "                       the parameter set so positional terms tune\n";
+        std::cerr << "                       against a fixed material baseline. Also accepts\n";
+        std::cerr << "                       FREEZE_MATERIAL=1 via env.\n";
+        std::cerr << "  --freeze-positional  Strict superset of --freeze-material: ALSO skips\n";
+        std::cerr << "                       all PST tables and every MobilityBonus entry.\n";
+        std::cerr << "                       Use with hand-coded chess-wisdom PST/Mobility\n";
+        std::cerr << "                       baselines so the tuner cannot reintroduce the\n";
+        std::cerr << "                       inflated positional magnitudes that caused\n";
+        std::cerr << "                       gambit-for-development pathology. Also accepts\n";
+        std::cerr << "                       FREEZE_POSITIONAL=1 via env.\n";
     };
 
     // Dump subcommand: load a checkpoint and emit the printCurrentValues
@@ -3645,6 +3676,16 @@ int main(int argc, char **argv) {
         const char *env = std::getenv("FREEZE_MATERIAL");
         return env && std::string(env) == "1";
     }();
+    // Freeze-positional is a strict superset of freeze-material; it
+    // additionally locks the PST and Mobility tables. Honors the
+    // FREEZE_POSITIONAL=1 env var. Setting either implies the other:
+    // freeze-positional always freezes material too, so collectParams
+    // sees a single coherent "lock material + lock positional" mode.
+    g_freezePositional = [] {
+        const char *env = std::getenv("FREEZE_POSITIONAL");
+        return env && std::string(env) == "1";
+    }();
+    if (g_freezePositional) g_freezeMaterial = true;
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -3687,6 +3728,10 @@ int main(int argc, char **argv) {
         } else if (a == "--freeze-material") {
             g_freezeMaterial = true;
             argIdx += 1;
+        } else if (a == "--freeze-positional") {
+            g_freezePositional = true;
+            g_freezeMaterial = true;
+            argIdx += 1;
         } else {
             break;
         }
@@ -3707,7 +3752,11 @@ int main(int argc, char **argv) {
     // lazy init can race in the tuner's multi-threaded loss loop.
     initBitboards();
 
-    if (g_freezeMaterial) {
+    if (g_freezePositional) {
+        std::cerr << "freezing material + positional (PieceScore, BishopPair, all PSTs, "
+                     "all MobilityBonus) - threats/pawn-structure/king-safety tune against "
+                     "fixed material + positional baselines\n";
+    } else if (g_freezeMaterial) {
         std::cerr << "freezing material (PieceScore[Pawn..Queen] and BishopPair) - "
                      "positional terms will tune against a fixed material baseline\n";
     }
