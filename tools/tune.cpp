@@ -312,14 +312,18 @@ static std::vector<ParamRef> collectParams() {
     // --- Piece-square tables. Each PST has 64 squares; skip the back/
     // front ranks of the pawn PST because they are always zero. King
     // PST squares stay tunable because the king appears on them.
-    // Stopgap range cap at +/-300 prevents corner squares from drifting
-    // into implausible magnitudes during long Texel runs.
+    // Per-square cap at +/-150 keeps individual squares from running
+    // away in long Texel runs - the prior +/-300 cap let one developed
+    // knight earn 132 mg from PST alone (b1->c3), which made
+    // gambit-for-development trades look profitable to the engine
+    // when game-result Texel had correlated "developed pieces" with
+    // "winning" on its training corpus.
     auto addPST = [&](const std::string &name, Score *arr, int start, int end) {
         for (int sq = start; sq < end; sq++) {
             out.push_back({name + "[" + std::to_string(sq) + "].mg", &arr[sq], true,
-                           boundsRange(-300, 300)});
+                           boundsRange(-150, 150)});
             out.push_back({name + "[" + std::to_string(sq) + "].eg", &arr[sq], false,
-                           boundsRange(-300, 300)});
+                           boundsRange(-150, 150)});
         }
     };
     addPST("PawnPST", evalParams.PawnPST, 8, 56);
@@ -344,7 +348,12 @@ static std::vector<ParamRef> collectParams() {
     // enough that real diminishing return shifts are still expressible
     // (knight mobility goes from 0 to 9 counts over 350 cp at the
     // extreme; capping per step at 40 still permits a 360 cp span).
-    static const int mobilitySlopeMax[7] = {0, 0, 40, 35, 30, 25, 0};
+    // Halved from the prior 40/35/30/25 caps. The previous slope let
+    // a fully-mobile bishop earn 80 mg over an immobile one in a single
+    // table; together with PST inflation, "developing one piece"
+    // turned into a near-pawn evaluation swing that made forced
+    // gambits look profitable to the engine.
+    static const int mobilitySlopeMax[7] = {0, 0, 20, 18, 15, 12, 0};
     for (int pt = Knight; pt <= Queen; pt++) {
         const int n = mobilityCounts[pt];
         const int maxStep = mobilitySlopeMax[pt];
