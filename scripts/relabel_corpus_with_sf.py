@@ -36,6 +36,17 @@ Worker invariant per position:
 No `isready` between positions; the `bestmove` line is a sufficient
 sync barrier for SF.
 
+**Resume**: on startup each worker inspects its existing shard
+(if any) and skips forward in the input by the number of complete
+rows it already has. A mid-write crash that left a partial last
+line gets trimmed to the previous newline and the truncated row is
+re-evaluated. A meta header at the top of each shard records the
+`nodes` argument the shard was built with, and a resume attempt
+with a different `nodes` value aborts rather than silently mixing
+labels. Re-run with the exact same flags to resume; pass
+`--shard-dir <newdir>` to start fresh under a different node
+budget.
+
 Tablebase probing stays on by default. Syzygy 3-4-5 lives in RAM via
 mmap after the first probe, so it adds <1us to endgame positions and
 zero to middlegame ones; on balance it improves endgame label quality
@@ -124,14 +135,101 @@ def parse_input_line(line: bytes):
     return fen, fen_stm_is_black, gids
 
 
+# Shard meta header. Lines starting with `#` are skipped by the C++
+# loader and by parse_input_line(); the header carries the nodes
+# value the shard was built with so a resume run can detect if it's
+# being asked to mix labels at different search budgets.
+SHARD_META_PREFIX = b"# nodes="
+
+
+def shard_resume_state(shard_path: str, expected_nodes: int) -> int:
+    """Inspect an existing shard for resume.
+
+    Returns the number of DATA rows already written, after trimming any
+    trailing partial line (a worker killed mid-write may have left an
+    unterminated last line). Raises RuntimeError if the shard's meta
+    header disagrees with the current `nodes` argument — refusing to
+    silently mix labels at different search budgets.
+
+    If the shard does not exist, returns 0.
+    """
+    path = Path(shard_path)
+    if not path.exists():
+        return 0
+
+    # First, read the whole file (shards are <100 MB even on the full
+    # corpus, comfortably fits in RAM).
+    with open(path, "rb") as f:
+        buf = f.read()
+
+    # If the last byte isn't a newline, the worker died mid-row. Find
+    # the last newline and trim everything after it: that row will be
+    # re-evaluated.
+    if buf and not buf.endswith(b"\n"):
+        last_nl = buf.rfind(b"\n")
+        if last_nl < 0:
+            # No complete row at all; reset the shard.
+            with open(path, "wb"):
+                pass
+            return 0
+        buf = buf[:last_nl + 1]
+        with open(path, "wb") as f:
+            f.write(buf)
+
+    # Validate meta header. If a header line exists and disagrees with
+    # the current nodes value, refuse to continue.
+    saw_nodes = None
+    rows = 0
+    for line in buf.split(b"\n"):
+        if not line:
+            continue
+        if line.startswith(SHARD_META_PREFIX):
+            # `# nodes=NNNN ...`
+            tail = line[len(SHARD_META_PREFIX):]
+            try:
+                saw_nodes = int(tail.split(b" ", 1)[0])
+            except ValueError:
+                saw_nodes = None
+            continue
+        if line.startswith(b"#"):
+            continue
+        rows += 1
+
+    if saw_nodes is not None and saw_nodes != expected_nodes:
+        raise RuntimeError(
+            f"shard {shard_path} was built with nodes={saw_nodes}, "
+            f"refusing to mix with nodes={expected_nodes}. "
+            f"Delete the shard or use --shard-dir to point elsewhere."
+        )
+    return rows
+
+
 def worker_main(worker_id: int, in_path: str, shard_out: str,
                 start_line: int, end_line: int, *,
                 sf_path: str, hash_mb: int, syzygy: str | None,
-                nodes: int, cp_scale: float):
+                nodes: int, cp_scale: float, flush_every: int = 100):
     """Each worker spawns its own SF, slices the input file, and writes
     its own shard. No queue, no python-chess wrapper.
+
+    If the shard file already exists with N valid data rows, the worker
+    skips ahead N positions in its input slice and resumes from there.
+    A mid-write crash that left the shard with a partial last line is
+    repaired by truncating to the last newline (the truncated row gets
+    re-evaluated, which is correct).
     """
     signal.signal(signal.SIGINT, signal.SIG_IGN)
+
+    # Resume check: how many rows are already in our shard?
+    already_done = shard_resume_state(shard_out, nodes)
+    resume_start = start_line + already_done
+    if already_done > 0:
+        print(f"  w{worker_id:02d}: resuming, {already_done} rows already in "
+              f"{shard_out}, picking up at line {resume_start}",
+              file=sys.stderr, flush=True)
+    if resume_start >= end_line:
+        print(f"  w{worker_id:02d}: shard already complete, skipping",
+              file=sys.stderr, flush=True)
+        return
 
     proc = subprocess.Popen([sf_path],
                             stdin=subprocess.PIPE,
@@ -170,7 +268,15 @@ def worker_main(worker_id: int, in_path: str, shard_out: str,
     nodes_cmd = f"go nodes {nodes}\n".encode()
     bestmove_prefix = b"bestmove"
 
-    out_f = open(shard_out, "wb")
+    # Open shard in APPEND mode so resume keeps existing rows.
+    # On a fresh shard, write the meta header first so future resume
+    # runs can verify the nodes value matches.
+    fresh_shard = (already_done == 0)
+    out_f = open(shard_out, "ab")
+    if fresh_shard:
+        meta = f"# nodes={nodes} cp-scale={cp_scale} worker={worker_id}\n"
+        out_f.write(meta.encode())
+        out_f.flush()
     processed = 0
     skipped = 0
     start_t = time.monotonic()
@@ -178,12 +284,12 @@ def worker_main(worker_id: int, in_path: str, shard_out: str,
 
     try:
         with open(in_path, "rb") as in_f:
-            # Skip lines before start_line. readline() on a binary
+            # Skip lines before resume_start. readline() on a binary
             # file is the fastest scan available without indexing.
-            for _ in range(start_line):
+            for _ in range(resume_start):
                 if not in_f.readline():
                     break
-            line_no = start_line
+            line_no = resume_start
             for raw_line in in_f:
                 if line_no >= end_line:
                     break
@@ -216,6 +322,15 @@ def worker_main(worker_id: int, in_path: str, shard_out: str,
                     label = cp_to_label(last_cp, cp_scale)
                     out_f.write(fen + b" | " + f"{label}".encode() + b" | " + gids + b"\n")
                 processed += 1
+
+                # Flush the shard every `flush_every` rows so a hard
+                # crash (OOM kill, SIGKILL, power loss) loses at most
+                # that many rows. The OS may still hold the bytes in
+                # its page cache for a few more seconds; that is OK
+                # for resume because we trim a partial last line on
+                # restart and re-evaluate one row.
+                if processed % flush_every == 0:
+                    out_f.flush()
 
                 now = time.monotonic()
                 if now - last_report_t >= 30.0:
