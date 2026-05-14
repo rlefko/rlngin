@@ -38,7 +38,7 @@ TUNE_TARGET := $(BUILDDIR)/tune
 TUNE_SRC := tools/tune.cpp
 TUNE_OBJ := $(BUILDDIR)/tune.o
 
-.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa texel-selfplay texel-extract texel-tune texel texel-bg texel-stop texel-status texel-dump texel-apply
+.PHONY: build clean run test format format-check fetch-catch2 fetch-fastchess fetch-openings selfplay tune spsa texel-selfplay texel-extract texel-tune texel texel-bg texel-stop texel-status texel-dump texel-apply relabel relabel-bg relabel-stop relabel-status
 
 # Texel pipeline tunables. Override on the command line, e.g.:
 #   make texel-bg ROUNDS=10000 LIMIT=1+0.08 TUNE_PASSES=50
@@ -47,6 +47,13 @@ LIMIT ?= nodes=100000
 CONCURRENCY ?= 12
 TUNE_THREADS ?= 14
 TUNE_PASSES ?= 30
+
+# Corpus relabel tunables. Override on the command line, e.g.:
+#   make relabel-bg NODES=50000 WORKERS=14 HASH_MB=16
+#   FORCE=1 make relabel-bg      # wipe shards and restart from scratch
+NODES ?= 100000
+WORKERS ?= 14
+HASH_MB ?= 16
 
 build: $(TARGET)
 
@@ -181,4 +188,32 @@ texel-dump: $(TUNE_TARGET)
 # not commit; review with `git diff` and commit when ready.
 texel-apply: $(TUNE_TARGET)
 	@./scripts/texel_apply_checkpoint.sh
+
+# --- Corpus relabel with Stockfish ---------------------------------------
+#
+# Re-evaluate every row of tuning/texel/positions.epd with a fresh
+# Stockfish search at `NODES` per position, 14 parallel single-thread
+# workers, Hash=16MB each, Syzygy 3-4-5 on. Each worker writes its own
+# shard; a meta header records the nodes value so a resume run can
+# refuse to mix labels at different budgets. Plan ~17h wall clock at
+# NODES=100000 on the 6.8M-row corpus.
+#
+#   make relabel           foreground (rarely useful)
+#   make relabel-bg        detached, caffeinate-wrapped, resumable
+#   make relabel-stop      SIGTERM the run; shards preserved for resume
+#   make relabel-status    progress + per-shard row counts + log tail
+#   FORCE=1 make relabel-bg   wipe shards and restart from scratch
+
+relabel:
+	@python3 ./scripts/relabel_corpus_with_sf.py \
+	    --nodes $(NODES) --workers $(WORKERS) --hash-mb $(HASH_MB)
+
+relabel-bg:
+	@./scripts/relabel_bg.sh $(NODES) $(WORKERS) $(HASH_MB)
+
+relabel-stop:
+	@./scripts/relabel_stop.sh
+
+relabel-status:
+	@./scripts/relabel_status.sh
 
