@@ -1311,6 +1311,21 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     state.pv[0][0] = rootMoves[0].move;
     state.pvLength[0] = 1;
 
+    // Snapshot of the last fully-completed (exact aspiration result, slot 0)
+    // iteration's PV + bestmove + ponder. Used as a fallback at the end of
+    // startSearch when the just-finished iteration left state degraded:
+    // either pvLength[0] < 2 because a fail-low recovery wrote a length-1
+    // PV (state.pv[0] = [currentBest], state.ponderMove = none) and the
+    // clock fired before the widened-window retry produced an exact result
+    // of its own, or because the aspiration retry loop's line 1440 reset
+    // of pvLength[0] to 0 happened and the retry was interrupted mid-root-
+    // move-loop. Without this snapshot, every successful iteration N can
+    // be silently demoted by an interrupted iteration N+1.
+    Move previousPv[MAX_PLY];
+    int previousPvLen = 0;
+    Move previousBestMove = {0, 0, None};
+    Move previousPonderMove = {0, 0, None};
+
     // Snapshot the MultiPV setting for the whole search. The UCI loop drains
     // any in-flight search before accepting another setoption, but the
     // snapshot keeps per-search state self-consistent regardless.
@@ -1605,6 +1620,19 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 } else {
                     state.ponderMove = {0, 0, None};
                 }
+                // Snapshot the just-completed iteration before the next
+                // iteration's first aspiration retry can wipe pv[0] at the
+                // top of its retry loop. This is the only place an iteration
+                // is known to have produced an exact-bound result the
+                // engine actually trusts; later retries within a single
+                // iteration are inside-the-aspiration-loop work, not a
+                // committed verdict.
+                if (state.pvLength[0] >= 1) {
+                    std::copy(state.pv[0], state.pv[0] + state.pvLength[0], previousPv);
+                    previousPvLen = state.pvLength[0];
+                    previousBestMove = state.bestMove;
+                    previousPonderMove = state.ponderMove;
+                }
             }
 
             printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT, slot + 1);
@@ -1631,6 +1659,29 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             searchAgainCounter++;
         }
         prevIterationFailLowAfterFailHigh = iterFailLowAfterFailHigh;
+    }
+
+    // Restore from the last fully-completed iteration if the just-finished
+    // state is degraded. This recovers from three failure modes that all
+    // produce the same symptom (bestmove emitted without a ponder follow-
+    // up, sometimes with a worse bestmove than the previous iteration had
+    // verified):
+    //   1. iteration N+1's fail-low recovery wrote pvLength[0] = 1 with
+    //      [currentBest] and the fail-low's printSearchInfo cleared
+    //      state.ponderMove to none, then the widened-window retry was
+    //      interrupted before producing an exact result of its own.
+    //   2. iteration N+1's first aspiration retry reset pvLength[0] = 0
+    //      at the top of its retry loop and got interrupted mid-root-
+    //      move-loop before any move beat localAlpha to repopulate it.
+    //   3. iteration N+1's fail-low picked a different currentBest than
+    //      iteration N had locked in, and printSearchInfo's bestMove
+    //      pin (state.bestMove = pv[0][0]) overwrote N's verdict with
+    //      N+1's partial choice.
+    if (state.pvLength[0] < 2 && previousPvLen >= 2) {
+        std::copy(previousPv, previousPv + previousPvLen, state.pv[0]);
+        state.pvLength[0] = previousPvLen;
+        state.bestMove = previousBestMove;
+        state.ponderMove = previousPonderMove;
     }
 
     // Defensive fallback: if no aspiration path ever set bestMove (for
