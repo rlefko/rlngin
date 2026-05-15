@@ -1311,6 +1311,15 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
     state.pv[0][0] = rootMoves[0].move;
     state.pvLength[0] = 1;
 
+    // Snapshot of the last fully-completed (slot 0 exact aspiration result)
+    // iteration's bestmove and ponder. Used at the end of startSearch to fill
+    // in a missing ponder when the next iteration was interrupted before it
+    // produced its own exact result, but only when the engine's chosen
+    // bestmove still matches the snapshot so a fresh fail-low verdict in the
+    // interrupted iteration is never overridden by stale data.
+    Move previousBestMove = {0, 0, None};
+    Move previousPonderMove = {0, 0, None};
+
     // Snapshot the MultiPV setting for the whole search. The UCI loop drains
     // any in-flight search before accepting another setoption, but the
     // snapshot keeps per-search state self-consistent regardless.
@@ -1605,6 +1614,12 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
                 } else {
                     state.ponderMove = {0, 0, None};
                 }
+                // Snapshot the just-committed verdict. Later aspiration
+                // retries reset pv[0] before producing an exact result of
+                // their own, so this slot 0 exact-bound exit is the only
+                // safe capture point.
+                previousBestMove = state.bestMove;
+                previousPonderMove = state.ponderMove;
             }
 
             printSearchInfo(depth, state, currentBestScore, timeMs, BOUND_EXACT, slot + 1);
@@ -1631,6 +1646,21 @@ void startSearch(const Board &board, const SearchLimits &limits, SearchState &st
             searchAgainCounter++;
         }
         prevIterationFailLowAfterFailHigh = iterFailLowAfterFailHigh;
+    }
+
+    // Recover a missing ponder hint from the last completed iteration, but
+    // only when the engine's chosen bestmove still matches that snapshot.
+    // The bestmove-match guard is the load-bearing piece: when an
+    // interrupted iteration's fail-low recovery picks a different root
+    // move than the previous iteration had verified, that move is the
+    // engine's freshest signal from a deeper search and replacing it with
+    // stale data loses Elo. Touching only ponderMove never overrides the
+    // played move; UCI consumers read state.bestMove and state.ponderMove
+    // independently and the ponder is a hint, not a commitment.
+    if (state.ponderMove.from == 0 && state.ponderMove.to == 0 &&
+        (previousPonderMove.from != 0 || previousPonderMove.to != 0) &&
+        isSameMove(state.bestMove, previousBestMove)) {
+        state.ponderMove = previousPonderMove;
     }
 
     // Defensive fallback: if no aspiration path ever set bestMove (for
