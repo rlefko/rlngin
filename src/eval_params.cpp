@@ -205,7 +205,7 @@ static const EvalParams kDefaultEvalParams = {
     S(-26, 0), // UndefendedKingZoneSq
     S(11, 0), // KingMobilityFactor
     S(21, 36), // KingAttackByKnight
-    S(5, 47), // KingAttackByBishop
+    S(5, 40), // KingAttackByBishop
     S(21, 36), // KingAttackByRook
     S(21, 36), // KingAttackByQueen
     {S(0, 0), S(0, 0), S(29, 0), S(28, 619), S(29, 0), S(29, 0), S(0, 0)}, // KingSafeCheck
@@ -217,7 +217,7 @@ static const EvalParams kDefaultEvalParams = {
     S(-26, -12), // WeakUnopposedPenalty
     S(-32, -44), // DoubledIsolatedPenalty
     {S(0, -23), S(0, 0)}, // BlockedPawnPenalty (rel rank 5, 6)
-    S(-41, -14), // PawnIslandPenalty
+    S(-40, -14), // PawnIslandPenalty
     {S(36, 0), S(15, 0)}, // CentralPawnBonus
     S(28, 21), // BishopLongDiagonalBonus
     S(-15, 0), // BishopXrayPawns

@@ -150,16 +150,16 @@ static std::vector<ParamRef> collectParams() {
     //   KnightOnQueen         <= 0.30 * Pawn
     //   SliderOnQueen*        <= 0.30 * Pawn
     addMgEgConstr("ThreatByPawn", &evalParams.ThreatByPawn, boundsNonNegative());
-    addMgEgConstr("ThreatByMinor[Rook]", &evalParams.ThreatByMinor[Rook], boundsRange(0, 100));
-    addMgEgConstr("ThreatByMinor[Queen]", &evalParams.ThreatByMinor[Queen], boundsRange(0, 80));
-    addMgEgConstr("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen], boundsRange(0, 100));
+    addMgEgConstr("ThreatByMinor[Rook]", &evalParams.ThreatByMinor[Rook], boundsNonNegative());
+    addMgEgConstr("ThreatByMinor[Queen]", &evalParams.ThreatByMinor[Queen], boundsNonNegative());
+    addMgEgConstr("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen], boundsNonNegative());
     addMgEgConstr("ThreatByKing", &evalParams.ThreatByKing, boundsNonNegative());
     addMgEgConstr("Hanging", &evalParams.Hanging, boundsNonNegative());
-    addMgEgConstr("WeakQueen", &evalParams.WeakQueen, boundsRange(0, 50));
+    addMgEgConstr("WeakQueen", &evalParams.WeakQueen, boundsNonNegative());
     addMgEgConstr("SafePawnPush", &evalParams.SafePawnPush, boundsNonNegative());
     addMgEgConstr("ThreatByPawnPush", &evalParams.ThreatByPawnPush, boundsNonNegative());
     addMgEgConstr("WeakQueenDefender", &evalParams.WeakQueenDefender, boundsNonPositive());
-    addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsRange(0, 60));
+    addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsNonNegative());
     addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, boundsNonPositive());
     addMgEgConstr("QueenInfiltration", &evalParams.QueenInfiltration, boundsNonNegative());
     // Align Texel bounds with the matching SPSA spec ranges so both
@@ -345,9 +345,9 @@ static std::vector<ParamRef> collectParams() {
     auto addPST = [&](const std::string &name, Score *arr, int start, int end) {
         for (int sq = start; sq < end; sq++) {
             out.push_back({name + "[" + std::to_string(sq) + "].mg", &arr[sq], true,
-                           boundsRange(-150, 150)});
+                           boundsRange(-300, 300)});
             out.push_back({name + "[" + std::to_string(sq) + "].eg", &arr[sq], false,
-                           boundsRange(-150, 150)});
+                           boundsRange(-300, 300)});
         }
     };
     // PST tables are skipped under --freeze-positional so the hand-
@@ -377,16 +377,16 @@ static std::vector<ParamRef> collectParams() {
     // prior alone lets the tuner spike a single count by 50+ cp when a
     // recurring corpus motif rewards exactly that count. Capping the
     // delta between adjacent counts keeps the curve readable as a
-    // smooth gradient instead of a step function. Values are loose
-    // enough that real diminishing return shifts are still expressible
-    // (knight mobility goes from 0 to 9 counts over 350 cp at the
-    // extreme; capping per step at 40 still permits a 360 cp span).
-    // Halved from the prior 40/35/30/25 caps. The previous slope let
-    // a fully-mobile bishop earn 80 mg over an immobile one in a single
-    // table; together with PST inflation, "developing one piece"
-    // turned into a near-pawn evaluation swing that made forced
-    // gambits look profitable to the engine.
-    static const int mobilitySlopeMax[7] = {0, 0, 20, 18, 15, 12, 0};
+    // smooth gradient instead of a step function. Values match main's
+    // 40/35/30/25; the earlier halving (20/18/15/12) was an anti-
+    // Scandinavian defense that capped the entire mobility table at
+    // half main's magnitude, costing the engine ~300 eg per rook and
+    // ~250 eg per queen of positional vocabulary and effectively
+    // preventing the tuner from ever recovering main's eval shape.
+    // The anti-gambit anchor now lives in the W/D/L curated EPD with
+    // calibrated SF WDL labels, so the slope caps no longer need to
+    // defend against the gambit on their own.
+    static const int mobilitySlopeMax[7] = {0, 0, 40, 35, 30, 25, 0};
     // Mobility tables are skipped under --freeze-positional alongside
     // the PSTs - both halves of the positional gauge stay fixed so the
     // tuner cannot redistribute development credit back into mobility

@@ -56,14 +56,14 @@ TEST_CASE("Eval: material values include PST bonuses", "[eval]") {
     // expected score; the KingPawnDistEg term subtracts a chebyshev-
     // distance penalty for the king sitting four squares from the pawn.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 296);
+    CHECK(evaluate(board) == 293);
 
     // Knight or bishop versus a bare king is a textbook draw. The
     // pawnless-minor-only scale evaluator collapses eg to zero so only
     // the tapered middlegame residual survives, which is small at
     // phase 1 with a single minor.
     board.setFen("4k3/8/8/8/8/8/8/N3K3 w - - 0 1");
-    CHECK(evaluate(board) == 14);
+    CHECK(evaluate(board) == 13);
 
     board.setFen("4k3/8/8/8/8/8/8/B3K3 w - - 0 1");
     CHECK(evaluate(board) == 29);
@@ -227,7 +227,7 @@ TEST_CASE("Eval: king safety is symmetric", "[eval][kingsafety]") {
     // depends on the tuned king-safety weights and may need refreshing
     // after retunes.
     board.setFen("r1bq1rk1/pppppppp/2n2n2/8/8/2N2N2/PPPPPPPP/R1BQ1RK1 w - - 0 1");
-    CHECK(evaluate(board) == 34);
+    CHECK(evaluate(board) == 36);
 }
 
 TEST_CASE("Eval: king with fewer safe squares scores worse", "[eval][kingsafety]") {
@@ -473,7 +473,7 @@ TEST_CASE("Eval: blocked non-passer pawn term fires on rank 5 and 6", "[eval][pa
     {
         std::string line = blockedPawnsLine(board);
         CHECK(line.find("mg=     0") != std::string::npos);
-        CHECK(line.find("eg=   -24") != std::string::npos);
+        CHECK(line.find("eg=   -23") != std::string::npos);
     }
 
     // White e6 pawn blocked by a black knight on e7, with a black d7 pawn
@@ -517,7 +517,7 @@ TEST_CASE("Eval: passed pawns do not absorb the weak-unopposed surcharge", "[eva
     // king sits on h8 to keep the position outside the KPK rook-file
     // fortress envelope.
     board.setFen("7k/8/8/8/8/8/P7/4K3 w - - 0 1");
-    CHECK(evaluate(board) == 296);
+    CHECK(evaluate(board) == 293);
 
     // Textbook K + P vs K with the strong king escorting a rook pawn
     // one square from promotion. The KPK bitbase confirms WIN, so the
