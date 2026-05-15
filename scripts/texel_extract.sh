@@ -14,11 +14,15 @@ set -euo pipefail
 #   SKIP_PLIES:    plies to skip at the start (default: 8)
 #   TAIL_PLIES:    plies to skip at the end (default: 2)
 #   LABEL_FROM_CP: 1 to label each position from its engine cp
-#                  comment via a logistic (default: 1; the Stockfish
-#                  self-play corpus already carries depth-bounded cp
-#                  per move and per-position cp is strictly more
-#                  informative than aggregate W/D/L). Set to 0 to
-#                  fall back to the legacy game-outcome label.
+#                  comment via a logistic; 0 for the W/D/L game-
+#                  outcome label (default: 0). The cp-labelled
+#                  default was reverted after a position-level eval
+#                  diff vs main found that cp-label retunes produced
+#                  smaller mg material magnitudes and an eval shape
+#                  that consistently undervalued middlegame positions
+#                  by 30-80 cp vs the W/D/L baseline. W/D/L anchors
+#                  "winning a piece often wins the game" in a way the
+#                  noisy fastchess d10-12 cp comments do not.
 #   CP_SCALE:      cp scale for the logistic squash when
 #                  LABEL_FROM_CP=1 (default: 200)
 
@@ -33,7 +37,7 @@ EXTRA_ARGS=("$@")
 
 SKIP_PLIES="${SKIP_PLIES:-0}"
 TAIL_PLIES="${TAIL_PLIES:-2}"
-LABEL_FROM_CP="${LABEL_FROM_CP:-1}"
+LABEL_FROM_CP="${LABEL_FROM_CP:-0}"
 CP_SCALE="${CP_SCALE:-200}"
 LOG="$OUTPUT/extract.log"
 
