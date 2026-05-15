@@ -10,14 +10,11 @@
 TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
     const auto &specs = tunables();
 
-    // Ninety five is the committed SPSA surface: the eighty-eight pre-uplift
-    // scalars plus the four search-strength uplift scalars from #76
-    // (SingularBetaMul, SingularDepthDiv, SingularDoubleMargin,
-    // IirCutNodeDepth), the two aspiration-window scalars from #78
-    // (AspWindowBase, AspWindowDiv), and PawnHistoryWeight from this PR.
-    // If this count ever changes, the SPSA driver's iteration budget and
-    // the PR description should move too.
-    REQUIRE(specs.size() == 95);
+    // One hundred and six is the committed SPSA surface: one hundred
+    // and five pre-SEE-aware-threats scalars plus EscapableThreatScaleEg,
+    // which scales down each threat term's credit for a target that
+    // has a quiet escape from our lower-value attackers.
+    REQUIRE(specs.size() == 106);
 
     std::set<std::string> names;
     for (const TunableSpec &spec : specs) {
@@ -35,6 +32,23 @@ TEST_CASE("Tunable registry: exposes the expected SPSA surface", "[tunable]") {
         // gain sequence and freeze the parameter.
         CHECK(spec.cEnd > 0.0);
         CHECK(spec.rEnd > 0.0);
+    }
+}
+
+TEST_CASE("Tunable registry: compiled defaults live inside every SPSA bound",
+          "[tunable][defaults]") {
+    // Catches stale tuned snapshots that ended up outside the spec
+    // range (Texel running against a wider constraint catalog, copy-
+    // paste field-order mismatches, or a fresh field whose default
+    // never got registered). Without this check, the engine boots up
+    // with parameters the tuner would project out on the next pass.
+    resetEvalParams();
+    resetSearchParams();
+    for (const TunableSpec &spec : tunables()) {
+        CAPTURE(spec.name);
+        const int live = spec.get();
+        CHECK(live >= spec.minValue);
+        CHECK(live <= spec.maxValue);
     }
 }
 

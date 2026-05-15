@@ -35,3 +35,11 @@ tuning/texel/pipeline.pid
 # passes; only the compiled-in defaults in src/eval_params.cpp ship.
 tuning/checkpoint.txt
 tuning/checkpoint_bestval.txt
+
+# Master games corpora pulled by scripts/fetch_val_corpus.sh (used as
+# the val partition) and scripts/fetch_train_master.sh (mixed into the
+# training set via CURATED_EPD). Both are best-effort downloads that
+# the pipeline auto-fetches; the EPDs are large and re-derivable.
+tuning/val/master_positions.epd
+tuning/train/master_positions.epd
+scripts/__pycache__/

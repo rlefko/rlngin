@@ -80,6 +80,20 @@ set -euo pipefail
 #                          (default: 1e-9). Read by the tuner.
 #   PAWN_MIRROR_LAMBDA:    pawn PST mirror prior strength
 #                          (default: 1e-8). Read by the tuner.
+#   FREEZE_MATERIAL:       1 to hold PieceScore[Pawn..Queen] and
+#                          BishopPair fixed during the pass so
+#                          positional / threat / PST terms tune
+#                          against a fixed material baseline
+#                          (default: unset). Recommended after a
+#                          material drift, e.g. when prior tunes
+#                          have pushed activity terms to cover for
+#                          drifting pawn values.
+#   FREEZE_POSITIONAL:     1 to hold PSTs and MobilityBonus fixed in
+#                          addition to material; threats / pawn
+#                          structure / king safety tune against
+#                          hand-coded chess-wisdom PST and mobility
+#                          baselines. Strict superset of
+#                          FREEZE_MATERIAL (default: unset).
 
 OUTPUT="${OUTPUT:-tuning/texel}"
 CORPUS="${1:-$OUTPUT/positions.epd}"
@@ -123,6 +137,12 @@ ARGS+=(--val-gate-patience "${VAL_GATE_PATIENCE:-8}")
 if [ "${VAL_GATE:-0}" != "0" ]; then
     ARGS+=(--val-gate)
 fi
+if [ "${FREEZE_MATERIAL:-0}" != "0" ]; then
+    ARGS+=(--freeze-material)
+fi
+if [ "${FREEZE_POSITIONAL:-0}" != "0" ]; then
+    ARGS+=(--freeze-positional)
+fi
 
 echo "Texel tune: $CORPUS"
 echo "  threads:           $THREADS"
@@ -141,6 +161,12 @@ if [ "${VAL_GATE:-0}" != "0" ]; then
     echo "  val-gate-patience: ${VAL_GATE_PATIENCE:-8} pass(es)"
 else
     echo "  val-gate:          off (diagnostics only)"
+fi
+if [ "${FREEZE_MATERIAL:-0}" != "0" ]; then
+    echo "  freeze-material:   on (PieceScore[Pawn..Queen] and BishopPair held fixed)"
+fi
+if [ "${FREEZE_POSITIONAL:-0}" != "0" ]; then
+    echo "  freeze-positional: on (PSTs and MobilityBonus also held fixed; implies freeze-material)"
 fi
 if [ -n "${VAL_EPD:-}" ]; then
     echo "  val-epd (external): $VAL_EPD"

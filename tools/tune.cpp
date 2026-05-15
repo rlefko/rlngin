@@ -99,6 +99,25 @@ static std::function<Bounds()> boundsRange(int lo, int hi) {
     return [lo, hi] { return Bounds{lo, hi}; };
 }
 
+// Global "freeze material" toggle. When true, collectParams() omits
+// PieceScore[Pawn..Queen] and BishopPair so the tuner cannot move
+// material values during the pass. Used in two-stage retunes after a
+// material drift: freeze first, retune everything else against the
+// frozen material baseline, then optionally unfreeze for a joint
+// polish pass. Set via the --freeze-material CLI flag or the
+// FREEZE_MATERIAL=1 environment variable.
+static bool g_freezeMaterial = false;
+
+// Global "freeze positional" toggle. Strict superset of
+// --freeze-material: when true, also omits all six PST tables and
+// every MobilityBonus[pt] entry from collectParams(). Used to lock in
+// chess-wisdom hand-coded PST/mobility baselines so the tuner cannot
+// re-introduce the inflated positional magnitudes that previously
+// made the engine prefer development-for-pawn gambits like the
+// Scandinavian Blackburne-Kloosterboer. Set via --freeze-positional
+// or FREEZE_POSITIONAL=1.
+static bool g_freezePositional = false;
+
 static std::vector<ParamRef> collectParams() {
     std::vector<ParamRef> out;
     auto addMgEg = [&](const std::string &name, Score *s, bool mg = true, bool eg = true) {
@@ -116,10 +135,23 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Threats: every term here is a true bonus on attacker side, so
     // none of them should ever go negative regardless of corpus drift.
+    // Caps on queen-target and rook-target threats are set relative to
+    // pawn value (PieceScore[Pawn] is around S(200, 200)) so the tuner
+    // cannot turn a single quiet attack on a higher-value piece into a
+    // multi-pawn evaluation swing. Game-result Texel does not see the
+    // attacked piece's escape squares, so without these caps it keeps
+    // pushing queen-threat magnitudes upward and the engine starts
+    // preferring lines like the Blackburne-Kloosterboer gambit because
+    // the principled recapture leaves the queen attacked at the
+    // horizon. Magnitudes follow the second-opinion review:
+    //   ThreatByMinor[Queen]  <= 0.40 * Pawn
+    //   ThreatByRook[Queen]   <= 0.50 * Pawn
+    //   WeakQueen             <= 0.25 * Pawn
+    //   KnightOnQueen         <= 0.30 * Pawn
+    //   SliderOnQueen*        <= 0.30 * Pawn
     addMgEgConstr("ThreatByPawn", &evalParams.ThreatByPawn, boundsNonNegative());
-    for (int v = Rook; v <= Queen; v++)
-        addMgEgConstr("ThreatByMinor[" + std::to_string(v) + "]",
-                      &evalParams.ThreatByMinor[v], boundsNonNegative());
+    addMgEgConstr("ThreatByMinor[Rook]", &evalParams.ThreatByMinor[Rook], boundsNonNegative());
+    addMgEgConstr("ThreatByMinor[Queen]", &evalParams.ThreatByMinor[Queen], boundsNonNegative());
     addMgEgConstr("ThreatByRook[Queen]", &evalParams.ThreatByRook[Queen], boundsNonNegative());
     addMgEgConstr("ThreatByKing", &evalParams.ThreatByKing, boundsNonNegative());
     addMgEgConstr("Hanging", &evalParams.Hanging, boundsNonNegative());
@@ -130,12 +162,49 @@ static std::vector<ParamRef> collectParams() {
     addMgEgConstr("KnightOnQueen", &evalParams.KnightOnQueen, boundsNonNegative());
     addMgEgConstr("PawnlessFlank", &evalParams.PawnlessFlank, boundsNonPositive());
     addMgEgConstr("QueenInfiltration", &evalParams.QueenInfiltration, boundsNonNegative());
+    // Align Texel bounds with the matching SPSA spec ranges so both
+    // tuners explore the same feasible region. Otherwise Texel can push
+    // a parameter far past SPSA's clamp and the compiled defaults
+    // silently violate the spec.
     out.push_back(
-        {"KingPawnDistEg.eg", &evalParams.KingPawnDistEg, false, boundsNonPositive()});
+        {"KingPawnDistEg.eg", &evalParams.KingPawnDistEg, false, boundsRange(-50, 0)});
     out.push_back(
-        {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsNonNegative()});
+        {"KBNKCornerEg.eg", &evalParams.KBNKCornerEg, false, boundsRange(0, 40)});
     out.push_back(
-        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsNonNegative()});
+        {"LucenaEg.eg", &evalParams.LucenaEg, false, boundsRange(0, 250)});
+    // Mating-conversion push gradients: per-square eg weights. After
+    // the pushToEdge feature was normalized to 0..3 the per-unit
+    // signal got smaller, so the old 0..50 cap let Texel turn each
+    // gradient into a residual sink. Caps match the tighter SPSA
+    // ranges below.
+    out.push_back(
+        {"KXKPushToEdgeEg.eg", &evalParams.KXKPushToEdge, false, boundsRange(0, 30)});
+    out.push_back(
+        {"KXKPushCloseEg.eg", &evalParams.KXKPushClose, false, boundsRange(0, 25)});
+    out.push_back(
+        {"KBNKPushCloseEg.eg", &evalParams.KBNKPushClose, false, boundsRange(0, 25)});
+    out.push_back(
+        {"KQKRPushToEdgeEg.eg", &evalParams.KQKRPushToEdge, false, boundsRange(0, 30)});
+    out.push_back(
+        {"KQKRPushCloseEg.eg", &evalParams.KQKRPushClose, false, boundsRange(0, 15)});
+
+    // Drawishness scales: ScaleResult multiplier in 0..64 (values
+    // above 64 would amplify the eg rather than damp it). Lower
+    // bound matches the SPSA range for the parameter; full-fortress
+    // configurations can tune down to zero, partial-fortress shapes
+    // stay at the small positive floor.
+    out.push_back(
+        {"KPsKFortressScaleEg.eg", &evalParams.KPsKFortressScale, false, boundsRange(0, 32)});
+    out.push_back(
+        {"KBPKNDrawishScaleEg.eg", &evalParams.KBPKNDrawishScale, false, boundsRange(0, 32)});
+    out.push_back(
+        {"KRKPDrawishScaleEg.eg", &evalParams.KRKPDrawishScale, false, boundsRange(16, 48)});
+    out.push_back(
+        {"KRKMinorScaleEg.eg", &evalParams.KRKMinorScale, false, boundsRange(16, 48)});
+    out.push_back(
+        {"KNNKDrawScaleEg.eg", &evalParams.KNNKDrawScale, false, boundsRange(0, 32)});
+    out.push_back({"EscapableThreatScaleEg.eg", &evalParams.EscapableThreatScale, false,
+                   boundsRange(0, 24)});
 
     // --- Passed pawn extras (rank 3..6 inclusive are the interesting
     // slots -- ranks 0/1/2 and 7 stay at zero).
@@ -239,14 +308,40 @@ static std::vector<ParamRef> collectParams() {
     addMgEg("Tempo", &evalParams.Tempo, true, false); // mg only
 
     // --- Material (skip None and King; both are structurally zero) ---
-    for (int pt = Pawn; pt <= Queen; pt++)
-        addMgEg("PieceScore[" + std::to_string(pt) + "]", &evalParams.PieceScore[pt]);
+    // Optionally frozen via --freeze-material so a follow-up tune can
+    // refine the positional terms against a fixed material baseline.
+    // Without freezing, game-result Texel can drift PieceScore[Pawn]
+    // and the activity / threat / PST terms together such that a
+    // one-pawn material edge gets eaten by inflated positional bonuses,
+    // which is the failure mode the Scandinavian canary surfaced.
+    //
+    // PieceScore[Pawn].mg additionally carries a >= 150 lower-bound
+    // floor (= ~66 cp at the 228-per-pawn internal gauge). Empirically
+    // unbounded Texel kept driving it from 179 -> 130 across recent
+    // cp-label tunes; that is a degenerate gauge solution (the loss
+    // is invariant to shifting weight between PieceScore[Pawn] and
+    // pawn-related positional terms, but the *play* depends on the
+    // absolute pawn weight). The floor sits below typical
+    // chess-correct values (~175-200) so the tuner still has room
+    // to optimize, but stops the gauge from collapsing.
+    if (!g_freezeMaterial) {
+        addMgEgConstr("PieceScore[" + std::to_string(static_cast<int>(Pawn)) + "]",
+                      &evalParams.PieceScore[Pawn], boundsRange(150, 400), true, false);
+        addMgEg("PieceScore[" + std::to_string(static_cast<int>(Pawn)) + "]",
+                &evalParams.PieceScore[Pawn], false, true); // eg unconstrained
+        for (int pt = Knight; pt <= Queen; pt++)
+            addMgEg("PieceScore[" + std::to_string(pt) + "]", &evalParams.PieceScore[pt]);
+    }
 
     // --- Piece-square tables. Each PST has 64 squares; skip the back/
     // front ranks of the pawn PST because they are always zero. King
     // PST squares stay tunable because the king appears on them.
-    // Stopgap range cap at +/-300 prevents corner squares from drifting
-    // into implausible magnitudes during long Texel runs.
+    // Per-square cap at +/-150 keeps individual squares from running
+    // away in long Texel runs - the prior +/-300 cap let one developed
+    // knight earn 132 mg from PST alone (b1->c3), which made
+    // gambit-for-development trades look profitable to the engine
+    // when game-result Texel had correlated "developed pieces" with
+    // "winning" on its training corpus.
     auto addPST = [&](const std::string &name, Score *arr, int start, int end) {
         for (int sq = start; sq < end; sq++) {
             out.push_back({name + "[" + std::to_string(sq) + "].mg", &arr[sq], true,
@@ -255,12 +350,21 @@ static std::vector<ParamRef> collectParams() {
                            boundsRange(-300, 300)});
         }
     };
-    addPST("PawnPST", evalParams.PawnPST, 8, 56);
-    addPST("KnightPST", evalParams.KnightPST, 0, 32);
-    addPST("BishopPST", evalParams.BishopPST, 0, 32);
-    addPST("RookPST", evalParams.RookPST, 0, 32);
-    addPST("QueenPST", evalParams.QueenPST, 0, 32);
-    addPST("KingPST", evalParams.KingPST, 0, 32);
+    // PST tables are skipped under --freeze-positional so the hand-
+    // coded chess-wisdom baselines stay locked while the threat /
+    // king-safety / pawn-structure terms tune against them. Without
+    // freezing, game-result Texel can re-inflate the per-square
+    // gradients (the prior tune pushed KnightPST[b1] to -161 mg,
+    // which made one developed knight worth ~half a pawn and the
+    // engine started gambitting for development).
+    if (!g_freezePositional) {
+        addPST("PawnPST", evalParams.PawnPST, 8, 56);
+        addPST("KnightPST", evalParams.KnightPST, 0, 32);
+        addPST("BishopPST", evalParams.BishopPST, 0, 32);
+        addPST("RookPST", evalParams.RookPST, 0, 32);
+        addPST("QueenPST", evalParams.QueenPST, 0, 32);
+        addPST("KingPST", evalParams.KingPST, 0, 32);
+    }
 
     // --- Mobility bonuses (only Knight..Queen rows carry values).
     // Soft chess prior: more attacked mobility-area squares is at least
@@ -273,12 +377,21 @@ static std::vector<ParamRef> collectParams() {
     // prior alone lets the tuner spike a single count by 50+ cp when a
     // recurring corpus motif rewards exactly that count. Capping the
     // delta between adjacent counts keeps the curve readable as a
-    // smooth gradient instead of a step function. Values are loose
-    // enough that real diminishing return shifts are still expressible
-    // (knight mobility goes from 0 to 9 counts over 350 cp at the
-    // extreme; capping per step at 40 still permits a 360 cp span).
+    // smooth gradient instead of a step function. Values match main's
+    // 40/35/30/25; the earlier halving (20/18/15/12) was an anti-
+    // Scandinavian defense that capped the entire mobility table at
+    // half main's magnitude, costing the engine ~300 eg per rook and
+    // ~250 eg per queen of positional vocabulary and effectively
+    // preventing the tuner from ever recovering main's eval shape.
+    // The anti-gambit anchor now lives in the W/D/L curated EPD with
+    // calibrated SF WDL labels, so the slope caps no longer need to
+    // defend against the gambit on their own.
     static const int mobilitySlopeMax[7] = {0, 0, 40, 35, 30, 25, 0};
-    for (int pt = Knight; pt <= Queen; pt++) {
+    // Mobility tables are skipped under --freeze-positional alongside
+    // the PSTs - both halves of the positional gauge stay fixed so the
+    // tuner cannot redistribute development credit back into mobility
+    // when PSTs are unavailable to absorb it.
+    if (!g_freezePositional) for (int pt = Knight; pt <= Queen; pt++) {
         const int n = mobilityCounts[pt];
         const int maxStep = mobilitySlopeMax[pt];
         for (int i = 0; i < n; i++) {
@@ -417,8 +530,12 @@ static std::vector<ParamRef> collectParams() {
 
     // --- Bishop pair: universally accepted positive imbalance, locked
     // non-negative so the tuner cannot push the term into a residual
-    // role that contradicts the prior.
-    addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
+    // role that contradicts the prior. Frozen alongside PieceScore
+    // under --freeze-material since the pair bonus is part of the
+    // material gauge the freeze pass aims to fix.
+    if (!g_freezeMaterial) {
+        addMgEgConstr("BishopPair", &evalParams.BishopPair, boundsNonNegative());
+    }
 
     // --- Shelter and storm grids (mg only). Shelter is structurally a
     // middlegame concept and the eg halves stay at their compile-time
@@ -583,13 +700,26 @@ static std::vector<ParamRef> collectParams() {
     // (see eval_params.h:206-208) and live entirely in the eg half. The
     // first six are positive features; InitiativeConstant is the
     // negative baseline shift.
-    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, boundsNonNegative()});
+    //
+    // Per-feature upper bounds were added after evaluateVerbose probes of
+    // the Scandinavian Mieses gambit (1.e4 d5 2.exd5 c6 3.dxc6 Nxc6) and
+    // the Marshall recapture (1.e4 d5 2.exd5 Nf6 3.Nf3 Nxd5) showed the
+    // Initiative term swinging by ~450 cp between the two positions in
+    // the eg half. The dominant offender was `InitiativePawnCount * 14`
+    // (14 pawns on the board) producing an egMag of ~700 cp by itself,
+    // amplified by the sign-of-eg ramp into a 100-300 cp directional
+    // bonus that flipped the engine's verdict on otherwise balanced
+    // openings. Stockfish-lineage reference values for `popcount(allPawns)`
+    // bonuses sit around 7-10 in the same magnitude space, so the cap
+    // here forces Texel to reallocate the term across the other features
+    // (passers, infiltration, outflank) instead of letting raw pawn
+    // count dominate.
+    out.push_back({"InitiativePasser.eg", &evalParams.InitiativePasser, false, boundsRange(0, 25)});
     out.push_back({"InitiativePawnCount.eg", &evalParams.InitiativePawnCount, false,
-                   boundsNonNegative()});
-    out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false,
-                   boundsNonNegative()});
+                   boundsRange(0, 12)});
+    out.push_back({"InitiativeOutflank.eg", &evalParams.InitiativeOutflank, false, boundsRange(0, 4)});
     out.push_back({"InitiativeInfiltrate.eg", &evalParams.InitiativeInfiltrate, false,
-                   boundsNonNegative()});
+                   boundsRange(0, 48)});
     // InitiativePureBase fires only in pure-pawn endgames; it is a
     // binary feature that can absorb a lot of correlation if left
     // unbounded. Cap at 48 (~2.5x the original default of 18) to keep
@@ -603,8 +733,12 @@ static std::vector<ParamRef> collectParams() {
                    boundsRange(-1000000, -1)});
 
     // --- Slider on queen x-ray: pure bonus, both halves >= 0.
-    addMgEgConstr("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop, boundsNonNegative());
-    addMgEgConstr("SliderOnQueenRook", &evalParams.SliderOnQueenRook, boundsNonNegative());
+    // SliderOnQueen x-rays: capped at ~0.30 * Pawn so the rook-on-queen
+    // and bishop-on-queen x-ray credits cannot be pushed past chess-
+    // reasonable magnitudes by game-result Texel that has no way to
+    // see the queen's quiet escape squares.
+    addMgEgConstr("SliderOnQueenBishop", &evalParams.SliderOnQueenBishop, boundsRange(0, 60));
+    addMgEgConstr("SliderOnQueenRook", &evalParams.SliderOnQueenRook, boundsRange(0, 60));
 
     // --- Restricted piece: rewards mutual attack on enemy non-pawns.
     addMgEgConstr("RestrictedPiece", &evalParams.RestrictedPiece, boundsNonNegative());
@@ -3405,6 +3539,18 @@ static void printCurrentValues() {
     std::cout << "    " << fmtScore(evalParams.KingPawnDistEg) << ", // KingPawnDistEg\n";
     std::cout << "    " << fmtScore(evalParams.KBNKCornerEg) << ", // KBNKCornerEg\n";
     std::cout << "    " << fmtScore(evalParams.LucenaEg) << ", // LucenaEg\n";
+    std::cout << "    " << fmtScore(evalParams.KXKPushToEdge) << ", // KXKPushToEdge\n";
+    std::cout << "    " << fmtScore(evalParams.KXKPushClose) << ", // KXKPushClose\n";
+    std::cout << "    " << fmtScore(evalParams.KBNKPushClose) << ", // KBNKPushClose\n";
+    std::cout << "    " << fmtScore(evalParams.KQKRPushToEdge) << ", // KQKRPushToEdge\n";
+    std::cout << "    " << fmtScore(evalParams.KQKRPushClose) << ", // KQKRPushClose\n";
+    std::cout << "    " << fmtScore(evalParams.KPsKFortressScale) << ", // KPsKFortressScale\n";
+    std::cout << "    " << fmtScore(evalParams.KBPKNDrawishScale) << ", // KBPKNDrawishScale\n";
+    std::cout << "    " << fmtScore(evalParams.KRKPDrawishScale) << ", // KRKPDrawishScale\n";
+    std::cout << "    " << fmtScore(evalParams.KRKMinorScale) << ", // KRKMinorScale\n";
+    std::cout << "    " << fmtScore(evalParams.KNNKDrawScale) << ", // KNNKDrawScale\n";
+    std::cout << "    " << fmtScore(evalParams.EscapableThreatScale)
+              << ", // EscapableThreatScale\n";
     std::cout << "};\n";
 }
 
@@ -3418,9 +3564,22 @@ int main(int argc, char **argv) {
         std::cerr << "            [--adam-epochs N] [--adam-lr X]\n";
         std::cerr << "            [--val-fraction X] [--val-gate-warmup N] [--val-gate-patience N]\n";
         std::cerr << "            [--val-gate] [--leaf-depth N]\n";
+        std::cerr << "            [--freeze-material | --freeze-positional]\n";
         std::cerr << "            <dataset> [threads=6] [maxPasses=30]\n";
         std::cerr << "       tune --replay <log> <ckpt-out>\n";
         std::cerr << "       tune --dump <ckpt>\n";
+        std::cerr << "\n";
+        std::cerr << "  --freeze-material    Skip PieceScore[Pawn..Queen] and BishopPair from\n";
+        std::cerr << "                       the parameter set so positional terms tune\n";
+        std::cerr << "                       against a fixed material baseline. Also accepts\n";
+        std::cerr << "                       FREEZE_MATERIAL=1 via env.\n";
+        std::cerr << "  --freeze-positional  Strict superset of --freeze-material: ALSO skips\n";
+        std::cerr << "                       all PST tables and every MobilityBonus entry.\n";
+        std::cerr << "                       Use with hand-coded chess-wisdom PST/Mobility\n";
+        std::cerr << "                       baselines so the tuner cannot reintroduce the\n";
+        std::cerr << "                       inflated positional magnitudes that caused\n";
+        std::cerr << "                       gambit-for-development pathology. Also accepts\n";
+        std::cerr << "                       FREEZE_POSITIONAL=1 via env.\n";
     };
 
     // Dump subcommand: load a checkpoint and emit the printCurrentValues
@@ -3524,6 +3683,23 @@ int main(int argc, char **argv) {
         double v = std::strtod(env, &endp);
         return (endp == env) ? 1.0 : v;
     }();
+    // Freeze-material flag: also honors FREEZE_MATERIAL=1 in the env
+    // so the texel pipeline shell wrapper can flip the mode without
+    // editing the CLI invocation.
+    g_freezeMaterial = [] {
+        const char *env = std::getenv("FREEZE_MATERIAL");
+        return env && std::string(env) == "1";
+    }();
+    // Freeze-positional is a strict superset of freeze-material; it
+    // additionally locks the PST and Mobility tables. Honors the
+    // FREEZE_POSITIONAL=1 env var. Setting either implies the other:
+    // freeze-positional always freezes material too, so collectParams
+    // sees a single coherent "lock material + lock positional" mode.
+    g_freezePositional = [] {
+        const char *env = std::getenv("FREEZE_POSITIONAL");
+        return env && std::string(env) == "1";
+    }();
+    if (g_freezePositional) g_freezeMaterial = true;
     int argIdx = 1;
     while (argIdx < argc) {
         std::string a = argv[argIdx];
@@ -3563,6 +3739,13 @@ int main(int argc, char **argv) {
         } else if (a == "--leaf-depth" && argIdx + 1 < argc) {
             leafDepth = std::atoi(argv[argIdx + 1]);
             argIdx += 2;
+        } else if (a == "--freeze-material") {
+            g_freezeMaterial = true;
+            argIdx += 1;
+        } else if (a == "--freeze-positional") {
+            g_freezePositional = true;
+            g_freezeMaterial = true;
+            argIdx += 1;
         } else {
             break;
         }
@@ -3582,6 +3765,15 @@ int main(int argc, char **argv) {
     // which depends on the bitboard attack tables; evaluate()'s usual
     // lazy init can race in the tuner's multi-threaded loss loop.
     initBitboards();
+
+    if (g_freezePositional) {
+        std::cerr << "freezing material + positional (PieceScore, BishopPair, all PSTs, "
+                     "all MobilityBonus) - threats/pawn-structure/king-safety tune against "
+                     "fixed material + positional baselines\n";
+    } else if (g_freezeMaterial) {
+        std::cerr << "freezing material (PieceScore[Pawn..Queen] and BishopPair) - "
+                     "positional terms will tune against a fixed material baseline\n";
+    }
 
     if (!fromCheckpoint.empty()) {
         auto params = collectParams();

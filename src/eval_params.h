@@ -344,6 +344,82 @@ struct EvalParams {
     // the raw material gradient alone would. Mg structurally zero;
     // only the eg half is tunable.
     Score LucenaEg;
+
+    // KXK mating-conversion gradients: in K + mating-material vs lone
+    // K endings (KQK, KRK, KQQK, KQRK, KRRK, KQBK, KQNK, KRBK, KRNK),
+    // the strong side needs to drive the lone king toward an edge and
+    // bring its own king close enough to deliver mate inside the
+    // 50-move horizon. The natural eval has no such gradient; without
+    // these two terms the search can wander indefinitely with a clearly
+    // winning material advantage. Mg structurally zero (these only
+    // matter when the eg phase weight dominates); only the eg half is
+    // tunable. Per-square weighting: pushToEdge returns 0..7, pushClose
+    // returns 0..7, so each term contributes up to 7 * weight to eg.
+    Score KXKPushToEdge;
+    Score KXKPushClose;
+
+    // KBNK kings-together gradient: paired with KBNKCornerEg, this term
+    // pulls the strong king toward the weak king so the bishop and
+    // knight can actually deliver mate after driving the lone king to
+    // the colored corner. Pre-bitbase only had the colored-corner term;
+    // adding kings-together accelerates conversion. Mg zero, eg tunable.
+    Score KBNKPushClose;
+
+    // KQKR mating-conversion gradients: queen versus rook is a known
+    // win but technical. Push-to-edge drives the rook-side king toward
+    // the edge; push-close brings the queen-side king in support.
+    // Without these, the search rarely converts KQKR inside the
+    // 50-move horizon. Mg zero, eg tunable.
+    Score KQKRPushToEdge;
+    Score KQKRPushClose;
+
+    // KPsK rook-file fortress scale: K + pawns vs lone K with every
+    // pawn on a single rook file. The textbook draw fires when the
+    // defender king reaches the promotion corner before the most-
+    // advanced pawn queens (defender-to-move gains one extra tempo).
+    // Default is zero (full fortress draw); the tuner can widen the
+    // recognized drawishness if it pays off. Mg zero, eg in 0..32.
+    Score KPsKFortressScale;
+
+    // KBPKN drawishness: K + B + P vs K + N. The bishop side usually
+    // wins, but if the defender king blockades the pawn's push square
+    // and the knight stays within two squares of the king to support,
+    // the strong side has only a residual edge. The tuner picks the
+    // damping magnitude. Mg zero, eg in 0..32.
+    Score KBPKNDrawishScale;
+
+    // KRKP drawishness: K + R vs K + P. Rook usually wins, but if the
+    // pawn is on relative rank 5 or higher (rank 6 or 7 from the
+    // defender's perspective), the defender king is adjacent to the
+    // pawn, and the rook-side king is more than three squares from
+    // the promotion square, the race tilts toward a draw. Mg zero,
+    // eg in 16..48.
+    Score KRKPDrawishScale;
+
+    // KRKB / KRKN drawishness: K + R vs K + minor without pawns. The
+    // rook holds the material edge but the lone minor with active king
+    // play often draws. The scale is applied uniformly to every KRKB
+    // and KRKN position. Mg zero, eg in 16..48.
+    Score KRKMinorScale;
+
+    // KNNK draw: two knights versus a lone king cannot force mate
+    // against best defense. Default is zero (drawn); the tuner can
+    // widen if it finds the natural material edge pays off. Mg zero,
+    // eg in 0..32.
+    Score KNNKDrawScale;
+
+    // SEE-aware threat discount: scales the credit for a threat
+    // whose target has a quiet escape from our lower-value attackers.
+    // Each affected threat term in evaluateThreats splits its victims
+    // into "stuck" (no safe quiet escape) and "escapable" sets; stuck
+    // victims earn the full threat magnitude, escapable victims earn
+    // (full * EscapableThreatScale.eg / 64). Without this, a queen
+    // attacked by a knight prices as a permanent loss even when the
+    // queen has obvious retreats, and the engine prefers gambits that
+    // are capture-resolved at the horizon over principled recaptures
+    // that leave the queen attacked. Mg structurally zero; the eg
+    // half holds the integer scale in 0..64.
+    Score EscapableThreatScale;
 };
 
 extern EvalParams evalParams;
